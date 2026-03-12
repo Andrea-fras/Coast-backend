@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: coast-api
+    runtime: python
+    plan: free
+    buildCommand: apt-get update && apt-get install -y poppler-utils && pip install -r requirements.txt
+    startCommand: gunicorn server:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.6"
+      - key: FRONTEND_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: JWT_SECRET
+        sync: false
