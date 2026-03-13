@@ -111,8 +111,16 @@ GOOD FOR:
 IMPORTANT: Always include a text explanation alongside the visualization. The SVG should enhance understanding, not replace explanation."""
 
 
+def _clean_svg_response(text: str) -> str:
+    """Strip markdown code fences from SVG output if present."""
+    import re
+    text = re.sub(r"```(?:svg|html|xml)?\s*\n?", "", text)
+    text = re.sub(r"\n?```", "", text)
+    return text.strip()
+
+
 def _call_claude_for_viz(messages: list[dict], max_tokens: int = 4096) -> str:
-    """Call Claude Opus 4.6 for SVG visualization generation."""
+    """Call Claude for SVG visualization generation."""
     import anthropic
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
@@ -128,14 +136,23 @@ def _call_claude_for_viz(messages: list[dict], max_tokens: int = 4096) -> str:
         else:
             claude_messages.append({"role": m["role"], "content": m["content"]})
 
+    model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+
     try:
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=model,
             max_tokens=max_tokens,
             system=system_text.strip(),
             messages=claude_messages,
         )
-        return response.content[0].text if response.content else ""
+        text = response.content[0].text if response.content else ""
+        return _clean_svg_response(text) if text else ""
+    except anthropic.RateLimitError:
+        print("[Claude Viz] Rate limited by Anthropic API")
+        return ""
+    except anthropic.APIError as e:
+        print(f"[Claude Viz] API error: {e}")
+        return ""
     except Exception:
         import traceback
         traceback.print_exc()
@@ -673,26 +690,27 @@ def send_message(
             messages.append({"role": role, "content": msg.content})
         messages.append({"role": "user", "content": message})
 
-        # Call LLM — route viz requests to Claude, everything else to CHAT_PROVIDER
+        # Call LLM — route viz requests to Claude, fall back to CHAT_PROVIDER
+        reply = None
         is_viz = _detect_viz_request(message)
         if is_viz and os.getenv("ANTHROPIC_API_KEY"):
             viz_messages = [{"role": "system", "content": SVG_VIZ_SYSTEM_PROMPT + "\n\n" + system_prompt}]
             for m in messages[1:]:
                 viz_messages.append(m)
             reply = _call_claude_for_viz(viz_messages, max_tokens=4096)
-            if not reply:
-                reply = "I couldn't generate the visualization right now. Please try again!"
-        elif CHAT_PROVIDER == "gemini":
-            reply = _call_gemini(messages, max_tokens=500, temperature=0.7)
-        else:
-            client, model = _get_client(CHAT_PROVIDER)
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                max_tokens=500,
-                temperature=0.7,
-            )
-            reply = response.choices[0].message.content.strip()
+
+        if not reply:
+            if CHAT_PROVIDER == "gemini":
+                reply = _call_gemini(messages, max_tokens=500, temperature=0.7)
+            else:
+                client, model = _get_client(CHAT_PROVIDER)
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    max_tokens=500,
+                    temperature=0.7,
+                )
+                reply = response.choices[0].message.content.strip()
 
         # Save user message
         user_msg = ChatMessage(
@@ -839,17 +857,19 @@ def send_message_stream(
 
         full_reply = ""
 
+        viz_done = False
         is_viz = _detect_viz_request(message)
         if is_viz and os.getenv("ANTHROPIC_API_KEY"):
             viz_messages = [{"role": "system", "content": SVG_VIZ_SYSTEM_PROMPT + "\n\n" + system_prompt}]
             for m in llm_messages[1:]:
                 viz_messages.append(m)
             reply = _call_claude_for_viz(viz_messages, max_tokens=4096)
-            if not reply:
-                reply = "I couldn't generate the visualization right now. Please try again!"
-            full_reply = reply
-            yield (reply, None)
-        elif CHAT_PROVIDER == "gemini":
+            if reply:
+                full_reply = reply
+                yield (reply, None)
+                viz_done = True
+
+        if not viz_done and CHAT_PROVIDER == "gemini":
             from google import genai
             client = genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
             model_name = TUTOR_PROVIDERS["gemini"]["model"]
@@ -879,7 +899,7 @@ def send_message_stream(
                 if not full_reply:
                     full_reply = "I'm having a brief technical issue. Could you try asking again?"
                     yield (full_reply, None)
-        else:
+        elif not viz_done:
             client, model_name = _get_client(CHAT_PROVIDER)
             try:
                 stream = client.chat.completions.create(
