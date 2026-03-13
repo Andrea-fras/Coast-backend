@@ -70,6 +70,9 @@ async def global_exception_handler(request: StarletteRequest, exc: Exception):
 GENERATED_DIR = Path(__file__).parent / "generated"
 GENERATED_DIR.mkdir(exist_ok=True)
 
+FOLDER_UPLOADS_DIR = Path(os.environ.get("FOLDER_UPLOADS_DIR", str(Path(__file__).parent / "folder_uploads")))
+FOLDER_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
 PAPERS_DIR = Path(os.getenv("PAPERS_DIR", str(Path(__file__).parent.parent / "Coast" / "testing" / "src" / "data")))
 
 QUESTIONS_PER_BATCH = 10
@@ -884,6 +887,9 @@ async def upload_folder_source(
         source_id = f"src_{uuid.uuid4().hex[:10]}"
         title = Path(file.filename).stem.replace("_", " ").replace("-", " ")
 
+        stored_path = FOLDER_UPLOADS_DIR / f"{source_id}{ext}"
+        shutil.copy2(str(tmp_path), str(stored_path))
+
         db = SessionLocal()
         try:
             fs = FolderSource(
@@ -895,6 +901,7 @@ async def upload_folder_source(
                 source_type=source_type,
                 page_count=page_count,
                 raw_text=raw_text,
+                file_path=str(stored_path),
             )
             db.add(fs)
             db.commit()
@@ -930,6 +937,7 @@ async def upload_folder_source(
 def delete_folder_source(folder_name: str, source_id: str, user: User = Depends(get_current_user)):
     """Delete a raw source from a folder."""
     db = SessionLocal()
+    file_path = None
     try:
         fs = db.query(FolderSource).filter(
             FolderSource.user_id == user.id,
@@ -938,10 +946,14 @@ def delete_folder_source(folder_name: str, source_id: str, user: User = Depends(
         ).first()
         if not fs:
             raise HTTPException(404, "Source not found")
+        file_path = fs.file_path
         db.delete(fs)
         db.commit()
     finally:
         db.close()
+
+    if file_path:
+        Path(file_path).unlink(missing_ok=True)
 
     try:
         rag.delete_notebook_embeddings(user.id, folder_name, source_id)
@@ -949,6 +961,156 @@ def delete_folder_source(folder_name: str, source_id: str, user: User = Depends(
         pass
 
     return {"status": "deleted", "source_id": source_id}
+
+
+@app.get("/api/folders/{folder_name}/sources/{source_id}/file")
+def get_source_file(folder_name: str, source_id: str, user: User = Depends(get_current_user)):
+    """Serve the original uploaded file for a folder source."""
+    db = SessionLocal()
+    try:
+        fs = db.query(FolderSource).filter(
+            FolderSource.user_id == user.id,
+            FolderSource.folder_name == folder_name,
+            FolderSource.source_id == source_id,
+        ).first()
+        if not fs:
+            raise HTTPException(404, "Source not found")
+        if not fs.file_path or not Path(fs.file_path).exists():
+            raise HTTPException(404, "File not available")
+        file_path = Path(fs.file_path)
+        filename = fs.filename
+    finally:
+        db.close()
+
+    media_types = {
+        ".pdf": "application/pdf",
+        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    }
+    media_type = media_types.get(file_path.suffix.lower(), "application/octet-stream")
+
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        path=str(file_path),
+        media_type=media_type,
+        filename=filename,
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+@app.post("/api/folders/{folder_name}/sources/{source_id}/generate-notebook")
+async def generate_notebook_from_source(
+    folder_name: str,
+    source_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    """Run the full notebook pipeline on a stored folder source, returning SSE stream."""
+    import asyncio
+    import queue
+    import threading
+
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "Not authenticated")
+    token = authorization.split(" ", 1)[1]
+    payload = decode_access_token(token)
+    if not payload:
+        raise HTTPException(401, "Invalid token")
+    db = SessionLocal()
+    user = db.query(User).filter(User.id == int(payload["sub"])).first()
+    fs = db.query(FolderSource).filter(
+        FolderSource.source_id == source_id,
+        FolderSource.folder_name == folder_name,
+    ).first() if user else None
+    db.close()
+    if not user:
+        raise HTTPException(401, "User not found")
+    if not fs:
+        raise HTTPException(404, "Source not found")
+    if not fs.file_path or not Path(fs.file_path).exists():
+        raise HTTPException(404, "Original file not available")
+
+    if user:
+        usage = _get_user_usage(user.id)
+        if usage["notebooks_remaining"] <= 0:
+            raise HTTPException(429, "Notebook limit reached.")
+
+    src_path = Path(fs.file_path)
+    progress_q: queue.Queue = queue.Queue()
+
+    def on_progress(stage, current, total):
+        msg = _STAGE_MESSAGES.get(stage, stage)
+        try:
+            msg = msg.format(current=current, total=total)
+        except (KeyError, IndexError):
+            pass
+        progress_q.put({"stage": stage, "message": msg, "current": current, "total": total})
+
+    def run_pipeline():
+        try:
+            from pipeline import run_notebook_pipeline
+            paper_paths = _get_paper_paths()
+            result = run_notebook_pipeline(
+                src_path,
+                output_path=None,
+                paper_paths=paper_paths if paper_paths else None,
+                provider="openai",
+                extra_instructions="",
+                detail="low",
+                on_progress=on_progress,
+            )
+            nb_id = result.get("id", f"nb_{uuid.uuid4().hex[:8]}")
+            save_path = GENERATED_DIR / f"{nb_id}.json"
+            with open(save_path, "w", encoding="utf-8") as f:
+                json.dump(result, f, indent=2, ensure_ascii=False)
+
+            db2 = SessionLocal()
+            try:
+                title = result.get("title", "Untitled")
+                saved = SavedNotebook(
+                    user_id=user.id,
+                    notebook_id=nb_id,
+                    title=title,
+                    course=result.get("course", ""),
+                    notebook_json=json.dumps(result),
+                    is_premade=False,
+                    folder=folder_name,
+                )
+                db2.add(saved)
+                db2.commit()
+                db2.refresh(saved)
+                result["_saved_id"] = saved.id
+                result["_folder"] = folder_name
+
+                try:
+                    rag.embed_notebook(user.id, folder_name, nb_id, result)
+                except Exception:
+                    import traceback
+                    traceback.print_exc()
+                try:
+                    spaced_rep.create_cards_for_notebook(user.id, nb_id, result)
+                except Exception:
+                    import traceback
+                    traceback.print_exc()
+            finally:
+                db2.close()
+
+            progress_q.put({"stage": "done", "notebook": result})
+        except Exception as exc:
+            progress_q.put({"stage": "error", "message": str(exc)})
+
+    threading.Thread(target=run_pipeline, daemon=True).start()
+
+    async def event_stream():
+        while True:
+            try:
+                item = progress_q.get_nowait()
+            except queue.Empty:
+                await asyncio.sleep(0.3)
+                continue
+            yield f"data: {json.dumps(item)}\n\n"
+            if item.get("stage") in ("done", "error"):
+                break
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @app.get("/api/folders/{folder_name}/sources")

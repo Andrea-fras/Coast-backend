@@ -222,6 +222,7 @@ class FolderSource(Base):
     source_type = Column(String(20), nullable=False)
     page_count = Column(Integer, default=0)
     raw_text = Column(Text, nullable=False)
+    file_path = Column(String(500), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
