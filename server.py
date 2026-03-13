@@ -875,6 +875,33 @@ class AddNoteRequest(BaseModel):
     notebook_id: Optional[str] = None
 
 
+class ExerciseRequest(BaseModel):
+    section_title: str
+    section_content: str
+    action: str = "generate"  # "generate" or "evaluate"
+    question: str = ""
+    answer: str = ""
+
+
+@app.post("/api/exercise")
+def exercise(req: ExerciseRequest, user: User = Depends(get_current_user)):
+    """Generate a practice question or evaluate a student's answer."""
+    try:
+        result = tutor.handle_exercise(
+            user_id=user.id,
+            section_title=req.section_title,
+            section_content=req.section_content,
+            action=req.action,
+            question=req.question,
+            student_answer=req.answer,
+        )
+        return result
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Exercise error: {str(e)}")
+
+
 @app.post("/api/chat/add-note")
 def chat_add_note(req: AddNoteRequest, user: User = Depends(get_current_user)):
     """Condense a Pedro message into a study note for the notebook."""

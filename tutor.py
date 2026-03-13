@@ -896,3 +896,90 @@ def generate_note_for_notebook(pedro_message: str) -> str:
         html = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
 
     return html
+
+
+EXERCISE_GENERATE_PROMPT = """You are creating a single practice question for a university student based on the following notebook section.
+
+Section: {section_title}
+Content:
+---
+{section_content}
+---
+
+Generate ONE clear, focused practice question that tests understanding of a key concept from this section.
+Rules:
+- The question should require thinking, not just recall
+- It can be a short-answer question, a "what would happen if..." question, or a "explain why..." question
+- Keep it concise (1-3 sentences)
+- Output ONLY the question text, nothing else"""
+
+EXERCISE_EVALUATE_PROMPT = """You are a tutor evaluating a student's answer to a practice question.
+
+Section topic: {section_title}
+Question: {question}
+Student's answer: {student_answer}
+
+Reference content:
+---
+{section_content}
+---
+
+Evaluate the answer. Respond with:
+1. Whether they're correct, partially correct, or incorrect
+2. A brief explanation (2-3 sentences) of what they got right/wrong
+3. If incorrect or partial, give a hint toward the right answer without fully revealing it
+
+Use markdown formatting: **bold** for key terms, bullet points if needed.
+Keep your response concise and encouraging."""
+
+
+def handle_exercise(
+    user_id: int,
+    section_title: str,
+    section_content: str,
+    action: str = "generate",
+    question: str = "",
+    student_answer: str = "",
+) -> dict:
+    """Generate a practice question or evaluate an answer."""
+    content = section_content[:3000]
+
+    if action == "generate":
+        prompt = EXERCISE_GENERATE_PROMPT.format(
+            section_title=section_title,
+            section_content=content,
+        )
+        messages = [{"role": "user", "content": prompt}]
+
+        if CHAT_PROVIDER == "gemini":
+            result = _call_gemini(messages, max_tokens=200, temperature=0.7)
+        else:
+            client, model = _get_client(CHAT_PROVIDER)
+            response = client.chat.completions.create(
+                model=model, messages=messages, max_tokens=200, temperature=0.7,
+            )
+            result = response.choices[0].message.content.strip()
+
+        return {"question": result}
+
+    elif action == "evaluate":
+        prompt = EXERCISE_EVALUATE_PROMPT.format(
+            section_title=section_title,
+            question=question,
+            student_answer=student_answer,
+            section_content=content,
+        )
+        messages = [{"role": "user", "content": prompt}]
+
+        if CHAT_PROVIDER == "gemini":
+            result = _call_gemini(messages, max_tokens=300, temperature=0.5)
+        else:
+            client, model = _get_client(CHAT_PROVIDER)
+            response = client.chat.completions.create(
+                model=model, messages=messages, max_tokens=300, temperature=0.5,
+            )
+            result = response.choices[0].message.content.strip()
+
+        return {"feedback": result}
+
+    return {"error": "Invalid action"}
