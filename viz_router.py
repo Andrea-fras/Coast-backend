@@ -25,6 +25,16 @@ viz_router = APIRouter()
 MEDIA_DIR = Path(__file__).parent / "media" / "visualizations"
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
+def _manim_available() -> bool:
+    try:
+        subprocess.run(["python3", "-m", "manim", "--version"],
+                       capture_output=True, timeout=10)
+        return True
+    except Exception:
+        return False
+
+_MANIM_OK = _manim_available()
+
 # ── Client ───────────────────────────────────────────────────────────────
 
 def _get_openai():
@@ -259,6 +269,8 @@ async def serve_viz(filename: str):
 @viz_router.post("/api/visualize")
 async def create_viz(req: VizRequest):
     """Generate a single visualization from a topic + description."""
+    if not _MANIM_OK:
+        return {"skip": True, "message": "Visualization rendering is not available on this server."}
     result = _generate_and_render(req.topic, req.description)
     if "error" in result:
         raise HTTPException(500, detail=result["error"])
@@ -268,6 +280,8 @@ async def create_viz(req: VizRequest):
 @viz_router.post("/api/visualize/notebook")
 async def create_notebook_viz(req: NotebookVizRequest):
     """Auto-generate visualizations for a notebook's sections."""
+    if not _MANIM_OK:
+        return {"visualizations": []}
     raw_sections = []
     for s in req.sections:
         if isinstance(s, dict):
@@ -308,6 +322,8 @@ async def create_notebook_viz(req: NotebookVizRequest):
 @viz_router.post("/api/visualize/section")
 async def create_section_viz(req: SectionVizRequest):
     """Generate a visualization for a single notebook section."""
+    if not _MANIM_OK:
+        return {"skip": True, "message": "Visualization rendering is not available on this server."}
     spec = _describe_section(req.topic, req.content)
 
     if not spec or spec.get("skip"):

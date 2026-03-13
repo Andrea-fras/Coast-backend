@@ -1046,8 +1046,9 @@ async def generate_notes(
 
         while True:
             try:
-                msg = await loop.run_in_executor(None, lambda: progress_q.get(timeout=0.5))
+                msg = await loop.run_in_executor(None, lambda: progress_q.get(timeout=5))
             except queue.Empty:
+                yield ": keepalive\n\n"
                 continue
 
             yield f"data: {json.dumps(msg)}\n\n"
