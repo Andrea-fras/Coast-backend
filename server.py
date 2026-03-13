@@ -857,6 +857,41 @@ def chat_send(req: ChatSendRequest, user: User = Depends(get_current_user)):
         raise HTTPException(500, f"Chat error: {str(e)}")
 
 
+@app.post("/api/chat/stream")
+def chat_stream(req: ChatSendRequest, user: User = Depends(get_current_user)):
+    """Streaming version of chat/send — returns SSE with token chunks."""
+    if not req.message.strip():
+        raise HTTPException(400, "Message cannot be empty")
+    if req.context_type not in ("notebook", "global", "session"):
+        raise HTTPException(400, "Invalid context_type")
+
+    usage = _get_user_usage(user.id)
+    if usage["chat_messages_remaining"] <= 0:
+        raise HTTPException(429, "Weekly message limit reached.")
+
+    def event_stream():
+        try:
+            for token, meta in tutor.send_message_stream(
+                user_id=user.id,
+                message=req.message.strip(),
+                conversation_id=req.conversation_id,
+                context_type=req.context_type,
+                context_id=req.context_id,
+                notebook_ids=req.notebook_ids,
+            ):
+                if token is not None:
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+                if meta is not None:
+                    meta["usage"] = _get_user_usage(user.id)
+                    yield f"data: {json.dumps({'done': True, **meta})}\n\n"
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
 @app.get("/api/chat/history")
 def chat_history(conversation_id: str, user: User = Depends(get_current_user)):
     """Get all messages for a specific conversation."""

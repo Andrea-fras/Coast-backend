@@ -625,6 +625,171 @@ def send_message(
         db.close()
 
 
+def send_message_stream(
+    user_id: int,
+    message: str,
+    conversation_id: Optional[str],
+    context_type: str,
+    context_id: Optional[str] = None,
+    notebook_ids: Optional[list[str]] = None,
+):
+    """Streaming version of send_message. Yields (token, None) for each chunk,
+    then (None, result_dict) for the final metadata."""
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise ValueError("User not found")
+
+        if not conversation_id:
+            conversation_id = f"conv_{uuid.uuid4().hex[:12]}"
+
+        memo_row = db.query(TutorMemo).filter(TutorMemo.user_id == user_id).first()
+        memo_text = memo_row.memo_text if memo_row else ""
+        skill_row = db.query(SkillProfile).filter(SkillProfile.user_id == user_id).first()
+        skill_data = json.loads(skill_row.profile_json) if skill_row else {}
+
+        notebook_content = None
+        session_context = None
+        explicit_notebook_ref = False
+
+        if context_type == "notebook" and context_id:
+            notebook_content = _load_notebook_text(context_id, user_id)
+        elif context_type == "session" and context_id:
+            try:
+                session_context = _load_session_context(int(context_id), user_id)
+            except (ValueError, TypeError):
+                pass
+        elif context_type == "global":
+            if notebook_ids:
+                parts = []
+                for nb_id in notebook_ids[:3]:
+                    text = _load_notebook_text(nb_id, user_id)
+                    if text:
+                        parts.append(text)
+                if parts:
+                    notebook_content = "\n\n--- NEXT NOTEBOOK ---\n\n".join(parts)
+                    explicit_notebook_ref = True
+            if not notebook_content:
+                snippets = _get_relevant_notebook_snippets(user_id, message)
+                if snippets:
+                    notebook_content = snippets
+
+        system_prompt = build_system_prompt(
+            user=user,
+            context_type=context_type,
+            notebook_content=notebook_content,
+            tutor_memo=memo_text,
+            skill_profile=skill_data,
+            session_context=session_context,
+            explicit_notebook_ref=explicit_notebook_ref,
+        )
+
+        history = (
+            db.query(ChatMessage)
+            .filter(ChatMessage.conversation_id == conversation_id)
+            .order_by(ChatMessage.created_at.asc())
+            .all()
+        )
+
+        llm_messages = [{"role": "system", "content": system_prompt}]
+        summary = _summarize_old_messages(history)
+        if summary:
+            llm_messages.append({"role": "system", "content": f"Summary of earlier conversation:\n{summary}"})
+            recent_history = history[-KEEP_RECENT:]
+        else:
+            recent_history = history[-MAX_HISTORY_MESSAGES:]
+
+        for msg in recent_history:
+            role = "assistant" if msg.role == "pedro" else "user"
+            llm_messages.append({"role": role, "content": msg.content})
+        llm_messages.append({"role": "user", "content": message})
+
+        full_reply = ""
+
+        if CHAT_PROVIDER == "gemini":
+            client = genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
+            model_name = TUTOR_PROVIDERS["gemini"]["model"]
+            parts = []
+            sys_text = ""
+            for m in llm_messages:
+                if m["role"] == "system":
+                    sys_text += m["content"] + "\n"
+                elif m["role"] == "user":
+                    parts.append({"role": "user", "parts": [{"text": m["content"]}]})
+                elif m["role"] == "assistant":
+                    parts.append({"role": "model", "parts": [{"text": m["content"]}]})
+
+            config = {"temperature": 0.7, "max_output_tokens": 4096}
+            if sys_text:
+                config["system_instruction"] = sys_text.strip()
+
+            try:
+                for chunk in client.models.generate_content_stream(
+                    model=model_name, contents=parts, config=config,
+                ):
+                    if chunk.text:
+                        full_reply += chunk.text
+                        yield (chunk.text, None)
+            except Exception as e:
+                print(f"[Gemini Stream] Error: {e}")
+                if not full_reply:
+                    full_reply = "I'm having a brief technical issue. Could you try asking again?"
+                    yield (full_reply, None)
+        else:
+            client, model_name = _get_client(CHAT_PROVIDER)
+            try:
+                stream = client.chat.completions.create(
+                    model=model_name, messages=llm_messages,
+                    max_tokens=500, temperature=0.7, stream=True,
+                )
+                for chunk in stream:
+                    delta = chunk.choices[0].delta
+                    if delta and delta.content:
+                        full_reply += delta.content
+                        yield (delta.content, None)
+            except Exception as e:
+                print(f"[OpenAI Stream] Error: {e}")
+                if not full_reply:
+                    full_reply = "I'm having a brief technical issue. Could you try asking again?"
+                    yield (full_reply, None)
+
+        if not full_reply:
+            full_reply = "I'd love to help with that! Could you rephrase your question?"
+
+        user_msg = ChatMessage(
+            user_id=user_id, conversation_id=conversation_id,
+            role="user", content=message,
+            context_type=context_type, context_id=context_id,
+        )
+        db.add(user_msg)
+        pedro_msg = ChatMessage(
+            user_id=user_id, conversation_id=conversation_id,
+            role="pedro", content=full_reply,
+            context_type=context_type, context_id=context_id,
+        )
+        db.add(pedro_msg)
+        db.commit()
+        db.refresh(pedro_msg)
+
+        if memo_row:
+            memo_row.message_count_since_update += 2
+            if memo_row.message_count_since_update >= MEMO_UPDATE_INTERVAL:
+                _trigger_memo_update(db, user_id, conversation_id, memo_row)
+        else:
+            new_memo = TutorMemo(user_id=user_id, memo_text="", message_count_since_update=2)
+            db.add(new_memo)
+        db.commit()
+
+        yield (None, {
+            "reply": full_reply,
+            "conversation_id": conversation_id,
+            "message_id": pedro_msg.id,
+        })
+    finally:
+        db.close()
+
+
 def _trigger_memo_update(db, user_id: int, conversation_id: str, memo_row: TutorMemo):
     """Update the tutor memo with recent interaction observations."""
     try:
