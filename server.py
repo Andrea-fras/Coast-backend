@@ -852,6 +852,8 @@ def chat_send(req: ChatSendRequest, user: User = Depends(get_current_user)):
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(500, f"Chat error: {str(e)}")
 
 

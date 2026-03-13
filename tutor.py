@@ -373,13 +373,13 @@ def _load_notebook_text(notebook_id: str, user_id: int) -> Optional[str]:
 
         data = json.loads(nb.notebook_json)
         parts = [f"Title: {data.get('title', '')}"]
-        for section in data.get("sections", []):
+        for section in (data.get("sections") or []):
             parts.append(f"\n## {section.get('title', '')}")
-            parts.append(section.get("content", ""))
-            for sub in section.get("subsections", []):
+            parts.append(section.get("content", "") or "")
+            for sub in (section.get("subsections") or []):
                 parts.append(f"### {sub.get('title', '')}")
-                parts.append(sub.get("content", ""))
-                for bullet in sub.get("bullets", []):
+                parts.append(sub.get("content", "") or "")
+                for bullet in (sub.get("bullets") or []):
                     parts.append(f"  - {bullet}")
         return "\n".join(parts)
     finally:
