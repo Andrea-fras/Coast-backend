@@ -78,8 +78,8 @@ PAPERS_DIR = Path(os.getenv("PAPERS_DIR", str(Path(__file__).parent.parent / "Co
 
 QUESTIONS_PER_BATCH = 10
 
-RATE_LIMIT_CHAT_MESSAGES = 50       # max Pedro messages per user per week
-RATE_LIMIT_NOTEBOOKS = 4            # max notebook uploads per user
+RATE_LIMIT_CHAT_MESSAGES = 500      # max Pedro messages per user per week
+RATE_LIMIT_NOTEBOOKS = 20           # max notebook uploads per user
 RATE_LIMIT_WINDOW_DAYS = 7          # rolling window for chat limit
 
 
