@@ -295,8 +295,45 @@ def build_lesson_prompt(user_id: int, folder_name: str) -> str | None:
         key_topics = current.get("key_topics", [])
         source_nbs = current.get("source_notebooks", [])
 
-        query = f"{section_title} {' '.join(key_topics)}"
-        rag_context = rag.build_folder_context(user_id, folder_name, query, max_chars=8000)
+        query_parts = [section_title] + key_topics + objectives
+        query = " ".join(query_parts)
+        rag_context = rag.build_folder_context(user_id, folder_name, query, max_chars=12000)
+
+        if not rag_context:
+            db2 = SessionLocal()
+            try:
+                from database import FolderSource as FS, SavedNotebook as SN
+                raw_sources = db2.query(FS).filter(
+                    FS.user_id == user_id, FS.folder_name == folder_name
+                ).all()
+                notebooks = db2.query(SN).filter(
+                    SN.user_id == user_id, SN.folder == folder_name, SN.deleted_at == None
+                ).all()
+
+                fallback_parts = []
+                for src in raw_sources:
+                    text = (src.raw_text or "")[:4000]
+                    if text.strip():
+                        fallback_parts.append(f'--- From "{src.title}" ---\n{text}')
+                for nb in notebooks:
+                    try:
+                        data = json.loads(nb.notebook_json)
+                        secs = data.get("sections") or []
+                        nb_text = "\n".join(
+                            f"{s.get('title','')}: {(s.get('content','') or '')[:500]}"
+                            for s in secs[:10]
+                        )
+                        if nb_text.strip():
+                            fallback_parts.append(f'--- From "{data.get("title", nb.title)}" ---\n{nb_text}')
+                    except Exception:
+                        pass
+
+                if fallback_parts:
+                    rag_context = "\n\n".join(fallback_parts)
+                    if len(rag_context) > 12000:
+                        rag_context = rag_context[:12000] + "\n...[truncated]"
+            finally:
+                db2.close()
 
         completed = [s.get("title", "") for s in sections[:current_idx]]
         upcoming = [s.get("title", "") for s in sections[current_idx + 1:]]
@@ -324,21 +361,29 @@ def build_lesson_prompt(user_id: int, folder_name: str) -> str | None:
 
         prompt += (
             "\nINSTRUCTIONS:\n"
-            "1. Teach the current section's content clearly and engagingly using the source material below.\n"
-            "2. Reference which source the information comes from.\n"
-            "3. After explaining the key concepts, ask 1-2 comprehension questions to check understanding.\n"
-            "4. When the student answers correctly, congratulate them and ask if they're ready for the next section.\n"
-            "5. If the student struggles, provide hints and re-explain using different approaches.\n"
-            "6. Keep your teaching concise but thorough — aim for the depth of a great tutor, not a textbook.\n"
-            "7. When you believe the student has understood the section, include the exact phrase "
+            "1. You MUST teach ONLY from the source material provided below. Do NOT say you don't have the material — it is included below.\n"
+            "2. Use specific facts, definitions, formulas, and examples from the source material. Quote or paraphrase directly.\n"
+            "3. Reference which source document the information comes from by name.\n"
+            "4. After explaining the key concepts, ask 1-2 comprehension questions to check understanding.\n"
+            "5. When the student answers correctly, congratulate them and ask if they're ready for the next section.\n"
+            "6. If the student struggles, provide hints and re-explain using different approaches from the source material.\n"
+            "7. Keep your teaching concise but thorough — aim for the depth of a great tutor, not a textbook.\n"
+            "8. NEVER claim you don't have access to the student's uploaded documents. The relevant content is provided below.\n"
+            "9. When you believe the student has understood the section, include the exact phrase "
             '"[SECTION_COMPLETE]" at the end of your message (the frontend uses this to show a Next Section button).\n\n'
         )
 
         if rag_context:
             prompt += (
-                "--- SOURCE MATERIAL FOR THIS SECTION ---\n"
+                "--- SOURCE MATERIAL FOR THIS SECTION (from the student's uploaded documents) ---\n"
                 + rag_context
-                + "\n--- END SOURCE MATERIAL ---"
+                + "\n--- END SOURCE MATERIAL ---\n"
+            )
+        else:
+            prompt += (
+                "NOTE: No source material was retrieved for this section. Teach using your general knowledge "
+                "of the topic, but let the student know you're drawing from general knowledge rather than "
+                "their specific uploaded materials.\n"
             )
 
         return prompt
