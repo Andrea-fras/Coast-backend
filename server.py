@@ -60,13 +60,30 @@ app.add_middleware(
 
 from starlette.requests import Request as StarletteRequest
 
+_cors_headers = {
+    "Access-Control-Allow-Origin": _extra_origin.rstrip("/") if _extra_origin else "*",
+    "Access-Control-Allow-Credentials": "true",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type",
+}
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: StarletteRequest, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=_cors_headers,
+    )
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: StarletteRequest, exc: Exception):
-    if isinstance(exc, HTTPException):
-        raise exc
     import traceback
     traceback.print_exc()
-    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+        headers=_cors_headers,
+    )
 
 GENERATED_DIR = Path(__file__).parent / "generated"
 GENERATED_DIR.mkdir(exist_ok=True)
