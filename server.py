@@ -36,6 +36,7 @@ from database import (
 )
 import tutor
 import spaced_rep
+import rag
 from viz_router import viz_router
 
 app = FastAPI(title="Coast API", version="2.0.0")
@@ -732,8 +733,24 @@ def move_notebook(saved_id: int, req: MoveNotebookRequest, user: User = Depends(
         ).first()
         if not nb:
             raise HTTPException(404, "Notebook not found")
-        nb.folder = req.folder.strip()[:100]
+        old_folder = nb.folder
+        new_folder = req.folder.strip()[:100]
+        nb.folder = new_folder
         db.commit()
+
+        if old_folder and old_folder != new_folder:
+            try:
+                rag.delete_notebook_embeddings(user.id, old_folder, nb.notebook_id)
+            except Exception:
+                pass
+        if new_folder:
+            try:
+                data = json.loads(nb.notebook_json)
+                rag.embed_notebook(user.id, new_folder, nb.notebook_id, data)
+            except Exception:
+                import traceback
+                traceback.print_exc()
+
         return {"status": "moved", "folder": nb.folder}
     finally:
         db.close()
@@ -768,6 +785,81 @@ def delete_folder(folder_name: str, user: User = Depends(get_current_user)):
         db.close()
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# FOLDER RAG
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/folders/{folder_name}/embed")
+def embed_folder(folder_name: str, user: User = Depends(get_current_user)):
+    """Embed all notebooks in a folder into ChromaDB."""
+    result = rag.embed_all_in_folder(user.id, folder_name)
+    return result
+
+@app.get("/api/folders/{folder_name}/sources")
+def folder_sources(folder_name: str, user: User = Depends(get_current_user)):
+    """List embedded sources with metadata."""
+    sources = rag.get_folder_sources(user.id, folder_name)
+    db = SessionLocal()
+    try:
+        notebooks = (
+            db.query(SavedNotebook)
+            .filter(
+                SavedNotebook.user_id == user.id,
+                SavedNotebook.folder == folder_name,
+                SavedNotebook.deleted_at == None,
+            )
+            .all()
+        )
+        nb_list = []
+        embedded_ids = {s["notebook_id"] for s in sources}
+        for nb in notebooks:
+            data = json.loads(nb.notebook_json)
+            nb_list.append({
+                "notebook_id": nb.notebook_id,
+                "saved_id": nb.id,
+                "title": data.get("title", nb.title),
+                "course": data.get("course", nb.course),
+                "section_count": len(data.get("sections") or []),
+                "embedded": nb.notebook_id in embedded_ids,
+            })
+        return {"sources": nb_list, "embedding_stats": sources}
+    finally:
+        db.close()
+
+@app.post("/api/folders/{folder_name}/study-plan")
+def folder_study_plan(folder_name: str, user: User = Depends(get_current_user)):
+    """Generate a study plan from all sources in a folder."""
+    plan = rag.generate_study_plan(user.id, folder_name, user.name)
+    return {"plan": plan}
+
+@app.get("/api/folders/{folder_name}/notebooks")
+def folder_notebooks(folder_name: str, user: User = Depends(get_current_user)):
+    """List all notebooks in a folder."""
+    db = SessionLocal()
+    try:
+        notebooks = (
+            db.query(SavedNotebook)
+            .filter(
+                SavedNotebook.user_id == user.id,
+                SavedNotebook.folder == folder_name,
+                SavedNotebook.deleted_at == None,
+            )
+            .all()
+        )
+        return [
+            {
+                "id": nb.notebook_id,
+                "_saved_id": nb.id,
+                "title": nb.title,
+                "course": nb.course,
+                **json.loads(nb.notebook_json),
+            }
+            for nb in notebooks
+        ]
+    finally:
+        db.close()
+
+
 @app.post("/api/notebooks/save")
 def save_notebook(notebook: dict, user: User = Depends(get_current_user)):
     """Save a generated notebook to the user's account."""
@@ -792,6 +884,14 @@ def save_notebook(notebook: dict, user: User = Depends(get_current_user)):
         except Exception:
             import traceback
             traceback.print_exc()
+
+        folder = notebook.get("folder", "")
+        if folder:
+            try:
+                rag.embed_notebook(user.id, folder, nb_id, notebook)
+            except Exception:
+                import traceback
+                traceback.print_exc()
 
         return {"status": "saved", "id": saved.id}
     finally:

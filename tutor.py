@@ -324,6 +324,15 @@ def build_system_prompt(
             "\n--- SESSION RESULTS (the student just completed a quiz) ---\n"
             + session_context
         )
+    elif context_type == "folder" and notebook_content:
+        parts.append(
+            "\n--- FOLDER CONTEXT (retrieved from multiple sources via semantic search) ---\n"
+            "The student has a folder of study materials. Below are the most relevant "
+            "excerpts retrieved from their sources. When answering, ALWAYS reference which "
+            "source/notebook the information comes from so the student can find it.\n"
+            + notebook_content[:14000]
+            + "\n--- END FOLDER CONTEXT ---"
+        )
     elif context_type == "global":
         if notebook_content and explicit_notebook_ref:
             parts.append(
@@ -504,7 +513,15 @@ def send_message(
         session_context = None
         explicit_notebook_ref = False
 
-        if context_type == "notebook" and context_id:
+        if context_type == "folder" and context_id:
+            try:
+                import rag
+                notebook_content = rag.build_folder_context(user_id, context_id, message)
+            except Exception:
+                import traceback as tb
+                tb.print_exc()
+                notebook_content = None
+        elif context_type == "notebook" and context_id:
             notebook_content = _load_notebook_text(context_id, user_id)
         elif context_type == "session" and context_id:
             try:
@@ -653,7 +670,14 @@ def send_message_stream(
         session_context = None
         explicit_notebook_ref = False
 
-        if context_type == "notebook" and context_id:
+        if context_type == "folder" and context_id:
+            try:
+                import rag
+                notebook_content = rag.build_folder_context(user_id, context_id, message)
+            except Exception:
+                import traceback as tb
+                tb.print_exc()
+        elif context_type == "notebook" and context_id:
             notebook_content = _load_notebook_text(context_id, user_id)
         elif context_type == "session" and context_id:
             try:
