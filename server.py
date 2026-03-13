@@ -23,6 +23,7 @@ load_dotenv()
 from auth import create_access_token, decode_access_token, hash_password, verify_password
 from database import (
     ChatMessage,
+    FolderSource,
     Paper,
     QuizSession,
     SavedNotebook,
@@ -814,15 +815,137 @@ def embed_folder(folder_name: str, user: User = Depends(get_current_user)):
         traceback.print_exc()
         return {"notebooks_embedded": 0, "total_chunks": 0, "error": "Embedding failed"}
 
+@app.post("/api/folders/{folder_name}/upload")
+async def upload_folder_source(
+    folder_name: str,
+    file: UploadFile = File(...),
+    authorization: Optional[str] = Header(None),
+):
+    """Upload a raw document to a folder — extract text, embed, no notebook generation."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "Not authenticated")
+    token = authorization.split(" ", 1)[1]
+    payload = decode_access_token(token)
+    if not payload:
+        raise HTTPException(401, "Invalid token")
+    db = SessionLocal()
+    user = db.query(User).filter(User.id == int(payload["sub"])).first()
+    db.close()
+    if not user:
+        raise HTTPException(401, "User not found")
+
+    if not file.filename:
+        raise HTTPException(400, "No filename provided")
+
+    ext = Path(file.filename).suffix.lower()
+    allowed = {".pdf", ".png", ".jpg", ".jpeg", ".pptx", ".tiff", ".bmp", ".webp"}
+    if ext not in allowed:
+        raise HTTPException(400, f"Unsupported file type: {ext}")
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = Path(tmp.name)
+
+    try:
+        raw_text = ""
+        page_count = 0
+        source_type = ext.lstrip(".")
+
+        if ext == ".pptx":
+            from extractor import extract_content_from_pptx
+            pages = extract_content_from_pptx(str(tmp_path))
+            page_count = len(pages)
+            raw_text = "\n\n".join(p.get("text", "") for p in pages if p.get("text"))
+        elif ext == ".pdf":
+            from extractor import extract_content_from_pdf
+            pages = extract_content_from_pdf(str(tmp_path))
+            if pages:
+                page_count = len(pages)
+                raw_text = "\n\n".join(p.get("text", "") for p in pages if p.get("text"))
+            else:
+                raise HTTPException(400, "Could not extract text from PDF (scanned/image-only PDFs not supported for raw upload)")
+        else:
+            raise HTTPException(400, "Image files must be uploaded via the full notebook pipeline")
+
+        if not raw_text.strip():
+            raise HTTPException(400, "No text could be extracted from this file")
+
+        source_id = f"src_{uuid.uuid4().hex[:10]}"
+        title = Path(file.filename).stem.replace("_", " ").replace("-", " ")
+
+        db = SessionLocal()
+        try:
+            fs = FolderSource(
+                user_id=user.id,
+                folder_name=folder_name,
+                source_id=source_id,
+                title=title,
+                filename=file.filename,
+                source_type=source_type,
+                page_count=page_count,
+                raw_text=raw_text,
+            )
+            db.add(fs)
+            db.commit()
+        finally:
+            db.close()
+
+        chunk_count = 0
+        try:
+            chunk_count = rag.embed_raw_source(user.id, folder_name, source_id, title, raw_text)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
+        return {
+            "source_id": source_id,
+            "title": title,
+            "page_count": page_count,
+            "chunk_count": chunk_count,
+            "filename": file.filename,
+        }
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+@app.delete("/api/folders/{folder_name}/sources/{source_id}")
+def delete_folder_source(folder_name: str, source_id: str, user: User = Depends(get_current_user)):
+    """Delete a raw source from a folder."""
+    db = SessionLocal()
+    try:
+        fs = db.query(FolderSource).filter(
+            FolderSource.user_id == user.id,
+            FolderSource.folder_name == folder_name,
+            FolderSource.source_id == source_id,
+        ).first()
+        if not fs:
+            raise HTTPException(404, "Source not found")
+        db.delete(fs)
+        db.commit()
+    finally:
+        db.close()
+
+    try:
+        rag.delete_notebook_embeddings(user.id, folder_name, source_id)
+    except Exception:
+        pass
+
+    return {"status": "deleted", "source_id": source_id}
+
+
 @app.get("/api/folders/{folder_name}/sources")
 def folder_sources(folder_name: str, user: User = Depends(get_current_user)):
-    """List embedded sources with metadata."""
+    """List all sources (notebooks + raw documents) with metadata."""
     try:
-        sources = rag.get_folder_sources(user.id, folder_name)
+        chroma_sources = rag.get_folder_sources(user.id, folder_name)
     except Exception:
         import traceback
         traceback.print_exc()
-        sources = []
+        chroma_sources = []
+
+    embedded_ids = {s["notebook_id"] for s in chroma_sources}
+
     db = SessionLocal()
     try:
         notebooks = (
@@ -834,19 +957,40 @@ def folder_sources(folder_name: str, user: User = Depends(get_current_user)):
             )
             .all()
         )
-        nb_list = []
-        embedded_ids = {s["notebook_id"] for s in sources}
+        raw_sources = (
+            db.query(FolderSource)
+            .filter(
+                FolderSource.user_id == user.id,
+                FolderSource.folder_name == folder_name,
+            )
+            .all()
+        )
+
+        all_sources = []
         for nb in notebooks:
             data = json.loads(nb.notebook_json)
-            nb_list.append({
+            all_sources.append({
                 "notebook_id": nb.notebook_id,
                 "saved_id": nb.id,
                 "title": data.get("title", nb.title),
                 "course": data.get("course", nb.course),
                 "section_count": len(data.get("sections") or []),
                 "embedded": nb.notebook_id in embedded_ids,
+                "type": "notebook",
             })
-        return {"sources": nb_list, "embedding_stats": sources}
+        for src in raw_sources:
+            all_sources.append({
+                "notebook_id": src.source_id,
+                "source_id": src.source_id,
+                "title": src.title,
+                "filename": src.filename,
+                "source_type": src.source_type,
+                "page_count": src.page_count,
+                "embedded": src.source_id in embedded_ids,
+                "type": "document",
+            })
+
+        return {"sources": all_sources, "embedding_stats": chroma_sources}
     finally:
         db.close()
 

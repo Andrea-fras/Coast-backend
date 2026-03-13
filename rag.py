@@ -14,7 +14,7 @@ from openai import OpenAI
 
 load_dotenv()
 
-from database import SavedNotebook, SessionLocal
+from database import FolderSource, SavedNotebook, SessionLocal
 
 CHROMA_PATH = Path(os.environ.get("CHROMA_PATH", str(Path(__file__).parent / "chroma_data")))
 CHROMA_PATH.mkdir(parents=True, exist_ok=True)
@@ -95,6 +95,45 @@ def chunk_notebook(notebook_json: dict) -> list[dict]:
     return chunks
 
 
+def chunk_raw_text(text: str, title: str, source_id: str) -> list[dict]:
+    """Split raw document text into chunks, matching chunk_notebook output format."""
+    if not text or not text.strip():
+        return []
+
+    paragraphs = re.split(r"\n{2,}", text.strip())
+    chunks = []
+    current = ""
+    para_idx = 0
+
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+
+        if len(current) + len(para) > CHUNK_TARGET_CHARS and current:
+            chunks.append({
+                "text": current.strip(),
+                "notebook_title": title,
+                "notebook_id": source_id,
+                "section_title": f"Part {para_idx + 1}",
+            })
+            overlap_start = max(0, len(current) - CHUNK_OVERLAP_CHARS)
+            current = current[overlap_start:] + "\n\n" + para
+            para_idx += 1
+        else:
+            current = current + "\n\n" + para if current else para
+
+    if current.strip():
+        chunks.append({
+            "text": current.strip(),
+            "notebook_title": title,
+            "notebook_id": source_id,
+            "section_title": f"Part {para_idx + 1}",
+        })
+
+    return chunks
+
+
 # ---------------------------------------------------------------------------
 # Embedding
 # ---------------------------------------------------------------------------
@@ -160,6 +199,48 @@ def delete_notebook_embeddings(user_id: int, folder: str, notebook_id: str):
         pass
 
 
+def embed_raw_source(user_id: int, folder: str, source_id: str, title: str, raw_text: str) -> int:
+    """Chunk raw text, embed, and store in ChromaDB. Returns chunk count."""
+    col_name = _collection_name(user_id, folder)
+
+    delete_notebook_embeddings(user_id, folder, source_id)
+
+    chunks = chunk_raw_text(raw_text, title, source_id)
+    if not chunks:
+        return 0
+
+    texts = [c["text"] for c in chunks]
+    try:
+        embeddings = _get_embeddings(texts)
+    except Exception:
+        traceback.print_exc()
+        return 0
+
+    collection = _get_chroma().get_or_create_collection(
+        name=col_name,
+        metadata={"hnsw:space": "cosine"},
+    )
+
+    ids = [f"{source_id}_chunk_{i}" for i in range(len(chunks))]
+    metadatas = [
+        {
+            "notebook_id": source_id,
+            "notebook_title": c["notebook_title"],
+            "section_title": c["section_title"],
+        }
+        for c in chunks
+    ]
+
+    collection.add(
+        ids=ids,
+        embeddings=embeddings,
+        documents=texts,
+        metadatas=metadatas,
+    )
+
+    return len(chunks)
+
+
 # ---------------------------------------------------------------------------
 # Search
 # ---------------------------------------------------------------------------
@@ -223,7 +304,7 @@ def build_folder_context(user_id: int, folder: str, query: str, max_chars: int =
 # ---------------------------------------------------------------------------
 
 def embed_all_in_folder(user_id: int, folder: str) -> dict:
-    """Embed all notebooks in a folder. Returns summary."""
+    """Embed all notebooks and raw sources in a folder. Returns summary."""
     db = SessionLocal()
     try:
         notebooks = (
@@ -247,10 +328,24 @@ def embed_all_in_folder(user_id: int, folder: str) -> dict:
             except Exception:
                 traceback.print_exc()
 
+        raw_sources = (
+            db.query(FolderSource)
+            .filter(FolderSource.user_id == user_id, FolderSource.folder_name == folder)
+            .all()
+        )
+        for src in raw_sources:
+            try:
+                count = embed_raw_source(user_id, folder, src.source_id, src.title, src.raw_text)
+                total_chunks += count
+                if count > 0:
+                    embedded_count += 1
+            except Exception:
+                traceback.print_exc()
+
         return {
             "notebooks_embedded": embedded_count,
             "total_chunks": total_chunks,
-            "notebooks_in_folder": len(notebooks),
+            "notebooks_in_folder": len(notebooks) + len(raw_sources),
         }
     finally:
         db.close()

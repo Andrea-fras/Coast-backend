@@ -12,7 +12,7 @@ from openai import OpenAI
 
 load_dotenv()
 
-from database import CourseOutline, SavedNotebook, SessionLocal
+from database import CourseOutline, FolderSource, SavedNotebook, SessionLocal
 import rag
 
 
@@ -29,7 +29,16 @@ def generate_outline(user_id: int, folder_name: str) -> dict:
             )
             .all()
         )
-        if not notebooks:
+        raw_sources = (
+            db.query(FolderSource)
+            .filter(
+                FolderSource.user_id == user_id,
+                FolderSource.folder_name == folder_name,
+            )
+            .all()
+        )
+
+        if not notebooks and not raw_sources:
             return {"error": "No sources in this folder yet."}
 
         source_summaries = []
@@ -43,6 +52,13 @@ def generate_outline(user_id: int, folder_name: str) -> dict:
                 content_preview = (s.get("content", "") or "")[:200]
                 sec_info.append(f"  - {sec_title}: {content_preview}")
             source_summaries.append(f'Source: "{title}"\nSections:\n' + "\n".join(sec_info))
+
+        for src in raw_sources:
+            preview = (src.raw_text or "")[:1500]
+            source_summaries.append(
+                f'Source: "{src.title}" (raw document, {src.page_count} pages)\n'
+                f'Content preview:\n{preview}'
+            )
 
         sources_text = "\n\n".join(source_summaries)
         if len(sources_text) > 8000:
@@ -63,7 +79,8 @@ def generate_outline(user_id: int, folder_name: str) -> dict:
             '"key_topics": ["...", "..."], "source_notebooks": ["..."], "estimated_minutes": 20}]'
         )
 
-        context = f"Folder: {folder_name}\nNumber of sources: {len(notebooks)}\n\nSource materials:\n{sources_text}"
+        total_sources = len(notebooks) + len(raw_sources)
+        context = f"Folder: {folder_name}\nNumber of sources: {total_sources}\n\nSource materials:\n{sources_text}"
 
         outline_sections = _call_llm_for_outline(system, context)
         if not outline_sections:

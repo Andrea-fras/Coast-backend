@@ -209,6 +209,22 @@ class StudyFolder(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class FolderSource(Base):
+    """Raw uploaded document in a folder (no notebook generation)."""
+    __tablename__ = "folder_sources"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    folder_name = Column(String(100), nullable=False, index=True)
+    source_id = Column(String(50), nullable=False, unique=True)
+    title = Column(String(200), nullable=False)
+    filename = Column(String(200), nullable=False)
+    source_type = Column(String(20), nullable=False)
+    page_count = Column(Integer, default=0)
+    raw_text = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class CourseOutline(Base):
     """Structured lesson outline generated from folder sources."""
     __tablename__ = "course_outlines"
