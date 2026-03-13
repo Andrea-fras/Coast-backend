@@ -205,25 +205,35 @@ def _call_gemini(messages: list[dict], max_tokens: int = 500, temperature: float
     if system_text:
         config["system_instruction"] = system_text.strip()
 
-    response = client.models.generate_content(
-        model=model,
-        contents=parts,
-        config=config,
-    )
+    try:
+        response = client.models.generate_content(
+            model=model,
+            contents=parts,
+            config=config,
+        )
+    except Exception as e:
+        print(f"[Gemini] API call failed: {e}")
+        return "I'm having a brief technical issue. Could you try asking again?"
 
-    if not response.candidates:
-        block_reason = getattr(response, 'prompt_feedback', None)
-        print(f"[Gemini] No candidates returned. Feedback: {block_reason}")
+    if not response or not getattr(response, 'candidates', None):
+        print(f"[Gemini] No candidates. Feedback: {getattr(response, 'prompt_feedback', None)}")
         return "I'd love to help with that! Could you rephrase your question?"
 
-    # Extract only text parts, skip thought_signature parts
     text_parts = []
     for candidate in response.candidates:
-        if candidate.content and candidate.content.parts:
-            for part in candidate.content.parts:
+        content = getattr(candidate, 'content', None)
+        if content and getattr(content, 'parts', None):
+            for part in content.parts:
                 if hasattr(part, "text") and part.text:
                     text_parts.append(part.text)
-    return " ".join(text_parts).strip() if text_parts else response.text.strip()
+
+    if text_parts:
+        return " ".join(text_parts).strip()
+
+    try:
+        return response.text.strip()
+    except Exception:
+        return "I'd love to help with that! Could you rephrase your question?"
 
 
 def _summarize_old_messages(messages: list[ChatMessage]) -> Optional[str]:
