@@ -430,7 +430,7 @@ def generate_briefing(user_id: int, user_name: str) -> str:
                     contents=context,
                     config={
                         "system_instruction": system,
-                        "max_output_tokens": 600,
+                        "max_output_tokens": 2048,
                         "temperature": 0.8,
                         "thinking_config": {"thinking_budget": 1024},
                     },

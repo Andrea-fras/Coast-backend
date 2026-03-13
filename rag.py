@@ -14,14 +14,19 @@ from openai import OpenAI
 
 load_dotenv()
 
-import chromadb
-
 from database import SavedNotebook, SessionLocal
 
 CHROMA_PATH = Path(os.environ.get("CHROMA_PATH", str(Path(__file__).parent / "chroma_data")))
 CHROMA_PATH.mkdir(parents=True, exist_ok=True)
 
-_chroma_client = chromadb.PersistentClient(path=str(CHROMA_PATH))
+_chroma_client = None
+
+def _get_chroma():
+    global _chroma_client
+    if _chroma_client is None:
+        import chromadb
+        _chroma_client = chromadb.PersistentClient(path=str(CHROMA_PATH))
+    return _chroma_client
 
 EMBEDDING_MODEL = "text-embedding-3-small"
 CHUNK_TARGET_CHARS = 1200
@@ -118,7 +123,7 @@ def embed_notebook(user_id: int, folder: str, notebook_id: str, notebook_json: d
         traceback.print_exc()
         return 0
 
-    collection = _chroma_client.get_or_create_collection(
+    collection = _get_chroma().get_or_create_collection(
         name=col_name,
         metadata={"hnsw:space": "cosine"},
     )
@@ -147,7 +152,7 @@ def delete_notebook_embeddings(user_id: int, folder: str, notebook_id: str):
     """Remove all embeddings for a specific notebook from the folder collection."""
     col_name = _collection_name(user_id, folder)
     try:
-        collection = _chroma_client.get_collection(name=col_name)
+        collection = _get_chroma().get_collection(name=col_name)
         existing = collection.get(where={"notebook_id": notebook_id})
         if existing["ids"]:
             collection.delete(ids=existing["ids"])
@@ -163,7 +168,7 @@ def search_folder(user_id: int, folder: str, query: str, top_k: int = 8) -> list
     """Semantic search across all notebooks in a folder."""
     col_name = _collection_name(user_id, folder)
     try:
-        collection = _chroma_client.get_collection(name=col_name)
+        collection = _get_chroma().get_collection(name=col_name)
     except Exception:
         return []
 
@@ -255,7 +260,7 @@ def get_folder_sources(user_id: int, folder: str) -> list[dict]:
     """Get metadata about embedded notebooks in a folder."""
     col_name = _collection_name(user_id, folder)
     try:
-        collection = _chroma_client.get_collection(name=col_name)
+        collection = _get_chroma().get_collection(name=col_name)
         all_data = collection.get(include=["metadatas"])
     except Exception:
         return []

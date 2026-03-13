@@ -792,13 +792,23 @@ def delete_folder(folder_name: str, user: User = Depends(get_current_user)):
 @app.post("/api/folders/{folder_name}/embed")
 def embed_folder(folder_name: str, user: User = Depends(get_current_user)):
     """Embed all notebooks in a folder into ChromaDB."""
-    result = rag.embed_all_in_folder(user.id, folder_name)
-    return result
+    try:
+        result = rag.embed_all_in_folder(user.id, folder_name)
+        return result
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        return {"notebooks_embedded": 0, "total_chunks": 0, "error": "Embedding failed"}
 
 @app.get("/api/folders/{folder_name}/sources")
 def folder_sources(folder_name: str, user: User = Depends(get_current_user)):
     """List embedded sources with metadata."""
-    sources = rag.get_folder_sources(user.id, folder_name)
+    try:
+        sources = rag.get_folder_sources(user.id, folder_name)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        sources = []
     db = SessionLocal()
     try:
         notebooks = (
