@@ -59,13 +59,14 @@ app.add_middleware(
 )
 
 from starlette.requests import Request as StarletteRequest
-from starlette.responses import JSONResponse as StarletteJSONResponse
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: StarletteRequest, exc: Exception):
+    if isinstance(exc, HTTPException):
+        raise exc
     import traceback
     traceback.print_exc()
-    return StarletteJSONResponse(status_code=500, content={"detail": "Internal server error"})
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 GENERATED_DIR = Path(__file__).parent / "generated"
 GENERATED_DIR.mkdir(exist_ok=True)

@@ -241,9 +241,21 @@ class CourseOutline(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+def _run_migrations():
+    """Add columns that may be missing from existing tables."""
+    from sqlalchemy import inspect, text
+    insp = inspect(engine)
+    if "folder_sources" in insp.get_table_names():
+        cols = [c["name"] for c in insp.get_columns("folder_sources")]
+        if "file_path" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE folder_sources ADD COLUMN file_path TEXT"))
+
+
 def init_db():
     """Create all tables."""
     Base.metadata.create_all(engine)
+    _run_migrations()
 
 
 def get_db() -> Session:
