@@ -35,6 +35,7 @@ from database import (
     load_papers_from_json,
 )
 import tutor
+import spaced_rep
 from viz_router import viz_router
 
 app = FastAPI(title="Coast API", version="2.0.0")
@@ -772,9 +773,10 @@ def save_notebook(notebook: dict, user: User = Depends(get_current_user)):
     """Save a generated notebook to the user's account."""
     db = SessionLocal()
     try:
+        nb_id = notebook.get("id", f"nb_{uuid.uuid4().hex[:8]}")
         saved = SavedNotebook(
             user_id=user.id,
-            notebook_id=notebook.get("id", f"nb_{uuid.uuid4().hex[:8]}"),
+            notebook_id=nb_id,
             title=notebook.get("title", "Untitled"),
             course=notebook.get("course", ""),
             notebook_json=json.dumps(notebook),
@@ -784,6 +786,13 @@ def save_notebook(notebook: dict, user: User = Depends(get_current_user)):
         db.add(saved)
         db.commit()
         db.refresh(saved)
+
+        try:
+            spaced_rep.create_cards_for_notebook(user.id, nb_id, notebook)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
         return {"status": "saved", "id": saved.id}
     finally:
         db.close()
@@ -960,6 +969,61 @@ def skill_profile(user: User = Depends(get_current_user)):
 def tutor_memo_endpoint(user: User = Depends(get_current_user)):
     """Get Pedro's memo about the user (for transparency / debugging)."""
     return tutor.get_tutor_memo(user.id)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SPACED REPETITION
+# ═══════════════════════════════════════════════════════════════════════════
+
+class ConceptExtractRequest(BaseModel):
+    notebook_id: str
+
+class ReviewSubmitRequest(BaseModel):
+    card_id: int
+    quality: int  # 0-5
+
+@app.post("/api/concepts/extract")
+def extract_concepts_endpoint(req: ConceptExtractRequest, user: User = Depends(get_current_user)):
+    """Extract review concepts from a saved notebook."""
+    db = SessionLocal()
+    try:
+        nb = db.query(SavedNotebook).filter(
+            SavedNotebook.notebook_id == req.notebook_id,
+            SavedNotebook.user_id == user.id,
+        ).first()
+        if not nb:
+            raise HTTPException(status_code=404, detail="Notebook not found")
+        notebook_json = json.loads(nb.notebook_json)
+        count = spaced_rep.create_cards_for_notebook(user.id, req.notebook_id, notebook_json)
+        return {"status": "ok", "cards_created": count}
+    finally:
+        db.close()
+
+@app.get("/api/review/due")
+def review_due(user: User = Depends(get_current_user)):
+    """Get review cards due now."""
+    cards = spaced_rep.get_due_cards(user.id)
+    return {"cards": cards, "count": len(cards)}
+
+@app.post("/api/review/submit")
+def review_submit(req: ReviewSubmitRequest, user: User = Depends(get_current_user)):
+    """Submit a review quality grade and update SM-2 schedule."""
+    result = spaced_rep.submit_review(req.card_id, user.id, req.quality)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+@app.get("/api/review/stats")
+def review_stats(user: User = Depends(get_current_user)):
+    """Get spaced repetition stats for the dashboard."""
+    return spaced_rep.get_review_stats(user.id)
+
+@app.get("/api/dashboard/briefing")
+def dashboard_briefing(user: User = Depends(get_current_user)):
+    """Get Pedro's personalized daily briefing."""
+    message = spaced_rep.generate_briefing(user.id, user.name)
+    stats = spaced_rep.get_review_stats(user.id)
+    return {"message": message, "review_stats": stats}
 
 
 # ═══════════════════════════════════════════════════════════════════════════

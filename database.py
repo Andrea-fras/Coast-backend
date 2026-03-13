@@ -54,6 +54,8 @@ class User(Base):
     chat_messages = relationship("ChatMessage", back_populates="user", cascade="all, delete-orphan")
     tutor_memo = relationship("TutorMemo", back_populates="user", uselist=False, cascade="all, delete-orphan")
     skill_profile = relationship("SkillProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    review_cards = relationship("ReviewCard", back_populates="user", cascade="all, delete-orphan")
+    review_history = relationship("ReviewHistory", back_populates="user", cascade="all, delete-orphan")
 
 
 class QuizSession(Base):
@@ -159,6 +161,42 @@ class SkillProfile(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="skill_profile")
+
+
+class ReviewCard(Base):
+    """A single reviewable concept tied to a user and notebook section."""
+    __tablename__ = "review_cards"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    notebook_id = Column(String(100), nullable=False, index=True)
+    section_title = Column(String(255), default="")
+    concept = Column(String(255), nullable=False)
+    concept_summary = Column(Text, default="")
+
+    interval = Column(Float, default=1.0)
+    ease_factor = Column(Float, default=2.5)
+    repetitions = Column(Integer, default=0)
+    next_review = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_review = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    user = relationship("User", back_populates="review_cards")
+    history = relationship("ReviewHistory", back_populates="card", cascade="all, delete-orphan")
+
+
+class ReviewHistory(Base):
+    """Log of each spaced-repetition review attempt."""
+    __tablename__ = "review_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    card_id = Column(Integer, ForeignKey("review_cards.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    quality = Column(Integer, nullable=False)  # 0-5 SM-2 scale
+    reviewed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    card = relationship("ReviewCard", back_populates="history")
+    user = relationship("User", back_populates="review_history")
 
 
 def init_db():
