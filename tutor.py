@@ -124,6 +124,7 @@ def _call_claude_for_viz(messages: list[dict], max_tokens: int = 4096) -> str:
     import anthropic
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
+        print("[Claude Viz] No ANTHROPIC_API_KEY set, skipping")
         return ""
 
     client = anthropic.Anthropic(api_key=api_key)
@@ -136,7 +137,16 @@ def _call_claude_for_viz(messages: list[dict], max_tokens: int = 4096) -> str:
         else:
             claude_messages.append({"role": m["role"], "content": m["content"]})
 
+    if not claude_messages:
+        print("[Claude Viz] No non-system messages to send, skipping")
+        return ""
+
+    # Ensure first message is from user (Claude API requirement)
+    if claude_messages[0]["role"] != "user":
+        claude_messages.insert(0, {"role": "user", "content": "Please provide a visualization."})
+
     model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+    print(f"[Claude Viz] Calling model={model}, {len(claude_messages)} messages, system_len={len(system_text)}")
 
     try:
         response = client.messages.create(
@@ -146,15 +156,23 @@ def _call_claude_for_viz(messages: list[dict], max_tokens: int = 4096) -> str:
             messages=claude_messages,
         )
         text = response.content[0].text if response.content else ""
-        return _clean_svg_response(text) if text else ""
-    except anthropic.RateLimitError:
-        print("[Claude Viz] Rate limited by Anthropic API")
+        print(f"[Claude Viz] Got response: {len(text)} chars, stop_reason={response.stop_reason}")
+        if not text:
+            print("[Claude Viz] Empty response from Claude")
+            return ""
+        cleaned = _clean_svg_response(text)
+        has_svg = "<svg" in cleaned.lower()
+        print(f"[Claude Viz] After cleaning: {len(cleaned)} chars, has_svg={has_svg}")
+        return cleaned
+    except anthropic.RateLimitError as e:
+        print(f"[Claude Viz] Rate limited by Anthropic API: {e}")
         return ""
     except anthropic.APIError as e:
-        print(f"[Claude Viz] API error: {e}")
+        print(f"[Claude Viz] API error (status={e.status_code}): {e}")
         return ""
     except Exception:
         import traceback
+        print("[Claude Viz] Unexpected error:")
         traceback.print_exc()
         return ""
 
@@ -693,11 +711,14 @@ def send_message(
         # Call LLM — route viz requests to Claude, fall back to CHAT_PROVIDER
         reply = None
         is_viz = _detect_viz_request(message)
-        if is_viz and os.getenv("ANTHROPIC_API_KEY"):
+        has_anthropic = bool(os.getenv("ANTHROPIC_API_KEY"))
+        print(f"[Chat] is_viz={is_viz}, has_anthropic={has_anthropic}, message={message[:80]!r}")
+        if is_viz and has_anthropic:
             viz_messages = [{"role": "system", "content": SVG_VIZ_SYSTEM_PROMPT + "\n\n" + system_prompt}]
             for m in messages[1:]:
                 viz_messages.append(m)
             reply = _call_claude_for_viz(viz_messages, max_tokens=4096)
+            print(f"[Chat] Claude viz reply length: {len(reply) if reply else 0}")
 
         if not reply:
             if CHAT_PROVIDER == "gemini":
@@ -859,11 +880,14 @@ def send_message_stream(
 
         viz_done = False
         is_viz = _detect_viz_request(message)
-        if is_viz and os.getenv("ANTHROPIC_API_KEY"):
+        has_anthropic = bool(os.getenv("ANTHROPIC_API_KEY"))
+        print(f"[Stream] is_viz={is_viz}, has_anthropic={has_anthropic}, message={message[:80]!r}")
+        if is_viz and has_anthropic:
             viz_messages = [{"role": "system", "content": SVG_VIZ_SYSTEM_PROMPT + "\n\n" + system_prompt}]
             for m in llm_messages[1:]:
                 viz_messages.append(m)
             reply = _call_claude_for_viz(viz_messages, max_tokens=4096)
+            print(f"[Stream] Claude viz reply length: {len(reply) if reply else 0}")
             if reply:
                 full_reply = reply
                 yield (reply, None)
