@@ -328,9 +328,35 @@ def get_review_stats(user_id: int) -> dict:
         db.close()
 
 
+def backfill_cards_for_user(user_id: int) -> int:
+    """Extract concepts from any notebooks that don't have review cards yet."""
+    db = SessionLocal()
+    try:
+        notebooks = db.query(SavedNotebook).filter(SavedNotebook.user_id == user_id, SavedNotebook.deleted_at == None).all()
+        total_created = 0
+        for nb in notebooks:
+            existing = db.query(ReviewCard).filter(
+                ReviewCard.user_id == user_id,
+                ReviewCard.notebook_id == nb.notebook_id,
+            ).count()
+            if existing > 0:
+                continue
+            try:
+                notebook_json = json.loads(nb.notebook_json)
+                count = create_cards_for_notebook(user_id, nb.notebook_id, notebook_json)
+                total_created += count
+            except Exception:
+                traceback.print_exc()
+        return total_created
+    finally:
+        db.close()
+
+
 def generate_briefing(user_id: int, user_name: str) -> str:
     """Generate Pedro's daily briefing message using LLM."""
     from database import SkillProfile, QuizSession
+
+    backfill_cards_for_user(user_id)
 
     db = SessionLocal()
     try:
@@ -381,28 +407,34 @@ def generate_briefing(user_id: int, user_name: str) -> str:
         gemini_key = os.getenv("GEMINI_API_KEY", "")
         if gemini_key:
             client = genai.Client(api_key=gemini_key)
-            response = client.models.generate_content(
-                model="gemini-3.1-pro-preview",
-                contents=context,
-                config={
-                    "system_instruction": system,
-                    "max_output_tokens": 300,
-                    "temperature": 0.8,
-                },
-            )
-            text = ""
-            if response.candidates:
-                for part in (response.candidates[0].content.parts or []):
-                    if hasattr(part, "text") and part.text:
-                        text += part.text
-            if text.strip():
-                return text.strip()
-        else:
-            openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
+            try:
+                response = client.models.generate_content(
+                    model="gemini-3.1-pro-preview",
+                    contents=context,
+                    config={
+                        "system_instruction": system,
+                        "max_output_tokens": 600,
+                        "temperature": 0.8,
+                        "thinking_config": {"thinking_budget": 0},
+                    },
+                )
+                text = ""
+                if response.candidates and response.candidates[0].content:
+                    for part in (response.candidates[0].content.parts or []):
+                        if hasattr(part, "text") and part.text:
+                            text += part.text
+                if text.strip():
+                    return text.strip()
+            except Exception:
+                traceback.print_exc()
+        
+        openai_key = os.getenv("OPENAI_API_KEY", "")
+        if openai_key:
+            openai_client = OpenAI(api_key=openai_key)
             resp = openai_client.chat.completions.create(
                 model=os.getenv("OPENAI_MODEL", "gpt-4o"),
                 messages=messages,
-                max_tokens=300,
+                max_tokens=500,
                 temperature=0.8,
             )
             text = resp.choices[0].message.content or ""
