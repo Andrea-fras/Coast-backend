@@ -199,6 +199,16 @@ class ReviewHistory(Base):
     user = relationship("User", back_populates="review_history")
 
 
+class StudyFolder(Base):
+    """Persistent folder for grouping notebooks."""
+    __tablename__ = "study_folders"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 def init_db():
     """Create all tables."""
     Base.metadata.create_all(engine)

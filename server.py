@@ -29,6 +29,7 @@ from database import (
     SessionAnswer,
     SessionLocal,
     SkillProfile,
+    StudyFolder,
     TutorMemo,
     User,
     init_db,
@@ -705,16 +706,11 @@ def list_notebooks(user: User = Depends(get_current_user)):
 
 @app.get("/api/notebooks/folders")
 def list_folders(user: User = Depends(get_current_user)):
-    """Return distinct folder names for this user's notebooks."""
+    """Return persisted folder names for this user."""
     db = SessionLocal()
     try:
-        rows = (
-            db.query(SavedNotebook.folder)
-            .filter(SavedNotebook.user_id == user.id, SavedNotebook.folder != "")
-            .distinct()
-            .all()
-        )
-        return [r[0] for r in rows]
+        rows = db.query(StudyFolder).filter(StudyFolder.user_id == user.id).order_by(StudyFolder.created_at).all()
+        return [r.name for r in rows]
     finally:
         db.close()
 
@@ -762,16 +758,28 @@ class CreateFolderRequest(BaseModel):
 
 @app.post("/api/notebooks/folders")
 def create_folder(req: CreateFolderRequest, user: User = Depends(get_current_user)):
-    """Validate and return a new folder name."""
+    """Create and persist a new folder."""
     name = req.name.strip()[:100]
     if not name:
         raise HTTPException(400, "Folder name cannot be empty")
-    return {"folder": name}
+    db = SessionLocal()
+    try:
+        existing = db.query(StudyFolder).filter(
+            StudyFolder.user_id == user.id, StudyFolder.name == name
+        ).first()
+        if existing:
+            return {"folder": name}
+        folder = StudyFolder(user_id=user.id, name=name)
+        db.add(folder)
+        db.commit()
+        return {"folder": name}
+    finally:
+        db.close()
 
 
 @app.delete("/api/notebooks/folders/{folder_name}")
 def delete_folder(folder_name: str, user: User = Depends(get_current_user)):
-    """Move all notebooks in this folder back to root."""
+    """Delete a folder and move its notebooks back to root."""
     db = SessionLocal()
     try:
         notebooks = db.query(SavedNotebook).filter(
@@ -779,6 +787,11 @@ def delete_folder(folder_name: str, user: User = Depends(get_current_user)):
         ).all()
         for nb in notebooks:
             nb.folder = ""
+        folder = db.query(StudyFolder).filter(
+            StudyFolder.user_id == user.id, StudyFolder.name == folder_name
+        ).first()
+        if folder:
+            db.delete(folder)
         db.commit()
         return {"status": "deleted", "moved_count": len(notebooks)}
     finally:
@@ -1156,6 +1169,7 @@ async def generate_notes(
     instructions: str = Form(""),
     provider: str = Form("openai"),
     detail: str = Form("low"),
+    folder: str = Form(""),
     authorization: Optional[str] = Header(None),
 ):
     """Upload a PDF/image and stream progress via SSE, final event has the notebook."""
@@ -1253,6 +1267,7 @@ async def generate_notes(
                         result["_saved_id"] = duplicate.id
                         result["_folder"] = duplicate.folder or ""
                     else:
+                        target_folder = folder.strip()[:100] if folder else ""
                         saved = SavedNotebook(
                             user_id=user.id,
                             notebook_id=nb_id,
@@ -1260,12 +1275,26 @@ async def generate_notes(
                             course=result.get("course", ""),
                             notebook_json=json.dumps(result),
                             is_premade=False,
+                            folder=target_folder,
                         )
                         db.add(saved)
                         db.commit()
                         db.refresh(saved)
                         result["_saved_id"] = saved.id
-                        result["_folder"] = ""
+                        result["_folder"] = target_folder
+
+                        if target_folder:
+                            try:
+                                rag.embed_notebook(user.id, target_folder, nb_id, result)
+                            except Exception:
+                                import traceback
+                                traceback.print_exc()
+
+                        try:
+                            spaced_rep.create_cards_for_notebook(user.id, nb_id, result)
+                        except Exception:
+                            import traceback
+                            traceback.print_exc()
                 finally:
                     db.close()
 
