@@ -118,6 +118,8 @@ GOOD FOR:
 - Timelines and step-by-step process flows
 - Venn diagrams and set relationships
 
+SIZE CONSTRAINT: Keep SVGs concise and focused. Aim for under 3000 characters of SVG code. Prefer fewer, well-designed elements over exhaustive detail. If a concept is complex, simplify the diagram to its core idea rather than trying to show everything. A clear, simple diagram is always better than a cluttered one.
+
 IMPORTANT: Always include a clear text explanation alongside the visualization. The SVG enhances understanding — it does not replace the explanation."""
 
 
@@ -727,7 +729,7 @@ def send_message(
             viz_messages = [{"role": "system", "content": SVG_VIZ_SYSTEM_PROMPT + "\n\n" + system_prompt}]
             for m in messages[1:]:
                 viz_messages.append(m)
-            reply = _call_claude_for_viz(viz_messages, max_tokens=4096)
+            reply = _call_claude_for_viz(viz_messages, max_tokens=16000)
             print(f"[Chat] Claude viz reply length: {len(reply) if reply else 0}")
 
         if not reply:
@@ -896,7 +898,7 @@ def send_message_stream(
             viz_messages = [{"role": "system", "content": SVG_VIZ_SYSTEM_PROMPT + "\n\n" + system_prompt}]
             for m in llm_messages[1:]:
                 viz_messages.append(m)
-            reply = _call_claude_for_viz(viz_messages, max_tokens=4096)
+            reply = _call_claude_for_viz(viz_messages, max_tokens=16000)
             print(f"[Stream] Claude viz reply length: {len(reply) if reply else 0}")
             if reply:
                 full_reply = reply
