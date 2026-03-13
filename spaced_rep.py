@@ -211,7 +211,7 @@ def create_cards_for_notebook(user_id: int, notebook_id: str, notebook_json: dic
                 interval=1.0,
                 ease_factor=2.5,
                 repetitions=0,
-                next_review=now + timedelta(hours=1),
+                next_review=now,
                 created_at=now,
             )
             db.add(card)
@@ -329,9 +329,26 @@ def get_review_stats(user_id: int) -> dict:
 
 
 def backfill_cards_for_user(user_id: int) -> int:
-    """Extract concepts from any notebooks that don't have review cards yet."""
+    """Extract concepts from any notebooks that don't have review cards yet.
+    Also marks never-reviewed cards as immediately due.
+    """
     db = SessionLocal()
     try:
+        now = datetime.now(timezone.utc)
+        never_reviewed = (
+            db.query(ReviewCard)
+            .filter(
+                ReviewCard.user_id == user_id,
+                ReviewCard.last_review == None,
+                ReviewCard.next_review > now,
+            )
+            .all()
+        )
+        for card in never_reviewed:
+            card.next_review = now
+        if never_reviewed:
+            db.commit()
+
         notebooks = db.query(SavedNotebook).filter(SavedNotebook.user_id == user_id, SavedNotebook.deleted_at == None).all()
         total_created = 0
         for nb in notebooks:
