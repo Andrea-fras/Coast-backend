@@ -959,7 +959,7 @@ def chat_send(req: ChatSendRequest, user: User = Depends(get_current_user)):
     """Send a message to Pedro and get a Socratic response."""
     if not req.message.strip():
         raise HTTPException(400, "Message cannot be empty")
-    if req.context_type not in ("notebook", "global", "session"):
+    if req.context_type not in ("notebook", "global", "session", "folder"):
         raise HTTPException(400, "Invalid context_type")
 
     usage = _get_user_usage(user.id)
@@ -994,7 +994,7 @@ def chat_stream(req: ChatSendRequest, user: User = Depends(get_current_user)):
     """Streaming version of chat/send — returns SSE with token chunks."""
     if not req.message.strip():
         raise HTTPException(400, "Message cannot be empty")
-    if req.context_type not in ("notebook", "global", "session"):
+    if req.context_type not in ("notebook", "global", "session", "folder"):
         raise HTTPException(400, "Invalid context_type")
 
     usage = _get_user_usage(user.id)
