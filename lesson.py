@@ -374,6 +374,8 @@ def build_lesson_prompt(user_id: int, folder_name: str) -> str | None:
             "Use analogies and real-world examples to make abstract concepts concrete before formalizing them.\n"
             "4. When the source material contains formulas or equations, explain WHAT each variable means, "
             "WHY the formula works, and walk through a concrete numerical example.\n"
+            "4b. Use markdown TABLES when comparing concepts, listing properties, showing data side-by-side, "
+            "or organizing formulas. Tables render beautifully in the chat and help students see structure.\n"
             "5. When the source material contains exercises or problems, work through them WITH the student: "
             "explain the approach, show each step, and make sure they could solve a similar problem on their own.\n"
             "6. After teaching the key concepts, ask 1-2 quick comprehension questions to check understanding. "

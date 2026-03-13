@@ -61,6 +61,87 @@ CHAT_PROVIDER = os.getenv("PEDRO_PROVIDER", "gemini")
 MEMO_PROVIDER = "openai"
 
 # ---------------------------------------------------------------------------
+# Visualization helpers — Claude Opus 4.6 SVG generation
+# ---------------------------------------------------------------------------
+
+_VIZ_KEYWORDS = [
+    "visualize", "visualise", "visualization", "visualisation",
+    "show me a diagram", "draw", "graph this", "graph it",
+    "plot this", "plot it", "can you graph", "can you draw",
+    "can you plot", "show me a graph", "show me a chart",
+    "make a diagram", "create a diagram", "illustrate",
+    "show visually", "show it visually", "visual representation",
+]
+
+
+def _detect_viz_request(message: str) -> bool:
+    """Check if the user is asking for a visualization."""
+    lower = message.lower()
+    return any(kw in lower for kw in _VIZ_KEYWORDS)
+
+
+SVG_VIZ_SYSTEM_PROMPT = """You are Pedro, an expert AI tutor who creates beautiful, clear SVG visualizations to help students understand concepts.
+
+When asked to visualize something, generate a clean SVG diagram embedded directly in your response. Follow these rules:
+
+SVG RULES:
+1. Output the SVG directly in your markdown response using raw HTML (no markdown code fences around it).
+2. Use viewBox for responsive sizing (e.g., viewBox="0 0 600 400"). Do NOT use fixed width/height attributes.
+3. Wrap the SVG in: <div style="text-align:center;margin:1em 0;"><svg ...>...</svg></div>
+4. Use clear, readable fonts: font-family="system-ui, sans-serif"
+5. Use good colors with contrast. Prefer these palettes:
+   - Blues: #3b82f6, #60a5fa, #93c5fd
+   - Greens: #22c55e, #4ade80
+   - Oranges: #f59e0b, #fbbf24
+   - Reds: #ef4444, #f87171
+   - Purples: #8b5cf6, #a78bfa
+   - Dark text: #1e293b, Light backgrounds: #f8fafc
+6. Include text labels and annotations to make the diagram self-explanatory.
+7. Keep it clean and uncluttered — whitespace is good.
+8. Add a brief text explanation before or after the SVG.
+
+GOOD FOR:
+- Function graphs and mathematical curves (use <polyline> or <path>)
+- Flowcharts and process diagrams (use <rect> + <line> + <text>)
+- Data comparison charts (bar charts, simple pie charts)
+- Tree structures, state machines, network diagrams
+- Concept maps and relationship diagrams
+- Annotated number lines and coordinate systems
+
+IMPORTANT: Always include a text explanation alongside the visualization. The SVG should enhance understanding, not replace explanation."""
+
+
+def _call_claude_for_viz(messages: list[dict], max_tokens: int = 4096) -> str:
+    """Call Claude Opus 4.6 for SVG visualization generation."""
+    import anthropic
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return ""
+
+    client = anthropic.Anthropic(api_key=api_key)
+
+    system_text = ""
+    claude_messages = []
+    for m in messages:
+        if m["role"] == "system":
+            system_text += m["content"] + "\n"
+        else:
+            claude_messages.append({"role": m["role"], "content": m["content"]})
+
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=max_tokens,
+            system=system_text.strip(),
+            messages=claude_messages,
+        )
+        return response.content[0].text if response.content else ""
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        return ""
+
+# ---------------------------------------------------------------------------
 # System Prompt Templates
 # ---------------------------------------------------------------------------
 
@@ -108,7 +189,9 @@ FORMATTING RULES:
 - Use inline math with $...$ for equations (e.g. $E = mc^2$) and display math with $$...$$ for important formulas.
 - Use `backticks` for code, variable names, or short technical terms.
 - Use > blockquotes for key insights or important takeaways.
+- Use markdown tables when comparing concepts, showing data, listing properties, or organizing information side-by-side. Tables are rendered beautifully in the chat.
 - Keep formatting clean and purposeful — don't over-format simple responses.
+- When the student asks you to visualize, draw, graph, or diagram something, let them know you can do that — they just need to ask (e.g., "I can draw a diagram of this if you'd like!").
 
 NOTEBOOK NUDGE RULES:
 13. If you are in a general chat and NO notebook content is available for the topic the student is asking about, mention ONCE (in your first reply on that topic) that uploading their lecture notes would let you give much more specific, course-tailored explanations. Keep it brief and natural, e.g. "I can help with the basics here — but if you upload your lecture slides on this topic, I can give you explanations tailored exactly to your course!"
@@ -590,8 +673,16 @@ def send_message(
             messages.append({"role": role, "content": msg.content})
         messages.append({"role": "user", "content": message})
 
-        # Call LLM (uses CHAT_PROVIDER for student-facing responses)
-        if CHAT_PROVIDER == "gemini":
+        # Call LLM — route viz requests to Claude, everything else to CHAT_PROVIDER
+        is_viz = _detect_viz_request(message)
+        if is_viz and os.getenv("ANTHROPIC_API_KEY"):
+            viz_messages = [{"role": "system", "content": SVG_VIZ_SYSTEM_PROMPT + "\n\n" + system_prompt}]
+            for m in messages[1:]:
+                viz_messages.append(m)
+            reply = _call_claude_for_viz(viz_messages, max_tokens=4096)
+            if not reply:
+                reply = "I couldn't generate the visualization right now. Please try again!"
+        elif CHAT_PROVIDER == "gemini":
             reply = _call_gemini(messages, max_tokens=500, temperature=0.7)
         else:
             client, model = _get_client(CHAT_PROVIDER)
@@ -748,7 +839,17 @@ def send_message_stream(
 
         full_reply = ""
 
-        if CHAT_PROVIDER == "gemini":
+        is_viz = _detect_viz_request(message)
+        if is_viz and os.getenv("ANTHROPIC_API_KEY"):
+            viz_messages = [{"role": "system", "content": SVG_VIZ_SYSTEM_PROMPT + "\n\n" + system_prompt}]
+            for m in llm_messages[1:]:
+                viz_messages.append(m)
+            reply = _call_claude_for_viz(viz_messages, max_tokens=4096)
+            if not reply:
+                reply = "I couldn't generate the visualization right now. Please try again!"
+            full_reply = reply
+            yield (reply, None)
+        elif CHAT_PROVIDER == "gemini":
             from google import genai
             client = genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
             model_name = TUTOR_PROVIDERS["gemini"]["model"]
