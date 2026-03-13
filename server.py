@@ -58,6 +58,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import JSONResponse as StarletteJSONResponse
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: StarletteRequest, exc: Exception):
+    import traceback
+    traceback.print_exc()
+    return StarletteJSONResponse(status_code=500, content={"detail": "Internal server error"})
+
 GENERATED_DIR = Path(__file__).parent / "generated"
 GENERATED_DIR.mkdir(exist_ok=True)
 
@@ -842,12 +851,13 @@ async def upload_folder_source(
     if ext not in allowed:
         raise HTTPException(400, f"Unsupported file type: {ext}")
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-        content = await file.read()
-        tmp.write(content)
-        tmp_path = Path(tmp.name)
-
+    tmp_path = None
     try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+            content = await file.read()
+            tmp.write(content)
+            tmp_path = Path(tmp.name)
+
         raw_text = ""
         page_count = 0
         source_type = ext.lstrip(".")
@@ -864,12 +874,12 @@ async def upload_folder_source(
                 page_count = len(pages)
                 raw_text = "\n\n".join(p.get("text", "") for p in pages if p.get("text"))
             else:
-                raise HTTPException(400, "Could not extract text from PDF (scanned/image-only PDFs not supported for raw upload)")
+                return JSONResponse(status_code=400, content={"detail": "Could not extract text from PDF"})
         else:
-            raise HTTPException(400, "Image files must be uploaded via the full notebook pipeline")
+            return JSONResponse(status_code=400, content={"detail": "Image files must be uploaded via the full notebook pipeline"})
 
         if not raw_text.strip():
-            raise HTTPException(400, "No text could be extracted from this file")
+            return JSONResponse(status_code=400, content={"detail": "No text could be extracted from this file"})
 
         source_id = f"src_{uuid.uuid4().hex[:10]}"
         title = Path(file.filename).stem.replace("_", " ").replace("-", " ")
@@ -905,8 +915,15 @@ async def upload_folder_source(
             "chunk_count": chunk_count,
             "filename": file.filename,
         }
+    except HTTPException:
+        raise
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"detail": "Upload failed — server error"})
     finally:
-        tmp_path.unlink(missing_ok=True)
+        if tmp_path:
+            tmp_path.unlink(missing_ok=True)
 
 
 @app.delete("/api/folders/{folder_name}/sources/{source_id}")
