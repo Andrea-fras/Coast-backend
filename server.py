@@ -38,6 +38,7 @@ from database import (
 import tutor
 import spaced_rep
 import rag
+import lesson
 from viz_router import viz_router
 
 app = FastAPI(title="Coast API", version="2.0.0")
@@ -883,6 +884,43 @@ def folder_notebooks(folder_name: str, user: User = Depends(get_current_user)):
         db.close()
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# LESSON / COURSE OUTLINE
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/folders/{folder_name}/outline")
+def generate_outline(folder_name: str, user: User = Depends(get_current_user)):
+    """Generate or regenerate a course outline from folder sources."""
+    result = lesson.generate_outline(user.id, folder_name)
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    return result
+
+
+@app.get("/api/folders/{folder_name}/lesson")
+def get_lesson_state(folder_name: str, user: User = Depends(get_current_user)):
+    """Get current lesson state — outline, progress, current section."""
+    return lesson.get_lesson_state(user.id, folder_name)
+
+
+@app.post("/api/folders/{folder_name}/lesson/advance")
+def advance_lesson(folder_name: str, user: User = Depends(get_current_user)):
+    """Advance to the next lesson section."""
+    result = lesson.advance_section(user.id, folder_name)
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    return result
+
+
+@app.post("/api/folders/{folder_name}/lesson/reset")
+def reset_lesson(folder_name: str, user: User = Depends(get_current_user)):
+    """Reset lesson progress to start over."""
+    result = lesson.reset_lesson(user.id, folder_name)
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    return result
+
+
 @app.post("/api/notebooks/save")
 def save_notebook(notebook: dict, user: User = Depends(get_current_user)):
     """Save a generated notebook to the user's account."""
@@ -959,7 +997,7 @@ def chat_send(req: ChatSendRequest, user: User = Depends(get_current_user)):
     """Send a message to Pedro and get a Socratic response."""
     if not req.message.strip():
         raise HTTPException(400, "Message cannot be empty")
-    if req.context_type not in ("notebook", "global", "session", "folder"):
+    if req.context_type not in ("notebook", "global", "session", "folder", "lesson"):
         raise HTTPException(400, "Invalid context_type")
 
     usage = _get_user_usage(user.id)
@@ -994,7 +1032,7 @@ def chat_stream(req: ChatSendRequest, user: User = Depends(get_current_user)):
     """Streaming version of chat/send — returns SSE with token chunks."""
     if not req.message.strip():
         raise HTTPException(400, "Message cannot be empty")
-    if req.context_type not in ("notebook", "global", "session", "folder"):
+    if req.context_type not in ("notebook", "global", "session", "folder", "lesson"):
         raise HTTPException(400, "Invalid context_type")
 
     usage = _get_user_usage(user.id)

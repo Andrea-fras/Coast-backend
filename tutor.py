@@ -324,6 +324,8 @@ def build_system_prompt(
             "\n--- SESSION RESULTS (the student just completed a quiz) ---\n"
             + session_context
         )
+    elif context_type == "lesson" and notebook_content:
+        parts.append(notebook_content)
     elif context_type == "folder" and notebook_content:
         parts.append(
             "\n--- FOLDER CONTEXT (retrieved from multiple sources via semantic search) ---\n"
@@ -513,7 +515,15 @@ def send_message(
         session_context = None
         explicit_notebook_ref = False
 
-        if context_type == "folder" and context_id:
+        if context_type == "lesson" and context_id:
+            try:
+                import lesson as lesson_mod
+                notebook_content = lesson_mod.build_lesson_prompt(user_id, context_id)
+            except Exception:
+                import traceback as tb
+                tb.print_exc()
+                notebook_content = None
+        elif context_type == "folder" and context_id:
             try:
                 import rag
                 notebook_content = rag.build_folder_context(user_id, context_id, message)
@@ -670,7 +680,14 @@ def send_message_stream(
         session_context = None
         explicit_notebook_ref = False
 
-        if context_type == "folder" and context_id:
+        if context_type == "lesson" and context_id:
+            try:
+                import lesson as lesson_mod
+                notebook_content = lesson_mod.build_lesson_prompt(user_id, context_id)
+            except Exception:
+                import traceback as tb
+                tb.print_exc()
+        elif context_type == "folder" and context_id:
             try:
                 import rag
                 notebook_content = rag.build_folder_context(user_id, context_id, message)

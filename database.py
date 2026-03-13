@@ -209,6 +209,21 @@ class StudyFolder(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class CourseOutline(Base):
+    """Structured lesson outline generated from folder sources."""
+    __tablename__ = "course_outlines"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    folder_name = Column(String(100), nullable=False, index=True)
+    outline_json = Column(Text, nullable=False)
+    total_sections = Column(Integer, default=0)
+    current_section = Column(Integer, default=0)
+    estimated_minutes = Column(Integer, default=0)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 def init_db():
     """Create all tables."""
     Base.metadata.create_all(engine)
