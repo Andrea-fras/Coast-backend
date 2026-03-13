@@ -18,7 +18,6 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from openai import OpenAI
 
 viz_router = APIRouter()
 
@@ -38,6 +37,7 @@ _MANIM_OK = _manim_available()
 # ── Client ───────────────────────────────────────────────────────────────
 
 def _get_openai():
+    from openai import OpenAI
     return OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
 
 # ── Prompts ──────────────────────────────────────────────────────────────

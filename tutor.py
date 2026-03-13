@@ -14,8 +14,6 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from dotenv import load_dotenv
-from openai import OpenAI
-from google import genai
 
 load_dotenv()
 
@@ -187,11 +185,13 @@ def _get_client(provider: str = "openai") -> tuple[OpenAI, str]:
     kwargs = {"api_key": api_key}
     if cfg.get("base_url"):
         kwargs["base_url"] = cfg["base_url"]
+    from openai import OpenAI
     return OpenAI(**kwargs), cfg["model"]
 
 
 def _call_gemini(messages: list[dict], max_tokens: int = 500, temperature: float = 0.7) -> str:
     """Call Gemini 3.1 Pro with an OpenAI-style messages list."""
+    from google import genai
     client = genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
     model = TUTOR_PROVIDERS["gemini"]["model"]
 
@@ -749,6 +749,7 @@ def send_message_stream(
         full_reply = ""
 
         if CHAT_PROVIDER == "gemini":
+            from google import genai
             client = genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
             model_name = TUTOR_PROVIDERS["gemini"]["model"]
             parts = []

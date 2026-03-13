@@ -9,8 +9,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from dotenv import load_dotenv
-from google import genai
-from openai import OpenAI
 
 load_dotenv()
 
@@ -116,6 +114,7 @@ def extract_concepts(notebook_json: dict) -> list[dict]:
     try:
         gemini_key = os.getenv("GEMINI_API_KEY", "")
         if gemini_key:
+            from google import genai
             client = genai.Client(api_key=gemini_key)
             response = client.models.generate_content(
                 model="gemini-3.1-pro-preview",
@@ -132,6 +131,7 @@ def extract_concepts(notebook_json: dict) -> list[dict]:
                     if hasattr(part, "text") and part.text:
                         text += part.text
         else:
+            from openai import OpenAI
             openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
             resp = openai_client.chat.completions.create(
                 model=os.getenv("OPENAI_MODEL", "gpt-4o"),
@@ -423,6 +423,7 @@ def generate_briefing(user_id: int, user_name: str) -> str:
 
         gemini_key = os.getenv("GEMINI_API_KEY", "")
         if gemini_key:
+            from google import genai
             client = genai.Client(api_key=gemini_key)
             try:
                 response = client.models.generate_content(
@@ -444,9 +445,10 @@ def generate_briefing(user_id: int, user_name: str) -> str:
                     return text.strip()
             except Exception:
                 traceback.print_exc()
-        
+
         openai_key = os.getenv("OPENAI_API_KEY", "")
         if openai_key:
+            from openai import OpenAI
             openai_client = OpenAI(api_key=openai_key)
             resp = openai_client.chat.completions.create(
                 model=os.getenv("OPENAI_MODEL", "gpt-4o"),

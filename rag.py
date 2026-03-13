@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from openai import OpenAI
 
 load_dotenv()
 
@@ -140,6 +139,7 @@ def chunk_raw_text(text: str, title: str, source_id: str) -> list[dict]:
 
 def _get_embeddings(texts: list[str]) -> list[list[float]]:
     """Compute embeddings using OpenAI text-embedding-3-small."""
+    from openai import OpenAI
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
     response = client.embeddings.create(model=EMBEDDING_MODEL, input=texts)
     return [item.embedding for item in response.data]
@@ -457,6 +457,7 @@ def generate_study_plan(user_id: int, folder: str, user_name: str) -> str:
 
         openai_key = os.getenv("OPENAI_API_KEY", "")
         if openai_key:
+            from openai import OpenAI
             client = OpenAI(api_key=openai_key)
             messages = [
                 {"role": "system", "content": system},

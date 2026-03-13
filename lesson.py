@@ -8,7 +8,6 @@ import traceback
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
-from openai import OpenAI
 
 load_dotenv()
 
@@ -157,6 +156,7 @@ def _call_llm_for_outline(system: str, context: str) -> list[dict] | None:
     openai_key = os.getenv("OPENAI_API_KEY", "")
     if openai_key:
         try:
+            from openai import OpenAI
             client = OpenAI(api_key=openai_key)
             resp = client.chat.completions.create(
                 model=os.getenv("OPENAI_MODEL", "gpt-4o"),

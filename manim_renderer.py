@@ -12,8 +12,6 @@ import uuid
 import re
 from pathlib import Path
 
-from openai import OpenAI
-
 MEDIA_DIR = Path(__file__).parent / "media" / "visualizations"
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
