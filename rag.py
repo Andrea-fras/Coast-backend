@@ -342,7 +342,7 @@ def generate_study_plan(user_id: int, folder: str, user_name: str) -> str:
                         "system_instruction": system,
                         "max_output_tokens": 1500,
                         "temperature": 0.7,
-                        "thinking_config": {"thinking_budget": 0},
+                        "thinking_config": {"thinking_budget": 1024},
                     },
                 )
                 text = ""
