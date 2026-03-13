@@ -211,12 +211,18 @@ def _call_gemini(messages: list[dict], max_tokens: int = 500, temperature: float
         config=config,
     )
 
+    if not response.candidates:
+        block_reason = getattr(response, 'prompt_feedback', None)
+        print(f"[Gemini] No candidates returned. Feedback: {block_reason}")
+        return "I'd love to help with that! Could you rephrase your question?"
+
     # Extract only text parts, skip thought_signature parts
     text_parts = []
     for candidate in response.candidates:
-        for part in candidate.content.parts:
-            if hasattr(part, "text") and part.text:
-                text_parts.append(part.text)
+        if candidate.content and candidate.content.parts:
+            for part in candidate.content.parts:
+                if hasattr(part, "text") and part.text:
+                    text_parts.append(part.text)
     return " ".join(text_parts).strip() if text_parts else response.text.strip()
 
 
