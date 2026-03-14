@@ -770,6 +770,8 @@ def _inject_diagrams_post_merge(
     return notebook
 
 
+HYBRID_CHUNK_SIZE_TEXT = 15  # larger chunks when no images (text-only PDFs)
+
 def _hybrid_chunked(
     slides_data: list[dict],
     api_key: str,
@@ -781,16 +783,19 @@ def _hybrid_chunked(
 ) -> dict[str, Any]:
     """Process large hybrid slide data in parallel chunks, then merge.
 
-    Uses HYBRID_CHUNK_SIZE (smaller than vision CHUNK_SIZE) and limits
-    concurrency to 2 to stay under TPM rate limits.
+    Dynamically picks chunk size: 15 for text-only PDFs, 5 for image-heavy.
+    Uses hierarchical merge when >4 chunks to keep each merge prompt small.
     """
     import time
 
-    num_chunks = math.ceil(len(slides_data) / HYBRID_CHUNK_SIZE)
+    total_images = sum(len(s["images"]) for s in slides_data)
+    chunk_size = HYBRID_CHUNK_SIZE_TEXT if total_images == 0 else HYBRID_CHUNK_SIZE
+
+    num_chunks = math.ceil(len(slides_data) / chunk_size)
     chunks = []
     for i in range(num_chunks):
-        start = i * HYBRID_CHUNK_SIZE
-        end = min(start + HYBRID_CHUNK_SIZE, len(slides_data))
+        start = i * chunk_size
+        end = min(start + chunk_size, len(slides_data))
         chunks.append(slides_data[start:end])
 
     if on_progress:
@@ -800,7 +805,7 @@ def _hybrid_chunked(
     chunk_diagram_maps: list[dict[int, str]] = [{}] * num_chunks
     completed = [0]
 
-    print(f"  [hybrid] {num_chunks} chunks (size {HYBRID_CHUNK_SIZE}), max_workers={min(4, num_chunks)}")
+    print(f"  [hybrid] {num_chunks} chunks (size {chunk_size}, images={total_images}), max_workers={min(4, num_chunks)}")
 
     def process_chunk(idx: int, chunk: list[dict]) -> tuple[int, dict[str, Any], dict[int, str]]:
         time.sleep(0.2)
@@ -808,8 +813,8 @@ def _hybrid_chunked(
         n_imgs = sum(len(s["images"]) for s in chunk)
         chunk_instruction = (
             f"{extra_instructions}\n\n"
-            f"These are slides {idx * HYBRID_CHUNK_SIZE + 1}–"
-            f"{idx * HYBRID_CHUNK_SIZE + len(chunk)} "
+            f"These are slides {idx * chunk_size + 1}–"
+            f"{idx * chunk_size + len(chunk)} "
             f"of {len(slides_data)} total slides from a single lecture."
         ).strip()
         result, dmap = _hybrid_single_chunk(chunk, api_key, chunk_model, provider, chunk_instruction)
@@ -831,7 +836,7 @@ def _hybrid_chunked(
         on_progress("merging", 0, 1)
 
     t_merge = time.time()
-    merged = _merge_partial_notebooks(partial_results, api_key, merge_model, provider)
+    merged = _hierarchical_merge(partial_results, api_key, merge_model, provider, on_progress)
     print(f"  [hybrid] merge step took {time.time()-t_merge:.1f}s")
 
     merged = _inject_diagrams_post_merge(merged, chunk_diagram_maps, num_chunks)
@@ -843,6 +848,39 @@ def _hybrid_chunked(
         on_progress("merging", 1, 1)
 
     return merged
+
+
+def _hierarchical_merge(
+    partials: list[dict[str, Any]],
+    api_key: str,
+    model: str,
+    provider: str,
+    on_progress: Any = None,
+) -> dict[str, Any]:
+    """Merge partials hierarchically: groups of 3-4, then merge intermediates.
+
+    Keeps each LLM merge call small enough to fit in context.
+    """
+    MAX_GROUP = 4
+
+    if len(partials) <= MAX_GROUP:
+        return _merge_partial_notebooks(partials, api_key, model, provider)
+
+    groups = []
+    for i in range(0, len(partials), MAX_GROUP):
+        groups.append(partials[i : i + MAX_GROUP])
+
+    print(f"  [hybrid] hierarchical merge: {len(partials)} partials → {len(groups)} groups")
+    intermediates = []
+    for gi, group in enumerate(groups):
+        print(f"  [hybrid] merging group {gi+1}/{len(groups)} ({len(group)} partials)")
+        merged_group = _merge_partial_notebooks(group, api_key, model, provider)
+        intermediates.append(merged_group)
+        if on_progress:
+            on_progress("merging", gi + 1, len(groups) + 1)
+
+    print(f"  [hybrid] final merge of {len(intermediates)} intermediates")
+    return _merge_partial_notebooks(intermediates, api_key, model, provider)
 
 
 # ---------------------------------------------------------------------------

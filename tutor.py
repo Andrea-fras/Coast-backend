@@ -418,6 +418,29 @@ def build_system_prompt(
     if user.course:
         parts.append(f"They are studying {user.course}.")
 
+    # Learning preferences (baseline, not rigid)
+    if hasattr(user, 'learning_preferences') and user.learning_preferences:
+        try:
+            prefs = json.loads(user.learning_preferences) if isinstance(user.learning_preferences, str) else user.learning_preferences
+            pref_lines = []
+            labels = {
+                "learning_style": "Learning approach",
+                "when_stuck": "When stuck, prefers",
+                "detail_level": "Detail preference",
+                "study_goal": "Study goal",
+            }
+            for key, label in labels.items():
+                if key in prefs:
+                    pref_lines.append(f"- {label}: {prefs[key]}")
+            if pref_lines:
+                parts.append(
+                    "\nStudent's stated learning preferences (use as baseline guidance, "
+                    "not rigid rules — adapt based on what actually works in practice):\n"
+                    + "\n".join(pref_lines)
+                )
+        except (json.JSONDecodeError, TypeError):
+            pass
+
     # Skill profile — with actionable guidance
     if skill_profile:
         weak = {k: v for k, v in skill_profile.items() if v < 50}

@@ -246,7 +246,7 @@ def register(req: RegisterRequest):
         token = create_access_token(user.id, user.email)
         return {
             "token": token,
-            "user": {"id": user.id, "email": user.email, "name": user.name, "course": user.course},
+            "user": {"id": user.id, "email": user.email, "name": user.name, "course": user.course, "onboarding_completed": False},
         }
     finally:
         db.close()
@@ -263,7 +263,7 @@ def login(req: LoginRequest):
         token = create_access_token(user.id, user.email)
         return {
             "token": token,
-            "user": {"id": user.id, "email": user.email, "name": user.name, "course": user.course},
+            "user": {"id": user.id, "email": user.email, "name": user.name, "course": user.course, "onboarding_completed": bool(user.onboarding_completed)},
         }
     finally:
         db.close()
@@ -271,7 +271,32 @@ def login(req: LoginRequest):
 
 @app.get("/api/auth/me")
 def get_me(user: User = Depends(get_current_user)):
-    return {"id": user.id, "email": user.email, "name": user.name, "course": user.course}
+    return {"id": user.id, "email": user.email, "name": user.name, "course": user.course, "onboarding_completed": bool(user.onboarding_completed)}
+
+
+class OnboardingRequest(BaseModel):
+    preferences: dict
+
+
+@app.post("/api/auth/onboarding")
+def complete_onboarding(req: OnboardingRequest, user: User = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        db_user = db.query(User).filter(User.id == user.id).first()
+        if not db_user:
+            raise HTTPException(404, "User not found")
+        db_user.learning_preferences = json.dumps(req.preferences)
+        db_user.onboarding_completed = True
+        db.commit()
+        return {
+            "id": db_user.id,
+            "email": db_user.email,
+            "name": db_user.name,
+            "course": db_user.course,
+            "onboarding_completed": True,
+        }
+    finally:
+        db.close()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1132,11 +1157,16 @@ async def generate_notebook_from_source(
     threading.Thread(target=run_pipeline, daemon=True).start()
 
     async def event_stream():
+        idle_ticks = 0
         while True:
             try:
                 item = progress_q.get_nowait()
+                idle_ticks = 0
             except queue.Empty:
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0.5)
+                idle_ticks += 1
+                if idle_ticks % 20 == 0:
+                    yield ": keepalive\n\n"
                 continue
             yield f"data: {json.dumps(item)}\n\n"
             if item.get("stage") in ("done", "error"):

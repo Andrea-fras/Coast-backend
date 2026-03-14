@@ -47,6 +47,8 @@ class User(Base):
     name = Column(String(255), nullable=False)
     password_hash = Column(String(255), nullable=False)
     course = Column(String(100), default="")  # e.g. "QM1", "Data Science"
+    learning_preferences = Column(Text, default="")
+    onboarding_completed = Column(Boolean, default=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     sessions = relationship("QuizSession", back_populates="user", cascade="all, delete-orphan")
@@ -250,6 +252,14 @@ def _run_migrations():
         if "file_path" not in cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE folder_sources ADD COLUMN file_path TEXT"))
+    if "users" in insp.get_table_names():
+        cols = [c["name"] for c in insp.get_columns("users")]
+        if "learning_preferences" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE users ADD COLUMN learning_preferences TEXT DEFAULT ''"))
+        if "onboarding_completed" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE users ADD COLUMN onboarding_completed BOOLEAN DEFAULT 0"))
 
 
 def init_db():

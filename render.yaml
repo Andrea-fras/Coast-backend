@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: professional
     buildCommand: apt-get update && apt-get install -y poppler-utils && pip install -r requirements.txt
-    startCommand: gunicorn server:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT --timeout 120 --graceful-timeout 120 --workers 1
+    startCommand: gunicorn server:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT --timeout 300 --graceful-timeout 300 --workers 1
     disk:
       name: coast-data
       mountPath: /data
