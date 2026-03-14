@@ -40,45 +40,66 @@ def generate_outline(user_id: int, folder_name: str) -> dict:
         if not notebooks and not raw_sources:
             return {"error": "No sources in this folder yet."}
 
+        total_sources = len(notebooks) + len(raw_sources)
+        total_budget = 80_000
+        per_source_budget = max(400, total_budget // max(total_sources, 1))
+
         source_summaries = []
         for nb in notebooks:
             data = json.loads(nb.notebook_json)
             title = data.get("title", "Untitled")
             sections = data.get("sections") or []
             sec_info = []
-            for s in sections[:12]:
+            for s in sections[:16]:
                 sec_title = s.get("title", "")
-                content_preview = (s.get("content", "") or "")[:200]
+                content_preview = (s.get("content", "") or "")[:min(300, per_source_budget // 8)]
                 sec_info.append(f"  - {sec_title}: {content_preview}")
             source_summaries.append(f'Source: "{title}"\nSections:\n' + "\n".join(sec_info))
 
         for src in raw_sources:
-            preview = (src.raw_text or "")[:1500]
+            text = src.raw_text or ""
+            if len(text) <= per_source_budget:
+                preview = text
+            else:
+                chunk = per_source_budget // 3
+                mid = len(text) // 2
+                preview = (
+                    text[:chunk]
+                    + "\n[...]\n"
+                    + text[mid - chunk // 2 : mid + chunk // 2]
+                    + "\n[...]\n"
+                    + text[-chunk:]
+                )
             source_summaries.append(
                 f'Source: "{src.title}" (raw document, {src.page_count} pages)\n'
-                f'Content preview:\n{preview}'
+                f'Content:\n{preview}'
             )
 
         sources_text = "\n\n".join(source_summaries)
-        if len(sources_text) > 8000:
-            sources_text = sources_text[:8000] + "\n...[truncated]"
+        if len(sources_text) > total_budget:
+            sources_text = sources_text[:total_budget] + "\n...[truncated]"
 
+        max_sections = min(20, max(4, total_sources // 2 + 3))
         system = (
             "You are a course designer. Given the student's source materials, create a structured "
-            "course outline that covers ALL the key topics across all sources in a logical learning sequence.\n\n"
+            "course outline that covers ALL the key topics across ALL sources in a logical learning sequence.\n\n"
+            "CRITICAL: You MUST include content from EVERY source listed. Do NOT skip any sources — "
+            "even those listed last. The student uploaded all of them and expects the course to cover "
+            "all their material.\n\n"
             "Rules:\n"
-            "- Create 4-10 sections depending on the amount of material\n"
+            f"- Create 4-{max_sections} sections depending on the amount of material\n"
             "- Order sections so prerequisites come first\n"
             "- Each section should be a coherent learning unit (15-30 minutes)\n"
-            "- Reference which source notebooks each section draws from\n"
+            "- Reference which source notebooks/documents each section draws from\n"
             "- Include 2-3 specific learning objectives per section\n"
-            "- Estimate minutes per section based on content density\n\n"
+            "- Estimate minutes per section based on content density\n"
+            "- If sources cover similar topics, merge them into one section\n"
+            "- If a source covers multiple distinct topics, split across sections\n\n"
             "Return ONLY valid JSON — an array of section objects. No markdown fences, no explanation.\n"
             'Format: [{"title": "...", "learning_objectives": ["...", "..."], '
             '"key_topics": ["...", "..."], "source_notebooks": ["..."], "estimated_minutes": 20}]'
         )
 
-        total_sources = len(notebooks) + len(raw_sources)
         context = f"Folder: {folder_name}\nNumber of sources: {total_sources}\n\nSource materials:\n{sources_text}"
 
         outline_sections = _call_llm_for_outline(system, context)
@@ -138,9 +159,9 @@ def _call_llm_for_outline(system: str, context: str) -> list[dict] | None:
                 contents=context,
                 config={
                     "system_instruction": system,
-                    "max_output_tokens": 4096,
+                    "max_output_tokens": 8192,
                     "temperature": 0.4,
-                    "thinking_config": {"thinking_budget": 2048},
+                    "thinking_config": {"thinking_budget": 4096},
                 },
             )
             text = ""
