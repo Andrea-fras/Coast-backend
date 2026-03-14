@@ -51,7 +51,7 @@ TUTOR_PROVIDERS = {
         "base_url": "https://integrate.api.nvidia.com/v1",
     },
     "gemini": {
-        "model": os.getenv("GEMINI_CHAT_MODEL", "gemini-2.0-flash"),
+        "model": os.getenv("GEMINI_CHAT_MODEL", "gemini-3-flash-preview"),
     },
 }
 
