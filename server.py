@@ -36,10 +36,27 @@ from database import (
     init_db,
     load_papers_from_json,
 )
+import threading
 import tutor
 import spaced_rep
 import rag
 import lesson
+
+
+def _bg_post_process(user_id: int, folder: str, nb_id: str, notebook_data: dict):
+    """Run RAG embedding and card creation in background after notebook save."""
+    if folder:
+        try:
+            rag.embed_notebook(user_id, folder, nb_id, notebook_data)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+    try:
+        spaced_rep.create_cards_for_notebook(user_id, nb_id, notebook_data)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+    print(f"[BG] Post-processing done for notebook {nb_id}")
 from viz_router import viz_router
 
 app = FastAPI(title="Coast API", version="2.0.0")
@@ -926,18 +943,20 @@ async def upload_folder_source(
         finally:
             db.close()
 
-        chunk_count = 0
-        try:
-            chunk_count = rag.embed_raw_source(user.id, folder_name, source_id, title, raw_text)
-        except Exception:
-            import traceback
-            traceback.print_exc()
+        def _bg_embed():
+            try:
+                rag.embed_raw_source(user.id, folder_name, source_id, title, raw_text)
+                print(f"[BG] Embedded source {source_id} for folder {folder_name}")
+            except Exception:
+                import traceback
+                traceback.print_exc()
+
+        threading.Thread(target=_bg_embed, daemon=True).start()
 
         return {
             "source_id": source_id,
             "title": title,
             "page_count": page_count,
-            "chunk_count": chunk_count,
             "filename": file.filename,
         }
     except HTTPException:
@@ -1098,16 +1117,11 @@ async def generate_notebook_from_source(
                 result["_saved_id"] = saved.id
                 result["_folder"] = folder_name
 
-                try:
-                    rag.embed_notebook(user.id, folder_name, nb_id, result)
-                except Exception:
-                    import traceback
-                    traceback.print_exc()
-                try:
-                    spaced_rep.create_cards_for_notebook(user.id, nb_id, result)
-                except Exception:
-                    import traceback
-                    traceback.print_exc()
+                threading.Thread(
+                    target=_bg_post_process,
+                    args=(user.id, folder_name, nb_id, result),
+                    daemon=True,
+                ).start()
             finally:
                 db2.close()
 
@@ -1281,19 +1295,12 @@ def save_notebook(notebook: dict, user: User = Depends(get_current_user)):
         db.commit()
         db.refresh(saved)
 
-        try:
-            spaced_rep.create_cards_for_notebook(user.id, nb_id, notebook)
-        except Exception:
-            import traceback
-            traceback.print_exc()
-
         folder = notebook.get("folder", "")
-        if folder:
-            try:
-                rag.embed_notebook(user.id, folder, nb_id, notebook)
-            except Exception:
-                import traceback
-                traceback.print_exc()
+        threading.Thread(
+            target=_bg_post_process,
+            args=(user.id, folder, nb_id, notebook),
+            daemon=True,
+        ).start()
 
         return {"status": "saved", "id": saved.id}
     finally:
@@ -1662,18 +1669,11 @@ async def generate_notes(
                         result["_saved_id"] = saved.id
                         result["_folder"] = target_folder
 
-                        if target_folder:
-                            try:
-                                rag.embed_notebook(user.id, target_folder, nb_id, result)
-                            except Exception:
-                                import traceback
-                                traceback.print_exc()
-
-                        try:
-                            spaced_rep.create_cards_for_notebook(user.id, nb_id, result)
-                        except Exception:
-                            import traceback
-                            traceback.print_exc()
+                        threading.Thread(
+                            target=_bg_post_process,
+                            args=(user.id, target_folder, nb_id, result),
+                            daemon=True,
+                        ).start()
                 finally:
                     db.close()
 

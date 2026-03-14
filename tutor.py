@@ -51,7 +51,7 @@ TUTOR_PROVIDERS = {
         "base_url": "https://integrate.api.nvidia.com/v1",
     },
     "gemini": {
-        "model": "gemini-3.1-pro-preview",
+        "model": os.getenv("GEMINI_CHAT_MODEL", "gemini-2.0-flash"),
     },
 }
 
@@ -157,7 +157,7 @@ def _call_claude_for_viz(messages: list[dict], max_tokens: int = 4096) -> str:
     if claude_messages[0]["role"] != "user":
         claude_messages.insert(0, {"role": "user", "content": "Please provide a visualization."})
 
-    model = os.getenv("ANTHROPIC_MODEL", "claude-opus-4-6")
+    model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
     print(f"[Claude Viz] Calling model={model}, {len(claude_messages)} messages, system_len={len(system_text)}")
 
     try:
@@ -989,11 +989,12 @@ def send_message_stream(
         db.close()
 
 
-def _trigger_memo_update(db, user_id: int, conversation_id: str, memo_row: TutorMemo):
-    """Update the tutor memo with recent interaction observations."""
+def _trigger_memo_update_bg(user_id: int, current_memo_text: str):
+    """Background thread: update the tutor memo with recent observations."""
     try:
+        bg_db = SessionLocal()
         recent = (
-            db.query(ChatMessage)
+            bg_db.query(ChatMessage)
             .filter(ChatMessage.user_id == user_id)
             .order_by(ChatMessage.created_at.desc())
             .limit(10)
@@ -1006,11 +1007,10 @@ def _trigger_memo_update(db, user_id: int, conversation_id: str, memo_row: Tutor
         )
 
         prompt = MEMO_UPDATE_PROMPT.format(
-            current_memo=memo_row.memo_text or "(No memo yet — this is the first interaction.)",
+            current_memo=current_memo_text or "(No memo yet — this is the first interaction.)",
             recent_messages=recent_text,
         )
 
-        # Memo updates always use OpenAI (cheap, reliable, not user-facing)
         client, model = _get_client(MEMO_PROVIDER)
         response = client.chat.completions.create(
             model=model,
@@ -1020,7 +1020,6 @@ def _trigger_memo_update(db, user_id: int, conversation_id: str, memo_row: Tutor
         )
         new_memo = response.choices[0].message.content.strip()
 
-        # Hard cap — truncate to last complete bullet if too long
         if len(new_memo) > MEMO_MAX_CHARS:
             truncated = new_memo[:MEMO_MAX_CHARS]
             last_newline = truncated.rfind('\n')
@@ -1029,11 +1028,29 @@ def _trigger_memo_update(db, user_id: int, conversation_id: str, memo_row: Tutor
             else:
                 new_memo = truncated
 
-        memo_row.memo_text = new_memo
-        memo_row.message_count_since_update = 0
-        memo_row.updated_at = datetime.now(timezone.utc)
+        memo_row = bg_db.query(TutorMemo).filter(TutorMemo.user_id == user_id).first()
+        if memo_row:
+            memo_row.memo_text = new_memo
+            memo_row.message_count_since_update = 0
+            memo_row.updated_at = datetime.now(timezone.utc)
+            bg_db.commit()
+        bg_db.close()
+        print(f"[Pedro] Memo updated in background for user {user_id}")
     except Exception as e:
-        print(f"[Pedro] Memo update failed: {e}")
+        print(f"[Pedro] Background memo update failed: {e}")
+
+
+def _trigger_memo_update(db, user_id: int, conversation_id: str, memo_row: TutorMemo):
+    """Fire-and-forget memo update in a background thread."""
+    import threading
+    memo_row.message_count_since_update = 0
+    db.commit()
+    t = threading.Thread(
+        target=_trigger_memo_update_bg,
+        args=(user_id, memo_row.memo_text or ""),
+        daemon=True,
+    )
+    t.start()
 
 
 def update_skill_profile(user_id: int):

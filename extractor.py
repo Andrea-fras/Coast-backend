@@ -800,10 +800,10 @@ def _hybrid_chunked(
     chunk_diagram_maps: list[dict[int, str]] = [{}] * num_chunks
     completed = [0]
 
-    print(f"  [hybrid] {num_chunks} chunks (size {HYBRID_CHUNK_SIZE}), max_workers={min(2, num_chunks)}")
+    print(f"  [hybrid] {num_chunks} chunks (size {HYBRID_CHUNK_SIZE}), max_workers={min(4, num_chunks)}")
 
     def process_chunk(idx: int, chunk: list[dict]) -> tuple[int, dict[str, Any], dict[int, str]]:
-        time.sleep(idx * 1.5)
+        time.sleep(0.2)
         t0 = time.time()
         n_imgs = sum(len(s["images"]) for s in chunk)
         chunk_instruction = (
@@ -819,7 +819,7 @@ def _hybrid_chunked(
             on_progress("analyzing", completed[0], num_chunks)
         return idx, result, dmap
 
-    max_workers = min(2, num_chunks)
+    max_workers = min(4, num_chunks)
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(process_chunk, i, c) for i, c in enumerate(chunks)]
         for future in concurrent.futures.as_completed(futures):
