@@ -63,7 +63,10 @@ from viz_router import viz_router
 app = FastAPI(title="Coast API", version="2.0.0")
 app.include_router(viz_router)
 
-_cors_origins = ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"]
+_cors_origins = [
+    "http://localhost:5173", "http://localhost:5174", "http://localhost:3000",
+    "https://dist-delta-eight-99.vercel.app",
+]
 _extra_origin = os.getenv("FRONTEND_URL", "")
 if _extra_origin:
     _cors_origins.append(_extra_origin.rstrip("/"))
@@ -78,8 +81,9 @@ app.add_middleware(
 
 from starlette.requests import Request as StarletteRequest
 
+_default_cors_origin = _extra_origin.rstrip("/") if _extra_origin else "https://dist-delta-eight-99.vercel.app"
 _cors_headers = {
-    "Access-Control-Allow-Origin": _extra_origin.rstrip("/") if _extra_origin else "*",
+    "Access-Control-Allow-Origin": _default_cors_origin,
     "Access-Control-Allow-Credentials": "true",
     "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
     "Access-Control-Allow-Headers": "Authorization, Content-Type",
