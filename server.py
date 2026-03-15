@@ -63,54 +63,58 @@ from viz_router import viz_router
 app = FastAPI(title="Coast API", version="2.0.0")
 app.include_router(viz_router)
 
-_ALLOWED_ORIGINS: set[str] = {
+_ALLOWED_ORIGINS = [
     "http://localhost:5173", "http://localhost:5174", "http://localhost:3000",
     "https://dist-delta-eight-99.vercel.app",
-}
+]
 _extra_origin = os.getenv("FRONTEND_URL", "")
 if _extra_origin:
-    _ALLOWED_ORIGINS.add(_extra_origin.rstrip("/"))
+    _ALLOWED_ORIGINS.append(_extra_origin.rstrip("/"))
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=600,
+)
 
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import Response as StarletteResponse
-from starlette.middleware.base import BaseHTTPMiddleware
 
-class _CORSAlwaysMiddleware(BaseHTTPMiddleware):
-    """Guarantees CORS headers on every response, including errors and OPTIONS."""
+_PROD_ORIGIN = "https://dist-delta-eight-99.vercel.app"
 
-    async def dispatch(self, request: StarletteRequest, call_next):
-        origin = request.headers.get("origin", "")
-        allowed = origin if origin in _ALLOWED_ORIGINS else next(iter(_ALLOWED_ORIGINS))
+@app.options("/{rest:path}")
+async def preflight_catchall(request: StarletteRequest):
+    """Catch-all for OPTIONS preflight — always return CORS headers."""
+    origin = request.headers.get("origin", _PROD_ORIGIN)
+    allowed = origin if origin in _ALLOWED_ORIGINS else _PROD_ORIGIN
+    return StarletteResponse(
+        status_code=204,
+        headers={
+            "Access-Control-Allow-Origin": allowed,
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Requested-With, Accept, Origin",
+            "Access-Control-Max-Age": "600",
+        },
+    )
 
-        if request.method == "OPTIONS":
-            return StarletteResponse(
-                status_code=204,
-                headers={
-                    "Access-Control-Allow-Origin": allowed,
-                    "Access-Control-Allow-Credentials": "true",
-                    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
-                    "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Requested-With",
-                    "Access-Control-Max-Age": "600",
-                },
-            )
-
-        try:
-            response = await call_next(request)
-        except Exception:
-            import traceback; traceback.print_exc()
-            response = JSONResponse(
-                status_code=500,
-                content={"detail": "Internal server error"},
-            )
-
+@app.middleware("http")
+async def cors_safety_net(request: StarletteRequest, call_next):
+    """Last-resort: inject CORS headers if CORSMiddleware didn't."""
+    response = await call_next(request)
+    if "access-control-allow-origin" not in response.headers:
+        origin = request.headers.get("origin", _PROD_ORIGIN)
+        allowed = origin if origin in _ALLOWED_ORIGINS else _PROD_ORIGIN
         response.headers["Access-Control-Allow-Origin"] = allowed
         response.headers["Access-Control-Allow-Credentials"] = "true"
-        return response
-
-app.add_middleware(_CORSAlwaysMiddleware)
+    return response
 
 _cors_headers = {
-    "Access-Control-Allow-Origin": "https://dist-delta-eight-99.vercel.app",
+    "Access-Control-Allow-Origin": _PROD_ORIGIN,
     "Access-Control-Allow-Credentials": "true",
     "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
     "Access-Control-Allow-Headers": "Authorization, Content-Type",
