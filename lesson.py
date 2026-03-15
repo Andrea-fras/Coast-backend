@@ -342,30 +342,39 @@ def _find_relevant_images(
         if not all_images:
             return ""
 
-        search_terms = [t.lower() for t in [section_title] + key_topics if t]
+        search_terms = [t.lower().strip() for t in [section_title] + key_topics if t and t.strip()]
+
+        src_cache: dict[str, str] = {}
+        def _get_src_title(source_id: str) -> str:
+            if source_id not in src_cache:
+                from database import FolderSource as FS
+                src = db.query(FS).filter(FS.source_id == source_id).first()
+                src_cache[source_id] = (src.title or "").lower() if src else ""
+            return src_cache[source_id]
 
         def _score(si: SourceImage) -> int:
             ctx = (si.context_text or "").lower()
+            src_title = _get_src_title(si.source_id)
             score = 0
-            for term in search_terms:
-                words = term.split()
-                for word in words:
-                    if len(word) > 3 and word in ctx:
-                        score += 5
-            for nb_name in source_notebooks:
-                if nb_name.lower() in (si.source_id or "").lower():
-                    score += 20
 
-            from database import FolderSource as FS
-            src = db.query(FS).filter(FS.source_id == si.source_id).first()
-            if src:
-                title_lower = (src.title or "").lower()
-                for nb_name in source_notebooks:
-                    if nb_name.lower() in title_lower or title_lower in nb_name.lower():
-                        score += 30
-                for term in search_terms:
-                    if term in title_lower:
-                        score += 10
+            for term in search_terms:
+                if len(term) > 4 and term in ctx:
+                    score += 15
+                elif len(term) > 4 and term in src_title:
+                    score += 12
+                else:
+                    words = [w for w in term.split() if len(w) > 3]
+                    matched = sum(1 for w in words if w in ctx)
+                    if words and matched >= len(words) * 0.6:
+                        score += 8
+                    elif matched > 0:
+                        score += 2
+
+            for nb_name in source_notebooks:
+                nb_lower = nb_name.lower().strip()
+                if nb_lower in src_title or src_title in nb_lower:
+                    score += 40
+
             return score
 
         scored = [(si, _score(si)) for si in all_images]
@@ -390,12 +399,14 @@ def _find_relevant_images(
 
         return (
             "\n--- DIAGRAMS FROM SOURCE MATERIALS ---\n"
-            "These diagrams were extracted from the student's uploaded documents. You SHOULD embed them "
-            "in your explanation whenever they illustrate a concept you're currently teaching — for example, "
-            "a distribution curve when explaining distributions, a scatter plot when discussing correlation, "
-            "a function graph when teaching derivatives. Use markdown: ![brief description](URL)\n"
-            "Embed them naturally within your explanation at the point where they're most helpful. "
-            "Don't dump them all at once or list them separately — weave them into the teaching.\n\n"
+            f"Current section: \"{section_title}\". Topics: {', '.join(key_topics[:5])}.\n"
+            "These diagrams were extracted from the student's uploaded documents. ONLY embed a diagram "
+            "if its context text clearly relates to the concept you are currently explaining. "
+            "Check the 'context' field — if it mentions a different topic (e.g. sorting when you're "
+            "teaching Big O, or probability when you're teaching statistics), DO NOT use that image.\n"
+            "Use markdown: ![brief description](URL)\n"
+            "Embed them naturally at the point where they're most helpful. "
+            "It's better to show NO diagram than a wrong one.\n\n"
             + "\n".join(lines)
             + "\n--- END DIAGRAMS ---\n"
         )
