@@ -1459,7 +1459,7 @@ def _merge_partial_notebooks(
         + "\n\n".join(chunks_text)
     )
 
-    raw = _call_text_llm(MERGE_SYSTEM_PROMPT, user_text, api_key, model, provider, max_tokens=32768)
+    raw = _call_text_llm(MERGE_SYSTEM_PROMPT, user_text, api_key, model, provider, max_tokens=16384)
     cleaned = _clean_json_response(raw)
 
     try:
