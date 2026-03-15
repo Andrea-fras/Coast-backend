@@ -1286,16 +1286,39 @@ def serve_source_image(image_id: int):
     try:
         si = db.query(SourceImage).filter(SourceImage.id == image_id).first()
         if not si:
-            raise HTTPException(404, "Image not found")
+            raise HTTPException(404, "Image not found in DB")
         file_path = Path(si.image_path)
         if not file_path.exists():
-            raise HTTPException(404, "Image file missing")
+            print(f"[images] File missing: {si.image_path}  (id={image_id}, source={si.source_id})")
+            raise HTTPException(404, f"Image file missing at {si.image_path}")
         from fastapi.responses import FileResponse
         return FileResponse(
             path=str(file_path),
             media_type="image/png",
             headers={"Cache-Control": "public, max-age=86400"},
         )
+    finally:
+        db.close()
+
+
+@app.get("/api/debug/images")
+def debug_images():
+    """Debug endpoint: show image paths and whether files exist."""
+    db = SessionLocal()
+    try:
+        all_imgs = db.query(SourceImage).limit(30).all()
+        result = []
+        for si in all_imgs:
+            fp = Path(si.image_path)
+            result.append({
+                "id": si.id,
+                "source_id": si.source_id,
+                "folder": si.folder_name,
+                "path": si.image_path,
+                "exists": fp.exists(),
+                "parent_exists": fp.parent.exists(),
+            })
+        return result
     finally:
         db.close()
 
