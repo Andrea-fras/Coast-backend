@@ -140,7 +140,7 @@ def chunk_raw_text(text: str, title: str, source_id: str) -> list[dict]:
 def _get_embeddings(texts: list[str]) -> list[list[float]]:
     """Compute embeddings using OpenAI text-embedding-3-small."""
     from openai import OpenAI
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""), max_retries=0)
     response = client.embeddings.create(model=EMBEDDING_MODEL, input=texts)
     return [item.embedding for item in response.data]
 

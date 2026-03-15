@@ -139,8 +139,15 @@ def on_startup():
         print(f"Loaded papers from {PAPERS_DIR}")
     from paper_scanner import load_scanned_into_db
     load_scanned_into_db()
-    from curated_config import ingest_curated_sources
-    ingest_curated_sources()
+
+    import threading
+    def _bg_curated():
+        try:
+            from curated_config import ingest_curated_sources
+            ingest_curated_sources()
+        except Exception:
+            import traceback; traceback.print_exc()
+    threading.Thread(target=_bg_curated, daemon=True).start()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
