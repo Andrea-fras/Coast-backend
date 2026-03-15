@@ -169,7 +169,13 @@ def ingest_curated_sources():
 
 
 def _extract_images_for_existing_sources():
-    """Extract images from curated sources that already exist in DB but haven't had images extracted."""
+    """Extract images from curated sources that need (re-)extraction.
+
+    Handles two cases:
+    1. Sources with no SourceImage records at all
+    2. Sources whose SourceImage records point to files that no longer exist
+       (e.g. after a deploy moved storage to the persistent disk)
+    """
     from database import SessionLocal, FolderSource, SourceImage
 
     db = SessionLocal()
@@ -180,17 +186,27 @@ def _extract_images_for_existing_sources():
                 FolderSource.folder_name == folder_name,
             ).all()
 
-            sources_with_images = {
-                si.source_id
-                for si in db.query(SourceImage).filter(
-                    SourceImage.user_id == CURATED_USER_ID,
-                    SourceImage.folder_name == folder_name,
-                ).all()
-            }
-
             for src in sources:
-                if src.source_id in sources_with_images:
+                existing_images = db.query(SourceImage).filter(
+                    SourceImage.source_id == src.source_id,
+                    SourceImage.user_id == CURATED_USER_ID,
+                ).all()
+
+                needs_extraction = False
+                if not existing_images:
+                    needs_extraction = True
+                else:
+                    any_exists = any(Path(si.image_path).exists() for si in existing_images)
+                    if not any_exists:
+                        print(f"  [curated] Deleting {len(existing_images)} orphaned image records for {src.title}")
+                        for si in existing_images:
+                            db.delete(si)
+                        db.commit()
+                        needs_extraction = True
+
+                if not needs_extraction:
                     continue
+
                 fpath = Path(src.file_path) if src.file_path else None
                 if not fpath or not fpath.exists():
                     continue
