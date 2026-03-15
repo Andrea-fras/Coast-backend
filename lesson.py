@@ -331,7 +331,12 @@ def _find_relevant_images(
     source_notebooks: list[str],
     max_images: int = 6,
 ) -> str:
-    """Find images from folder sources that are relevant to the current section."""
+    """Find images from folder sources that are relevant to the current section.
+
+    Strategy: first restrict to images from the section's source documents,
+    then rank by topic keyword overlap. Only falls back to all-folder search
+    if no source-matched images exist.
+    """
     db = SessionLocal()
     try:
         all_images = db.query(SourceImage).filter(
@@ -342,71 +347,70 @@ def _find_relevant_images(
         if not all_images:
             return ""
 
+        all_sources = db.query(FolderSource).filter(
+            FolderSource.user_id == user_id,
+            FolderSource.folder_name == folder_name,
+        ).all()
+        src_by_id = {s.source_id: s for s in all_sources}
+
+        nb_lower = [n.lower().strip() for n in source_notebooks if n and n.strip()]
+
+        matched_source_ids: set[str] = set()
+        for src in all_sources:
+            title = (src.title or "").lower()
+            for nb in nb_lower:
+                if nb in title or title in nb:
+                    matched_source_ids.add(src.source_id)
+                    break
+
+        candidate_images = [si for si in all_images if si.source_id in matched_source_ids]
+        if not candidate_images:
+            candidate_images = all_images
+
         search_terms = [t.lower().strip() for t in [section_title] + key_topics if t and t.strip()]
 
-        src_cache: dict[str, str] = {}
-        def _get_src_title(source_id: str) -> str:
-            if source_id not in src_cache:
-                from database import FolderSource as FS
-                src = db.query(FS).filter(FS.source_id == source_id).first()
-                src_cache[source_id] = (src.title or "").lower() if src else ""
-            return src_cache[source_id]
-
-        def _score(si: SourceImage) -> int:
+        def _score(si: SourceImage) -> float:
             ctx = (si.context_text or "").lower()
-            src_title = _get_src_title(si.source_id)
-            score = 0
-
+            score = 0.0
             for term in search_terms:
                 if len(term) > 4 and term in ctx:
                     score += 15
-                elif len(term) > 4 and term in src_title:
-                    score += 12
                 else:
                     words = [w for w in term.split() if len(w) > 3]
                     matched = sum(1 for w in words if w in ctx)
-                    if words and matched >= len(words) * 0.6:
-                        score += 8
-                    elif matched > 0:
-                        score += 2
-
-            for nb_name in source_notebooks:
-                nb_lower = nb_name.lower().strip()
-                if nb_lower in src_title or src_title in nb_lower:
-                    score += 40
-
+                    if words and matched > 0:
+                        score += 5 * (matched / len(words))
+            if si.source_id in matched_source_ids:
+                score += 20
             return score
 
-        scored = [(si, _score(si)) for si in all_images]
-        scored = [(si, sc) for si, sc in scored if sc > 0]
+        scored = [(si, _score(si)) for si in candidate_images]
         scored.sort(key=lambda x: -x[1])
-
         top = scored[:max_images]
+
         if not top:
             return ""
 
         api_base = os.getenv("API_BASE_URL", "https://coast-backend-dlg6.onrender.com")
         lines = []
-        for si, _ in top:
-            src = db.query(FolderSource).filter(FolderSource.source_id == si.source_id).first()
+        for si, sc in top:
+            src = src_by_id.get(si.source_id)
             src_title = src.title if src else si.source_id
             url = f"{api_base}/api/source-images/{si.id}"
-            ctx_preview = (si.context_text or "")[:120].replace("\n", " ")
+            ctx_preview = (si.context_text or "")[:150].replace("\n", " ")
             lines.append(
-                f"- Image {si.id}: from \"{src_title}\" page {si.page_number} | "
-                f"context: \"{ctx_preview}\" | URL: {url}"
+                f"- Image {si.id}: from \"{src_title}\" page {si.page_number} "
+                f"(relevance={sc:.0f}) | context: \"{ctx_preview}\" | URL: {url}"
             )
 
         return (
             "\n--- DIAGRAMS FROM SOURCE MATERIALS ---\n"
-            f"Current section: \"{section_title}\". Topics: {', '.join(key_topics[:5])}.\n"
-            "These diagrams were extracted from the student's uploaded documents. ONLY embed a diagram "
-            "if its context text clearly relates to the concept you are currently explaining. "
-            "Check the 'context' field — if it mentions a different topic (e.g. sorting when you're "
-            "teaching Big O, or probability when you're teaching statistics), DO NOT use that image.\n"
-            "Use markdown: ![brief description](URL)\n"
-            "Embed them naturally at the point where they're most helpful. "
-            "It's better to show NO diagram than a wrong one.\n\n"
+            f"Current section: \"{section_title}\".\n"
+            f"Topics: {', '.join(key_topics[:5])}.\n"
+            "ONLY use a diagram if its 'context' field clearly relates to what you are "
+            "currently explaining. If the context mentions a DIFFERENT topic, skip it. "
+            "It is better to show NO diagram than a wrong one.\n"
+            "Use markdown: ![brief description](URL)\n\n"
             + "\n".join(lines)
             + "\n--- END DIAGRAMS ---\n"
         )
