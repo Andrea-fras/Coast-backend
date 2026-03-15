@@ -1279,6 +1279,24 @@ def get_source_file(folder_name: str, source_id: str, user: User = Depends(get_c
     )
 
 
+def _resolve_image_path(stored_path: str) -> Path | None:
+    """Find the actual image file, trying persistent disk if stored path is stale."""
+    fp = Path(stored_path)
+    if fp.exists():
+        return fp
+    _OLD_PREFIX = "/opt/render/project/src/folder_uploads"
+    _NEW_PREFIX = "/data/folder_uploads"
+    if stored_path.startswith(_OLD_PREFIX):
+        alt = Path(_NEW_PREFIX + stored_path[len(_OLD_PREFIX):])
+        if alt.exists():
+            return alt
+    elif stored_path.startswith(_NEW_PREFIX):
+        alt = Path(_OLD_PREFIX + stored_path[len(_NEW_PREFIX):])
+        if alt.exists():
+            return alt
+    return None
+
+
 @app.get("/api/source-images/{image_id}")
 def serve_source_image(image_id: int):
     """Serve an extracted source image by its DB id."""
@@ -1287,13 +1305,16 @@ def serve_source_image(image_id: int):
         si = db.query(SourceImage).filter(SourceImage.id == image_id).first()
         if not si:
             raise HTTPException(404, "Image not found in DB")
-        file_path = Path(si.image_path)
-        if not file_path.exists():
+        resolved = _resolve_image_path(si.image_path)
+        if not resolved:
             print(f"[images] File missing: {si.image_path}  (id={image_id}, source={si.source_id})")
-            raise HTTPException(404, f"Image file missing at {si.image_path}")
+            raise HTTPException(404, "Image file missing")
+        if str(resolved) != si.image_path:
+            si.image_path = str(resolved)
+            db.commit()
         from fastapi.responses import FileResponse
         return FileResponse(
-            path=str(file_path),
+            path=str(resolved),
             media_type="image/png",
             headers={"Cache-Control": "public, max-age=86400"},
         )
