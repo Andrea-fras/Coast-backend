@@ -15,7 +15,9 @@ load_dotenv()
 
 from database import FolderSource, SavedNotebook, SessionLocal
 
-CHROMA_PATH = Path(os.environ.get("CHROMA_PATH", str(Path(__file__).parent / "chroma_data")))
+_PERSISTENT_DISK = Path("/data")
+_default_chroma = str(_PERSISTENT_DISK / "chroma_data") if _PERSISTENT_DISK.is_dir() else str(Path(__file__).parent / "chroma_data")
+CHROMA_PATH = Path(os.environ.get("CHROMA_PATH", _default_chroma))
 CHROMA_PATH.mkdir(parents=True, exist_ok=True)
 
 _chroma_client = None

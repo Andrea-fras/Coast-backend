@@ -63,27 +63,54 @@ from viz_router import viz_router
 app = FastAPI(title="Coast API", version="2.0.0")
 app.include_router(viz_router)
 
-_cors_origins = [
+_ALLOWED_ORIGINS: set[str] = {
     "http://localhost:5173", "http://localhost:5174", "http://localhost:3000",
     "https://dist-delta-eight-99.vercel.app",
-]
+}
 _extra_origin = os.getenv("FRONTEND_URL", "")
 if _extra_origin:
-    _cors_origins.append(_extra_origin.rstrip("/"))
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    _ALLOWED_ORIGINS.add(_extra_origin.rstrip("/"))
 
 from starlette.requests import Request as StarletteRequest
+from starlette.responses import Response as StarletteResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
-_default_cors_origin = _extra_origin.rstrip("/") if _extra_origin else "https://dist-delta-eight-99.vercel.app"
+class _CORSAlwaysMiddleware(BaseHTTPMiddleware):
+    """Guarantees CORS headers on every response, including errors and OPTIONS."""
+
+    async def dispatch(self, request: StarletteRequest, call_next):
+        origin = request.headers.get("origin", "")
+        allowed = origin if origin in _ALLOWED_ORIGINS else next(iter(_ALLOWED_ORIGINS))
+
+        if request.method == "OPTIONS":
+            return StarletteResponse(
+                status_code=204,
+                headers={
+                    "Access-Control-Allow-Origin": allowed,
+                    "Access-Control-Allow-Credentials": "true",
+                    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
+                    "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Requested-With",
+                    "Access-Control-Max-Age": "600",
+                },
+            )
+
+        try:
+            response = await call_next(request)
+        except Exception:
+            import traceback; traceback.print_exc()
+            response = JSONResponse(
+                status_code=500,
+                content={"detail": "Internal server error"},
+            )
+
+        response.headers["Access-Control-Allow-Origin"] = allowed
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        return response
+
+app.add_middleware(_CORSAlwaysMiddleware)
+
 _cors_headers = {
-    "Access-Control-Allow-Origin": _default_cors_origin,
+    "Access-Control-Allow-Origin": "https://dist-delta-eight-99.vercel.app",
     "Access-Control-Allow-Credentials": "true",
     "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
     "Access-Control-Allow-Headers": "Authorization, Content-Type",
@@ -110,7 +137,9 @@ async def global_exception_handler(request: StarletteRequest, exc: Exception):
 GENERATED_DIR = Path(__file__).parent / "generated"
 GENERATED_DIR.mkdir(exist_ok=True)
 
-FOLDER_UPLOADS_DIR = Path(os.environ.get("FOLDER_UPLOADS_DIR", str(Path(__file__).parent / "folder_uploads")))
+_PERSISTENT_DISK = Path("/data")
+_default_uploads = str(_PERSISTENT_DISK / "folder_uploads") if _PERSISTENT_DISK.is_dir() else str(Path(__file__).parent / "folder_uploads")
+FOLDER_UPLOADS_DIR = Path(os.environ.get("FOLDER_UPLOADS_DIR", _default_uploads))
 FOLDER_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 SOURCE_IMAGES_DIR = FOLDER_UPLOADS_DIR / "images"

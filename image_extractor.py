@@ -24,7 +24,9 @@ def extract_and_store_images(
         from database import SessionLocal, SourceImage
 
         if images_dir is None:
-            images_dir = Path(__file__).parent / "folder_uploads" / "images"
+            _pd = Path("/data")
+            _base = _pd / "folder_uploads" if _pd.is_dir() else Path(__file__).parent / "folder_uploads"
+            images_dir = _base / "images"
 
         if ext == ".pdf":
             pages = extract_content_from_pdf(str(file_path))

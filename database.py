@@ -21,7 +21,9 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Session, relationship, sessionmaker
 
-DB_PATH = Path(os.environ.get("DATABASE_PATH", str(Path(__file__).parent / "coast.db")))
+_PERSISTENT_DISK = Path("/data")
+_default_db = str(_PERSISTENT_DISK / "coast.db") if _PERSISTENT_DISK.is_dir() else str(Path(__file__).parent / "coast.db")
+DB_PATH = Path(os.environ.get("DATABASE_PATH", _default_db))
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
 SessionLocal = sessionmaker(bind=engine)
