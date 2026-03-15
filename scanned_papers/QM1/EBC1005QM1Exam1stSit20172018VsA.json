@@ -1,0 +1,1228 @@
+{
+  "title": "Quantitative Methods 1, Resit EBC 1005",
+  "description": "Past exam paper for Quantitative Methods 1 covering Mathematics and Statistics.",
+  "questions": [
+    {
+      "id": "q1",
+      "number": 1,
+      "type": "multiple-choice",
+      "text": "The domain of the function f(x) = \\ln(1-x) is",
+      "equation": "f(x) = \\ln(1-x)",
+      "options": [
+        {
+          "id": "a",
+          "text": "x \\le 1."
+        },
+        {
+          "id": "b",
+          "text": "x < 1."
+        },
+        {
+          "id": "c",
+          "text": "x < 0."
+        },
+        {
+          "id": "d",
+          "text": "x \\le 0."
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "functions",
+        "domain",
+        "logarithms"
+      ]
+    },
+    {
+      "id": "q2",
+      "number": 2,
+      "type": "multiple-choice",
+      "text": "Consider the function f(x) = \\frac{1}{x^2} for positive values of x. For which p > 0 is f(\\frac{1}{2}p) = p",
+      "equation": "f(x) = \\frac{1}{x^2}",
+      "options": [
+        {
+          "id": "a",
+          "text": "p = 2"
+        },
+        {
+          "id": "b",
+          "text": "p = \\sqrt[3]{4}"
+        },
+        {
+          "id": "c",
+          "text": "p = 4"
+        },
+        {
+          "id": "d",
+          "text": "p = \\sqrt[3]{2}"
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "functions",
+        "algebra"
+      ]
+    },
+    {
+      "id": "q3",
+      "number": 3,
+      "type": "multiple-choice",
+      "text": "The production manager of a company producing LCD monitors wants to know whether extra production of the monitors will increase the profit. Revenues are considered to be constant per unit. The production costs of x units are C(x) = 15 - 2x + 3x^2. What is the difference quotient at x for \\Delta x = 1, i.e., C(x+1) - C(x)?",
+      "equation": "C(x) = 15 - 2x + 3x^2",
+      "options": [
+        {
+          "id": "a",
+          "text": "C(x+1) - C(x) = 6x - 17"
+        },
+        {
+          "id": "b",
+          "text": "C(x+1) - C(x) = 6x + 1"
+        },
+        {
+          "id": "c",
+          "text": "C(x+1) - C(x) = 3x - 2"
+        },
+        {
+          "id": "d",
+          "text": "C(x+1) - C(x) = 3x^2 - 2x"
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "functions",
+        "algebra",
+        "difference quotient"
+      ]
+    },
+    {
+      "id": "q4",
+      "number": 4,
+      "type": "multiple-choice",
+      "text": "Suppose that f(x) is a function with f''(x) < 0 for all x. Then",
+      "equation": "f''(x) < 0",
+      "options": [
+        {
+          "id": "a",
+          "text": "f(x) is convex and has exactly one minimum."
+        },
+        {
+          "id": "b",
+          "text": "f(x) has either no minimum or exactly one minimum."
+        },
+        {
+          "id": "c",
+          "text": "f(x) has either no maximum or exactly one maximum."
+        },
+        {
+          "id": "d",
+          "text": "f(x) is concave and has exactly one maximum."
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "derivatives",
+        "concavity",
+        "optimization"
+      ]
+    },
+    {
+      "id": "q5",
+      "number": 5,
+      "type": "multiple-choice",
+      "text": "What is the inverse of the following function f(x) = \\frac{2e^{x+1}-1}{2e^{x+1}+1}?",
+      "equation": "f(x) = \\frac{2e^{x+1}-1}{2e^{x+1}+1}",
+      "options": [
+        {
+          "id": "a",
+          "text": "f^{-1}(y) = 0.5\\ln\\left(\\frac{1+y}{1-y}\\right) - 1"
+        },
+        {
+          "id": "b",
+          "text": "f^{-1}(y) = \\ln\\left(0.5\\frac{1+y}{1-y}\\right) + 1"
+        },
+        {
+          "id": "c",
+          "text": "f^{-1}(y) = 0.5\\ln\\left(\\frac{1+y}{1-y}\\right) + 1"
+        },
+        {
+          "id": "d",
+          "text": "f^{-1}(y) = \\ln\\left(0.5\\frac{1+y}{1-y}\\right) - 1"
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "functions",
+        "inverse functions",
+        "logarithms"
+      ]
+    },
+    {
+      "id": "q6",
+      "number": 6,
+      "type": "multiple-choice",
+      "text": "Consider the function f(x) = ^a\\log(x) for positive values of x. The elasticity of f(x), i.e., E_f(x) is",
+      "equation": "f(x) = ^a\\log(x)",
+      "options": [
+        {
+          "id": "a",
+          "text": "1/\\ln(x)"
+        },
+        {
+          "id": "b",
+          "text": "^a\\log(x)"
+        },
+        {
+          "id": "c",
+          "text": "1/^a\\log(x)"
+        },
+        {
+          "id": "d",
+          "text": "x/^a\\log(x)"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "elasticity",
+        "derivatives",
+        "logarithms"
+      ]
+    },
+    {
+      "id": "q7",
+      "number": 7,
+      "type": "multiple-choice",
+      "text": "Consider the function f(x) = e^{-ax} (a > 0), for positive values of x. The elasticity of f(x) is",
+      "equation": "f(x) = e^{-ax}",
+      "options": [
+        {
+          "id": "a",
+          "text": "Increasing and positive"
+        },
+        {
+          "id": "b",
+          "text": "Decreasing and negative"
+        },
+        {
+          "id": "c",
+          "text": "Decreasing and positive"
+        },
+        {
+          "id": "d",
+          "text": "Increasing and negative"
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "elasticity",
+        "derivatives",
+        "exponentials"
+      ]
+    },
+    {
+      "id": "q8",
+      "number": 8,
+      "type": "multiple-choice",
+      "text": "For which p does the function f(x) = p(x-5) - \\frac{x}{10-x} have no stationary points",
+      "equation": "f(x) = p(x-5) - \\frac{x}{10-x}",
+      "options": [
+        {
+          "id": "a",
+          "text": "p \\ge 0"
+        },
+        {
+          "id": "b",
+          "text": "p < 0"
+        },
+        {
+          "id": "c",
+          "text": "p > 0"
+        },
+        {
+          "id": "d",
+          "text": "p \\le 0"
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "derivatives",
+        "stationary points",
+        "optimization"
+      ]
+    },
+    {
+      "id": "q9",
+      "number": 9,
+      "type": "multiple-choice",
+      "text": "The function f(x) = 2x^3 + 12x^2 - 7 is",
+      "equation": "f(x) = 2x^3 + 12x^2 - 7",
+      "options": [
+        {
+          "id": "a",
+          "text": "increasing and concave on the interval [-4,-2]"
+        },
+        {
+          "id": "b",
+          "text": "increasing and convex on the interval [-4,-2]"
+        },
+        {
+          "id": "c",
+          "text": "decreasing and convex on the interval [-2,0]"
+        },
+        {
+          "id": "d",
+          "text": "decreasing and concave on the interval [-2,0]"
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "derivatives",
+        "concavity",
+        "functions"
+      ]
+    },
+    {
+      "id": "q10",
+      "number": 10,
+      "type": "multiple-choice",
+      "text": "Consider the function f(x) = \\frac{1}{x} for positive values of x. For which p > 0 is the line y = p - x tangent to a point of f(x).",
+      "equation": "f(x) = \\frac{1}{x}",
+      "options": [
+        {
+          "id": "a",
+          "text": "p = -1"
+        },
+        {
+          "id": "b",
+          "text": "p = 1"
+        },
+        {
+          "id": "c",
+          "text": "p = 2"
+        },
+        {
+          "id": "d",
+          "text": "For no p"
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "derivatives",
+        "tangent lines"
+      ]
+    },
+    {
+      "id": "q11",
+      "number": 11,
+      "type": "multiple-choice",
+      "text": "The function f(x) = x^4 + ax^3 + bx^2 + cx + d has a local maximum at x=0. Then",
+      "equation": "f(x) = x^4 + ax^3 + bx^2 + cx + d",
+      "options": [
+        {
+          "id": "a",
+          "text": "d = 0 and b > 0"
+        },
+        {
+          "id": "b",
+          "text": "c = 0 and b < 0"
+        },
+        {
+          "id": "c",
+          "text": "c = 0 and b > 0"
+        },
+        {
+          "id": "d",
+          "text": "d = 0 and b < 0"
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "derivatives",
+        "optimization",
+        "polynomials"
+      ]
+    },
+    {
+      "id": "q12",
+      "number": 12,
+      "type": "multiple-choice",
+      "text": "The beer brewery “drinkers and son” bought a new alcohol distillery installation for 16000 Euro. The machine depreciates every year with 20% in value. The maintenance costs are 2000 Euro per year. After how many years (rounded) will the value of the installation become smaller than the annual maintenance costs?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "9.3 years"
+        },
+        {
+          "id": "b",
+          "text": "4.5 years"
+        },
+        {
+          "id": "c",
+          "text": "12.2 years"
+        },
+        {
+          "id": "d",
+          "text": "5 years"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "exponentials",
+        "logarithms",
+        "finance"
+      ]
+    },
+    {
+      "id": "q13",
+      "number": 13,
+      "type": "multiple-choice",
+      "text": "Consider the two points A=(5,0) and B=(0,5). The point P=(x,y) has equal distance to both A and B exactly when",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "y = x - 5."
+        },
+        {
+          "id": "b",
+          "text": "y = x."
+        },
+        {
+          "id": "c",
+          "text": "(x-5)^2 + (y-5)^2 = 25"
+        },
+        {
+          "id": "d",
+          "text": "x + y = 5."
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "geometry",
+        "algebra"
+      ]
+    },
+    {
+      "id": "q14",
+      "number": 14,
+      "type": "multiple-choice",
+      "text": "The function f(x,y) = \\frac{\\sqrt{xy}}{e - e^x} is defined for every (take the largest possible set):",
+      "equation": "f(x,y) = \\frac{\\sqrt{xy}}{e - e^x}",
+      "options": [
+        {
+          "id": "a",
+          "text": "x \\neq 1."
+        },
+        {
+          "id": "b",
+          "text": "(x \\ge 0 \\text{ and } y \\ge 0 \\text{ and } x \\neq 1)."
+        },
+        {
+          "id": "c",
+          "text": "x \\neq 1 \\text{ and } y \\ge 0."
+        },
+        {
+          "id": "d",
+          "text": "(x \\le 0 \\text{ and } y \\le 0) \\text{ or } (x \\ge 0 \\text{ and } y \\ge 0 \\text{ and } x \\neq 1)."
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "functions",
+        "domain",
+        "multivariable"
+      ]
+    },
+    {
+      "id": "q15",
+      "number": 15,
+      "type": "multiple-choice",
+      "text": "The 2nd order partial derivative \\frac{\\partial^2 f}{\\partial x \\partial y} of the function f(x,y) = 2^x y^3 is equal to",
+      "equation": "\\frac{\\partial^2 f}{\\partial x \\partial y}",
+      "options": [
+        {
+          "id": "a",
+          "text": "3\\ln 2 \\cdot 2^x y^2."
+        },
+        {
+          "id": "b",
+          "text": "\\ln 2 \\cdot 2^x y^3 + 3 \\cdot 2^x y^2."
+        },
+        {
+          "id": "c",
+          "text": "3y^2."
+        },
+        {
+          "id": "d",
+          "text": "3x 2^{x-1} y^2."
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "derivatives",
+        "partial derivatives",
+        "multivariable"
+      ]
+    },
+    {
+      "id": "q16",
+      "number": 16,
+      "type": "multiple-choice",
+      "text": "Consider the function f(x) = \\frac{x^2}{p} + \\frac{p}{x^2} for x > 0. Compute the extreme(s) of f(x) as a function of p. Which of the following is correct?",
+      "equation": "f(x) = \\frac{x^2}{p} + \\frac{p}{x^2}",
+      "options": [
+        {
+          "id": "a",
+          "text": "x = p^2"
+        },
+        {
+          "id": "b",
+          "text": "x = p^4"
+        },
+        {
+          "id": "c",
+          "text": "x = \\sqrt[4]{p}"
+        },
+        {
+          "id": "d",
+          "text": "x = \\sqrt{p}"
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "derivatives",
+        "optimization"
+      ]
+    },
+    {
+      "id": "q17",
+      "number": 17,
+      "type": "multiple-choice",
+      "text": "The function f(x,y) = x^3 + 6xy + y^3 is convex on the domain",
+      "equation": "f(x,y) = x^3 + 6xy + y^3",
+      "options": [
+        {
+          "id": "a",
+          "text": "xy \\ge 1 \\text{ and } x \\ge 0, y \\ge 0."
+        },
+        {
+          "id": "b",
+          "text": "x^2 + 2y \\ge 0."
+        },
+        {
+          "id": "c",
+          "text": "xy \\ge 1."
+        },
+        {
+          "id": "d",
+          "text": "x^2 + 2y \\ge 0 \\text{ and } x \\ge 0, y \\ge 0."
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "convexity",
+        "multivariable",
+        "hessian"
+      ]
+    },
+    {
+      "id": "q18",
+      "number": 18,
+      "type": "multiple-choice",
+      "text": "Let f(x,y) be a function of two variables. Which of the following statements is not always true?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "The function g(x,y) = f(y,x) has the same level curves as f(x,y)."
+        },
+        {
+          "id": "b",
+          "text": "The function g(x,y) = 2f(x,y) has the same level curves as f(x,y)."
+        },
+        {
+          "id": "c",
+          "text": "The function g(x,y) = -f(x,y) has the same level curves as f(x,y)."
+        },
+        {
+          "id": "d",
+          "text": "The function g(x,y) = f(x,y) + 1 has the same level curves as f(x,y)."
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "functions",
+        "level curves",
+        "multivariable"
+      ]
+    },
+    {
+      "id": "q19",
+      "number": 19,
+      "type": "multiple-choice",
+      "text": "The function f(x,y) = xy e^{x^2 - 2y^2} has",
+      "equation": "f(x,y) = xy e^{x^2 - 2y^2}",
+      "options": [
+        {
+          "id": "a",
+          "text": "2 stationary points."
+        },
+        {
+          "id": "b",
+          "text": "4 stationary points."
+        },
+        {
+          "id": "c",
+          "text": "3 stationary points."
+        },
+        {
+          "id": "d",
+          "text": "1 stationary point."
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "derivatives",
+        "stationary points",
+        "multivariable"
+      ]
+    },
+    {
+      "id": "q20",
+      "number": 20,
+      "type": "multiple-choice",
+      "text": "Consider a monopolist selling his product in two countries. When he sells a quantity Q_A in country A the price in this country is given by P_A = 10 - 2Q_A and when he sells Q_B in country B the price in that country is given by P_B = 20 - 2Q_B. The costs of producing quantity Q = Q_A + Q_B is given by C(Q) = 5 + 6Q_A + 4Q_B. Moreover, in country A sales of his product are taxed by a per-unit tax of t. Thus, the profit function of the monopolist is given by \\Pi = (P_A - t)Q_A + P_B Q_B - C(Q). Let (Q_A^*, Q_B^*) be the optimal production decision for the monopolist. Thus, the amount of tax collected by county A is tQ_A^*. Which one of the following statements is true?",
+      "equation": "\\Pi = (P_A - t)Q_A + P_B Q_B - C(Q)",
+      "options": [
+        {
+          "id": "a",
+          "text": "The optimal production decision for the monopolist is (Q_A^*, Q_B^*) = (2 - \\frac{1}{2}t, 4). The optimal level of taxation for county A is t = 4."
+        },
+        {
+          "id": "b",
+          "text": "The optimal production decision for the monopolist is (Q_A^*, Q_B^*) = (1 - \\frac{1}{4}t, 4). The optimal level of taxation for county A is t = 4."
+        },
+        {
+          "id": "c",
+          "text": "The optimal production decision for the monopolist is (Q_A^*, Q_B^*) = (1 - \\frac{1}{4}t, 4). The optimal level of taxation for county A is t = 2."
+        },
+        {
+          "id": "d",
+          "text": "The optimal production decision for the monopolist is (Q_A^*, Q_B^*) = (2 - \\frac{1}{2}t, 4). The optimal level of taxation for county A is t = 2."
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "optimization",
+        "derivatives",
+        "economics"
+      ]
+    },
+    {
+      "id": "q21",
+      "number": 21,
+      "type": "multiple-choice",
+      "text": "A Consumer Reports study on tipping takes into consideration median amount of tipping for service providers. Tipping is what type of variable?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "quantitative"
+        },
+        {
+          "id": "b",
+          "text": "nominal"
+        },
+        {
+          "id": "c",
+          "text": "categorical"
+        },
+        {
+          "id": "d",
+          "text": "ordinal"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "data types",
+        "variables"
+      ]
+    },
+    {
+      "id": "q22",
+      "number": 22,
+      "type": "multiple-choice",
+      "text": "A restaurant uses comment cards to get feedback from its customers about newly added items to the menu. It recently introduced homemade organic veggie burgers. Customers who tried the new burger were asked if they would order it again. Which of the following would be an appropriate method for displaying the data shown in the table?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "Pie chart"
+        },
+        {
+          "id": "b",
+          "text": "Histogram"
+        },
+        {
+          "id": "c",
+          "text": "Dotplot"
+        },
+        {
+          "id": "d",
+          "text": "Stem-and-leaf display"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "data visualization",
+        "categorical data"
+      ]
+    },
+    {
+      "id": "q23",
+      "number": 23,
+      "type": "multiple-choice",
+      "text": "The five-number summary of credit hours for 24 students in a statistics class is: Min=13.0, Q1=15.0, Median=16.5, Q3=18.0, Max=22.0. Based on the boxplot rule for nominating outliers, which statement is true?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "There are both low and high outliers in the data."
+        },
+        {
+          "id": "b",
+          "text": "There is at least one low outlier in the data."
+        },
+        {
+          "id": "c",
+          "text": "There are no outliers in the data."
+        },
+        {
+          "id": "d",
+          "text": "There is at least one high outlier in the data."
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "descriptive statistics",
+        "outliers",
+        "boxplots"
+      ]
+    },
+    {
+      "id": "q24",
+      "number": 24,
+      "type": "multiple-choice",
+      "text": "Which of the following summaries are changed by adding a constant to each data value? I. the mean. II. the median. III. the standard deviation IV. the interquartile range",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "I and II"
+        },
+        {
+          "id": "b",
+          "text": "I only"
+        },
+        {
+          "id": "c",
+          "text": "IV only"
+        },
+        {
+          "id": "d",
+          "text": "I and III"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "descriptive statistics",
+        "data transformations"
+      ]
+    },
+    {
+      "id": "q25",
+      "number": 25,
+      "type": "multiple-choice",
+      "text": "Professional polling organizations face the challenge of selecting a representative sample of adults by telephone. This has been complicated by people who only use cell phones and by others whose landline phones are unlisted. A careful survey was done and the reported results appear in the accompanying table. Are having a cell phone and a landline independent? Explain.",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "No, the probability of an adult having a landline, given that he or she has a cell phone, is equal to the probability of having a landline."
+        },
+        {
+          "id": "b",
+          "text": "No, the probability of an adult having a landline, given that he or she has a cell phone, is not equal to the probability of having a landline."
+        },
+        {
+          "id": "c",
+          "text": "Yes, the probability of an adult having a landline, given that he or she has a cell phone, is not equal to the probability of having a landline."
+        },
+        {
+          "id": "d",
+          "text": "Yes, the probability of an adult having a landline, given that he or she has a cell phone, is equal to the probability of having a landline."
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "probability",
+        "independence"
+      ]
+    },
+    {
+      "id": "q26",
+      "number": 26,
+      "type": "multiple-choice",
+      "text": "Laptop computers have been growing in popularity according to a recent study. Laptops now represent more than half the computer sales in a certain country. A campus bookstore sells both types of computers and in the last semester sold 60% laptops and 40% desktops. Reliability rates for the two types of machines are quite different, however. In the first year, 5% of desktops require service, while 15% of laptops have problems requiring service. Given that the computer required service, what is the probability that it was a laptop? Round your answer to 2 decimals.",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "0.90"
+        },
+        {
+          "id": "b",
+          "text": "0.85"
+        },
+        {
+          "id": "c",
+          "text": "0.82"
+        },
+        {
+          "id": "d",
+          "text": "0.60"
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "probability",
+        "bayes theorem"
+      ]
+    },
+    {
+      "id": "q27",
+      "number": 27,
+      "type": "multiple-choice",
+      "text": "Suppose we have a random variable X, where the probability associated with the value k is \\binom{15}{k}(.42)^k(.58)^{15-k} for k = 0, . . . ,15. What is the mean of X?",
+      "equation": "\\binom{15}{k}(.42)^k(.58)^{15-k}",
+      "options": [
+        {
+          "id": "a",
+          "text": "7.5"
+        },
+        {
+          "id": "b",
+          "text": "6.3"
+        },
+        {
+          "id": "c",
+          "text": "0.58"
+        },
+        {
+          "id": "d",
+          "text": "0.42"
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "probability distributions",
+        "binomial distribution",
+        "expected value"
+      ]
+    },
+    {
+      "id": "q28",
+      "number": 28,
+      "type": "multiple-choice",
+      "text": "Whooping cough (pertussis) is staging a horrific comeback after being nearly eliminated in the 1970s. The CDC estimates that only 30% of teenagers are receiving the recommended booster shots. A reporter interviews a random sample of 40 teens every week for a year and each week records the number who have received the booster shot. Assuming the 30% to be an accurate estimate, what theoretical distribution describes the counts the reporter achieves in any week?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "the sampling distribution of sample proportions with n = 40 and p = 0.30"
+        },
+        {
+          "id": "b",
+          "text": "the sampling distribution of sample proportions with n = 52 and p = 0.30"
+        },
+        {
+          "id": "c",
+          "text": "a binomial distribution with n = 40 and p = 0.30"
+        },
+        {
+          "id": "d",
+          "text": "a binomial distribution with n = 52 and p = 0.30"
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "probability distributions",
+        "binomial distribution"
+      ]
+    },
+    {
+      "id": "q29",
+      "number": 29,
+      "type": "multiple-choice",
+      "text": "In the 2012 London Olympics, Team USA set a new women's world record of 40.82 seconds in the 4 \\times 100 meter relay. Suppose one runner covers 100 meters in an average of 10.9 seconds with a standard deviation of 0.12 seconds while a second runner covers 100 meters in an average of 11.0 seconds with a standard deviation of 0.05 seconds. Assuming that both distributions are normal and that their runs are independent, what is the probability that their combined time will be under 21.8 seconds (rounded to 3 decimals)?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": ".722"
+        },
+        {
+          "id": "b",
+          "text": ".404"
+        },
+        {
+          "id": "c",
+          "text": ".278"
+        },
+        {
+          "id": "d",
+          "text": ".221"
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "normal distribution",
+        "random variables"
+      ]
+    },
+    {
+      "id": "q30",
+      "number": 30,
+      "type": "multiple-choice",
+      "text": "The length of time it takes to play a certain video game is normally distributed with a mean of 15 minutes and a standard deviation of 3 minutes. If a game lasts less than 14 minutes, what is the probability it lasted less than 12 minutes?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": ".430"
+        },
+        {
+          "id": "b",
+          "text": ".370"
+        },
+        {
+          "id": "c",
+          "text": ".211"
+        },
+        {
+          "id": "d",
+          "text": ".159"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "normal distribution",
+        "conditional probability"
+      ]
+    },
+    {
+      "id": "q31",
+      "number": 31,
+      "type": "multiple-choice",
+      "text": "Which of the following is a true statement about sampling?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "The size of the population does not matter as long as the sample is random."
+        },
+        {
+          "id": "b",
+          "text": "The size of the sample does not matter as long as the sample is random."
+        },
+        {
+          "id": "c",
+          "text": "A sample of less than 1% is too small for statistical inference."
+        },
+        {
+          "id": "d",
+          "text": "All of the above are true statements."
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "sampling",
+        "statistical inference"
+      ]
+    },
+    {
+      "id": "q32",
+      "number": 32,
+      "type": "multiple-choice",
+      "text": "Which of the following is not a characteristic of stratified sampling?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "This method can improve the representativeness of the sample by insuring that subpopulations are represented."
+        },
+        {
+          "id": "b",
+          "text": "Randomization plays a role."
+        },
+        {
+          "id": "c",
+          "text": "The strata are mutually exclusive."
+        },
+        {
+          "id": "d",
+          "text": "The population is divided into heterogeneous groups called strata."
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "sampling",
+        "stratified sampling"
+      ]
+    },
+    {
+      "id": "q33",
+      "number": 33,
+      "type": "multiple-choice",
+      "text": "A professional archer knows that 80% of her shots land in the bullseye. She accepts two challenges, the first to land over 85% in the bullseye, and the second to land between 75% and 85%. Which should she choose, 50 or 100 shots, for each challenge?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "100 shots for the first challenge and 50 for the second"
+        },
+        {
+          "id": "b",
+          "text": "50 shots for the first challenge and 100 for the second"
+        },
+        {
+          "id": "c",
+          "text": "100 shots for each challenge"
+        },
+        {
+          "id": "d",
+          "text": "50 shots for each challenge"
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "sampling distributions",
+        "variance",
+        "proportions"
+      ]
+    },
+    {
+      "id": "q34",
+      "number": 34,
+      "type": "multiple-choice",
+      "text": "In a random sample of ten 35 g \"Fruit & Nut\" trail mix bars, the average total fat content is found to be 4 g with a standard deviation of 0.5 g. Assuming all assumptions for inference are met, what is a 90% confidence interval for the mean total fat content of such trail mix bars?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "4 \\pm 1.645 \\times \\frac{0.5}{\\sqrt{9}}"
+        },
+        {
+          "id": "b",
+          "text": "4 \\pm 1.833 \\times \\frac{0.5}{\\sqrt{10}}"
+        },
+        {
+          "id": "c",
+          "text": "4 \\pm 1.812 \\times \\frac{0.5}{\\sqrt{10}}"
+        },
+        {
+          "id": "d",
+          "text": "4 \\pm 1.812 \\times \\frac{0.5}{\\sqrt{9}}"
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "confidence intervals",
+        "t-distribution"
+      ]
+    },
+    {
+      "id": "q35",
+      "number": 35,
+      "type": "multiple-choice",
+      "text": "A young investor believes that he can beat the market by picking stocks that will increase in value. Assume that on average 45% of the stocks selected by a portfolio manager will increase over 12 months. Of the 24 stocks that the young investor bought over the last 12 months, 16 have increased. Can he claim that he is better at predicting increases than the typical portfolio manager? Test at \\alpha=0.05. What is the value of the test statistic?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "t = 2.26"
+        },
+        {
+          "id": "b",
+          "text": "t = 2.14"
+        },
+        {
+          "id": "c",
+          "text": "z = 2.26"
+        },
+        {
+          "id": "d",
+          "text": "z = 2.14"
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "hypothesis testing",
+        "proportions",
+        "z-test"
+      ]
+    },
+    {
+      "id": "q36",
+      "number": 36,
+      "type": "multiple-choice",
+      "text": "What is the P-value for this test? (Referencing the scenario in Q35)",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "P-value = 0.032"
+        },
+        {
+          "id": "b",
+          "text": "P-value = 0.024"
+        },
+        {
+          "id": "c",
+          "text": "P-value = 0.016"
+        },
+        {
+          "id": "d",
+          "text": "P-value = 0.012"
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "hypothesis testing",
+        "p-value"
+      ]
+    },
+    {
+      "id": "q37",
+      "number": 37,
+      "type": "multiple-choice",
+      "text": "The average age of online consumers a few years ago was 24 years. As older individuals gain confidence with the Internet, it is believed that the average age has increased. We plan to test this belief by selecting a random sample of 40 individuals who have made an online purchase this year. The online shoppers in our sample had an average age of 25.5 years. What are the appropriate hypotheses for this test?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "H_0 : \\mu \\neq 24, H_A : \\mu = 24."
+        },
+        {
+          "id": "b",
+          "text": "H_0 : \\mu = 24, H_A : \\mu \\neq 24."
+        },
+        {
+          "id": "c",
+          "text": "H_0 : \\mu = 24, H_A : \\mu > 24."
+        },
+        {
+          "id": "d",
+          "text": "H_0 : \\mu > 24, H_A : \\mu = 24."
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "hypothesis testing"
+      ]
+    },
+    {
+      "id": "q38",
+      "number": 38,
+      "type": "multiple-choice",
+      "text": "What does this P-value mean in context? (Referencing the scenario in Q37)",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "If the mean age of shoppers is equal to 25.5 years, the probability of getting a sample mean of 24 years or younger simply from natural sampling variation is equal to the P-value."
+        },
+        {
+          "id": "b",
+          "text": "If the mean age of shoppers remains at 24 years, the probability of getting a sample mean of 25.5 years or older simply from natural sampling variation is equal to the P-value."
+        },
+        {
+          "id": "c",
+          "text": "The probability of a random sample of 40 shoppers having an age less than the hypothesized mean age is equal to the P-value."
+        },
+        {
+          "id": "d",
+          "text": "The probability of a random sample of 40 shoppers having an age more than the hypothesized mean age is equal to the P-value."
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "hypothesis testing",
+        "p-value"
+      ]
+    },
+    {
+      "id": "q39",
+      "number": 39,
+      "type": "multiple-choice",
+      "text": "Using nanostructured carbon materials that are finely controlled, a company has developed a lithium-air car battery that could make gas obsolete. They claim that their battery will go 500 miles before needing to be recharged. A consumer protection bureau scientist believes that this claim is overblown and plans to run a hypothesis test at the 10% significance level. What would be a Type I error?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "The scientist concludes that she has no evidence that the battery does not last 500 miles before needing a recharge; however, the battery really does not last 500 miles."
+        },
+        {
+          "id": "b",
+          "text": "The scientist concludes that she has evidence that the battery does not last 500 miles before needing a recharge, and the battery really does not last 500 miles."
+        },
+        {
+          "id": "c",
+          "text": "The scientist concludes that she has no evidence that the battery does not last 500 miles before needing a recharge, and the battery really does last 500 miles."
+        },
+        {
+          "id": "d",
+          "text": "The scientist concludes that she has evidence that the battery does not last 500 miles before needing a recharge; however, the battery really does last 500 miles."
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "hypothesis testing",
+        "type i error"
+      ]
+    },
+    {
+      "id": "q40",
+      "number": 40,
+      "type": "multiple-choice",
+      "text": "A market analyst speculates that consumers will be willing to pay $250 for a new no-frills laptop. A salesperson believes the true figure is higher and plans to sample 35 potential consumers. If the alternative hypothesis is correct, for which of the following values of \\mu will the power of the test be greatest?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "$300"
+        },
+        {
+          "id": "b",
+          "text": "$275"
+        },
+        {
+          "id": "c",
+          "text": "$250"
+        },
+        {
+          "id": "d",
+          "text": "$225"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "hypothesis testing",
+        "statistical power"
+      ]
+    }
+  ],
+  "id": "qm1_ebc1005qm1exam1stsit20172018vsa_dd2ffb",
+  "course": "QM1",
+  "source_file": "EBC1005QM1Exam1stSit20172018VsA.pdf"
+}

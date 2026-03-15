@@ -1,0 +1,1153 @@
+{
+  "title": "Data Structures and Algorithms 2020/2021 Resit Exam",
+  "description": "Resit exam for Bachelor Data Science and Artificial Intelligence covering graphs, sorting, trees, heaps, and algorithm complexity.",
+  "questions": [
+    {
+      "id": "A1_1a",
+      "number": "A1.1a",
+      "type": "multiple-choice",
+      "text": "Suppose a graph has no edges. What is the asymptotic space cost of storing the graph as an adjacency list?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "O(|V|^2)"
+        },
+        {
+          "id": "b",
+          "text": "O(|V| \\log |V|)"
+        },
+        {
+          "id": "c",
+          "text": "O(|V|)"
+        },
+        {
+          "id": "d",
+          "text": "O(|V|^2 \\log |V|)"
+        },
+        {
+          "id": "e",
+          "text": "O(|V|^5)"
+        },
+        {
+          "id": "f",
+          "text": "O(2^{|V|})"
+        },
+        {
+          "id": "g",
+          "text": "O(|V|^3)"
+        },
+        {
+          "id": "h",
+          "text": "O(\\log |V|)"
+        },
+        {
+          "id": "i",
+          "text": "O(1)"
+        },
+        {
+          "id": "j",
+          "text": "O(|V|^4)"
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "graphs",
+        "space complexity",
+        "adjacency list"
+      ]
+    },
+    {
+      "id": "A1_1b",
+      "number": "A1.1b",
+      "type": "multiple-choice",
+      "text": "Suppose a graph has no edges. What is the asymptotic space cost of storing the graph as an adjacency matrix?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "O(|V|^2)"
+        },
+        {
+          "id": "b",
+          "text": "O(|V| \\log |V|)"
+        },
+        {
+          "id": "c",
+          "text": "O(|V|)"
+        },
+        {
+          "id": "d",
+          "text": "O(|V|^2 \\log |V|)"
+        },
+        {
+          "id": "e",
+          "text": "O(|V|^5)"
+        },
+        {
+          "id": "f",
+          "text": "O(2^{|V|})"
+        },
+        {
+          "id": "g",
+          "text": "O(|V|^3)"
+        },
+        {
+          "id": "h",
+          "text": "O(\\log |V|)"
+        },
+        {
+          "id": "i",
+          "text": "O(1)"
+        },
+        {
+          "id": "j",
+          "text": "O(|V|^4)"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "graphs",
+        "space complexity",
+        "adjacency matrix"
+      ]
+    },
+    {
+      "id": "A1_1c",
+      "number": "A1.1c",
+      "type": "multiple-choice",
+      "text": "Suppose a graph has every possible edge. What is the asymptotic space cost of storing the graph as an adjacency list?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "O(|V|^2)"
+        },
+        {
+          "id": "b",
+          "text": "O(|V| \\log |V|)"
+        },
+        {
+          "id": "c",
+          "text": "O(|V|)"
+        },
+        {
+          "id": "d",
+          "text": "O(|V|^2 \\log |V|)"
+        },
+        {
+          "id": "e",
+          "text": "O(|V|^5)"
+        },
+        {
+          "id": "f",
+          "text": "O(2^{|V|})"
+        },
+        {
+          "id": "g",
+          "text": "O(|V|^3)"
+        },
+        {
+          "id": "h",
+          "text": "O(\\log |V|)"
+        },
+        {
+          "id": "i",
+          "text": "O(1)"
+        },
+        {
+          "id": "j",
+          "text": "O(|V|^4)"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "graphs",
+        "space complexity",
+        "adjacency list"
+      ]
+    },
+    {
+      "id": "A1_1d",
+      "number": "A1.1d",
+      "type": "multiple-choice",
+      "text": "Suppose an undirected graph has one node A that is connected to every other node and the graph has no other edges. What is the asymptotic space cost of storing the graph as an adjacency list?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "O(|V|^2)"
+        },
+        {
+          "id": "b",
+          "text": "O(|V| \\log |V|)"
+        },
+        {
+          "id": "c",
+          "text": "O(|V|)"
+        },
+        {
+          "id": "d",
+          "text": "O(|V|^2 \\log |V|)"
+        },
+        {
+          "id": "e",
+          "text": "O(|V|^5)"
+        },
+        {
+          "id": "f",
+          "text": "O(2^{|V|})"
+        },
+        {
+          "id": "g",
+          "text": "O(|V|^3)"
+        },
+        {
+          "id": "h",
+          "text": "O(\\log |V|)"
+        },
+        {
+          "id": "i",
+          "text": "O(1)"
+        },
+        {
+          "id": "j",
+          "text": "O(|V|^4)"
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "graphs",
+        "space complexity",
+        "adjacency list"
+      ]
+    },
+    {
+      "id": "A1_1e",
+      "number": "A1.1e",
+      "type": "multiple-choice",
+      "text": "Suppose an undirected graph has one node A that is connected to every other node and the graph has no other edges. What is the asymptotic space cost of storing the graph as an adjacency matrix?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "O(|V|^2)"
+        },
+        {
+          "id": "b",
+          "text": "O(|V| \\log |V|)"
+        },
+        {
+          "id": "c",
+          "text": "O(|V|)"
+        },
+        {
+          "id": "d",
+          "text": "O(|V|^2 \\log |V|)"
+        },
+        {
+          "id": "e",
+          "text": "O(|V|^5)"
+        },
+        {
+          "id": "f",
+          "text": "O(2^{|V|})"
+        },
+        {
+          "id": "g",
+          "text": "O(|V|^3)"
+        },
+        {
+          "id": "h",
+          "text": "O(\\log |V|)"
+        },
+        {
+          "id": "i",
+          "text": "O(1)"
+        },
+        {
+          "id": "j",
+          "text": "O(|V|^4)"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "graphs",
+        "space complexity",
+        "adjacency matrix"
+      ]
+    },
+    {
+      "id": "A1_1f",
+      "number": "A1.1f",
+      "type": "multiple-choice",
+      "text": "Is an adjacency list faster or slower than an adjacency matrix for answering queries of the form, is edge (u; v) in the graph\"?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "faster"
+        },
+        {
+          "id": "b",
+          "text": "slower"
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "graphs",
+        "time complexity",
+        "adjacency list",
+        "adjacency matrix"
+      ]
+    },
+    {
+      "id": "A1_1g",
+      "number": "A1.1g",
+      "type": "multiple-choice",
+      "text": "Is an adjacency list faster or slower than an adjacency matrix for answering queries of the form: “are there any directed edges with u as the source node?”",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "faster"
+        },
+        {
+          "id": "b",
+          "text": "slower"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "graphs",
+        "time complexity",
+        "adjacency list",
+        "adjacency matrix"
+      ]
+    },
+    {
+      "id": "A1_2a",
+      "number": "A1.2a",
+      "type": "open-ended",
+      "text": "Illustrate the operation of mergesort by drawing the sorting trees. Sort the provided input: 9 8 6 7 5 0",
+      "equation": null,
+      "modelAnswer": "The array [9, 8, 6, 7, 5, 0] is recursively split into halves: [9, 8, 6] and [7, 5, 0]. These are further split into [9], [8, 6] -> [8], [6] and [7], [5, 0] -> [5], [0]. Then they are merged back in sorted order: [6, 8], [0, 5]. Then [6, 8, 9] and [0, 5, 7]. Finally, the two halves are merged to produce [0, 5, 6, 7, 8, 9].",
+      "keyTerms": [
+        "mergesort",
+        "divide and conquer",
+        "sorting trees"
+      ],
+      "tags": [
+        "sorting algorithms",
+        "mergesort"
+      ]
+    },
+    {
+      "id": "A1_2b",
+      "number": "A1.2b",
+      "type": "open-ended",
+      "text": "Illustrate the operation of quicksort by drawing the sorting trees. Always choose the first element as a pivot. Sort the provided input: 9 8 6 7 5 0",
+      "equation": null,
+      "modelAnswer": "Pivot is 9. Partitioning the rest [8, 6, 7, 5, 0] results in all elements being less than 9, so the left sub-array is [8, 6, 7, 5, 0] and right is empty. Next pivot is 8. Left sub-array becomes [6, 7, 5, 0]. Next pivot is 6. Left sub-array is [5, 0], right is [7]. Next pivot is 5. Left is [0]. The tree combines to form the sorted array [0, 5, 6, 7, 8, 9].",
+      "keyTerms": [
+        "quicksort",
+        "pivot",
+        "partitioning"
+      ],
+      "tags": [
+        "sorting algorithms",
+        "quicksort"
+      ]
+    },
+    {
+      "id": "A1_3",
+      "number": "A1.3",
+      "type": "open-ended",
+      "text": "You are given the following set of strings { aeef, ad bbfe, c, bbfg }. First, construct a trie. In the second step, compress the trie.",
+      "equation": null,
+      "modelAnswer": "Step 1: Construct a standard trie with a root node. Add branches for 'a', 'b', 'c'. Under 'a', branch to 'e' (then 'e', 'f') and 'd'. Under 'b', branch to 'b' (then 'f', then 'e' and 'g'). Under 'c', mark as word end. Step 2: Compress the trie (Radix tree/Patricia trie) by merging nodes with single children. The path 'a' -> 'e' -> 'e' -> 'f' becomes a single edge 'eef' after 'a'. The path 'b' -> 'b' -> 'f' becomes 'bbf', which then splits into 'e' and 'g'.",
+      "keyTerms": [
+        "trie",
+        "compressed trie",
+        "radix tree"
+      ],
+      "tags": [
+        "trees",
+        "tries",
+        "data compression"
+      ]
+    },
+    {
+      "id": "A2_1a",
+      "number": "A2.1a",
+      "type": "multiple-choice",
+      "text": "Pushing a value onto a stack containing n values, implemented as a linked list.",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "O(n^2)"
+        },
+        {
+          "id": "b",
+          "text": "O(n \\log n)"
+        },
+        {
+          "id": "c",
+          "text": "O(n)"
+        },
+        {
+          "id": "d",
+          "text": "O(n^2 \\log n)"
+        },
+        {
+          "id": "e",
+          "text": "O(n^5)"
+        },
+        {
+          "id": "f",
+          "text": "O(2^n)"
+        },
+        {
+          "id": "g",
+          "text": "O(n^3)"
+        },
+        {
+          "id": "h",
+          "text": "O(\\log n)"
+        },
+        {
+          "id": "i",
+          "text": "O(1)"
+        },
+        {
+          "id": "j",
+          "text": "O(n^n)"
+        }
+      ],
+      "correctAnswerId": "i",
+      "tags": [
+        "time complexity",
+        "stacks",
+        "linked lists"
+      ]
+    },
+    {
+      "id": "A2_1b",
+      "number": "A2.1b",
+      "type": "multiple-choice",
+      "text": "Enqueue a value onto a queue containing n values implemented as a circular array (as described in class). (Assume the array is size n+5.)",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "O(n^2)"
+        },
+        {
+          "id": "b",
+          "text": "O(n \\log n)"
+        },
+        {
+          "id": "c",
+          "text": "O(n)"
+        },
+        {
+          "id": "d",
+          "text": "O(n^2 \\log n)"
+        },
+        {
+          "id": "e",
+          "text": "O(n^5)"
+        },
+        {
+          "id": "f",
+          "text": "O(2^n)"
+        },
+        {
+          "id": "g",
+          "text": "O(n^3)"
+        },
+        {
+          "id": "h",
+          "text": "O(\\log n)"
+        },
+        {
+          "id": "i",
+          "text": "O(1)"
+        },
+        {
+          "id": "j",
+          "text": "O(n^n)"
+        }
+      ],
+      "correctAnswerId": "i",
+      "tags": [
+        "time complexity",
+        "queues",
+        "arrays"
+      ]
+    },
+    {
+      "id": "A2_1c",
+      "number": "A2.1c",
+      "type": "multiple-choice",
+      "text": "Deleting the minimum value in a binary min heap of size n.",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "O(n^2)"
+        },
+        {
+          "id": "b",
+          "text": "O(n \\log n)"
+        },
+        {
+          "id": "c",
+          "text": "O(n)"
+        },
+        {
+          "id": "d",
+          "text": "O(n^2 \\log n)"
+        },
+        {
+          "id": "e",
+          "text": "O(n^5)"
+        },
+        {
+          "id": "f",
+          "text": "O(2^n)"
+        },
+        {
+          "id": "g",
+          "text": "O(n^3)"
+        },
+        {
+          "id": "h",
+          "text": "O(\\log n)"
+        },
+        {
+          "id": "i",
+          "text": "O(1)"
+        },
+        {
+          "id": "j",
+          "text": "O(n^n)"
+        }
+      ],
+      "correctAnswerId": "h",
+      "tags": [
+        "time complexity",
+        "heaps"
+      ]
+    },
+    {
+      "id": "A2_1d",
+      "number": "A2.1d",
+      "type": "multiple-choice",
+      "text": "Given a binary search tree containing n integers, create an AVL tree containing the same values. You should not destroy the original BST in the process.",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "O(n^2)"
+        },
+        {
+          "id": "b",
+          "text": "O(n \\log n)"
+        },
+        {
+          "id": "c",
+          "text": "O(n)"
+        },
+        {
+          "id": "d",
+          "text": "O(n^2 \\log n)"
+        },
+        {
+          "id": "e",
+          "text": "O(n^5)"
+        },
+        {
+          "id": "f",
+          "text": "O(2^n)"
+        },
+        {
+          "id": "g",
+          "text": "O(n^3)"
+        },
+        {
+          "id": "h",
+          "text": "O(\\log n)"
+        },
+        {
+          "id": "i",
+          "text": "O(1)"
+        },
+        {
+          "id": "j",
+          "text": "O(n^n)"
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "time complexity",
+        "binary search trees",
+        "avl trees"
+      ]
+    },
+    {
+      "id": "A2_1e",
+      "number": "A2.1e",
+      "type": "multiple-choice",
+      "text": "Printing out the values stored in all of the leaves of a perfect BST containing n values in ascending order.",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "O(n^2)"
+        },
+        {
+          "id": "b",
+          "text": "O(n \\log n)"
+        },
+        {
+          "id": "c",
+          "text": "O(n)"
+        },
+        {
+          "id": "d",
+          "text": "O(n^2 \\log n)"
+        },
+        {
+          "id": "e",
+          "text": "O(n^5)"
+        },
+        {
+          "id": "f",
+          "text": "O(2^n)"
+        },
+        {
+          "id": "g",
+          "text": "O(n^3)"
+        },
+        {
+          "id": "h",
+          "text": "O(\\log n)"
+        },
+        {
+          "id": "i",
+          "text": "O(1)"
+        },
+        {
+          "id": "j",
+          "text": "O(n^n)"
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "time complexity",
+        "binary search trees",
+        "tree traversal"
+      ]
+    },
+    {
+      "id": "A2_1f",
+      "number": "A2.1f",
+      "type": "multiple-choice",
+      "text": "Given an AVL tree containing n positive integers, print out all the even values contained in the tree in descending order (e.g. 12, 8, 6, 2). Be sure to explain how you will get descending order",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "O(n^2)"
+        },
+        {
+          "id": "b",
+          "text": "O(n \\log n)"
+        },
+        {
+          "id": "c",
+          "text": "O(n)"
+        },
+        {
+          "id": "d",
+          "text": "O(n^2 \\log n)"
+        },
+        {
+          "id": "e",
+          "text": "O(n^5)"
+        },
+        {
+          "id": "f",
+          "text": "O(2^n)"
+        },
+        {
+          "id": "g",
+          "text": "O(n^3)"
+        },
+        {
+          "id": "h",
+          "text": "O(\\log n)"
+        },
+        {
+          "id": "i",
+          "text": "O(1)"
+        },
+        {
+          "id": "j",
+          "text": "O(n^n)"
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "time complexity",
+        "avl trees",
+        "tree traversal"
+      ]
+    },
+    {
+      "id": "A2_2",
+      "number": "A2.2",
+      "type": "open-ended",
+      "text": "Complete this Java method so that it properly implements insertion sort. Make sure the result is in-place (do not use another array).\nvoid selectionSort(int [] array) {\nfor(int i=0; i < array.length; i++) {\nint index_of_least = i;\nint j;\nfor(j=i+1; j < array.length; j++) {\n// YOUR CODE HERE #1\n} // end of the inner for-loop\n// YOUR CODE HERE #2\n} // end of the outer for-loop\n}",
+      "equation": null,
+      "modelAnswer": "Note: The provided code skeleton is for Selection Sort, not Insertion Sort, despite the question title. Assuming we complete the Selection Sort skeleton provided:\n// YOUR CODE HERE #1:\nif (array[j] < array[index_of_least]) {\n    index_of_least = j;\n}\n// YOUR CODE HERE #2:\nint temp = array[i];\narray[i] = array[index_of_least];\narray[index_of_least] = temp;",
+      "keyTerms": [
+        "insertion sort",
+        "selection sort",
+        "in-place sorting"
+      ],
+      "tags": [
+        "sorting algorithms",
+        "java"
+      ]
+    },
+    {
+      "id": "A2_3a",
+      "number": "A2.3a",
+      "type": "open-ended",
+      "text": "The binary search tree shown below was constructed by inserting a sequence of items into an empty tree. Which of the following input sequences will produce or not produce this binary search tree? Mark the corresponding cells in the table below for each sequence:\n5 3 4 9 12 7 8 6 20\n5 9 3 7 6 8 4 12 20\n5 9 7 8 6 12 20 3 4\n5 9 7 3 8 12 6 4 20\n5 9 3 6 7 8 4 12 20",
+      "equation": null,
+      "modelAnswer": "Based on the provided X marks in the raw text, the sequences are evaluated based on whether they maintain the parent-child relationships of the target BST. A valid sequence must insert a parent node before any of its descendants.",
+      "keyTerms": [
+        "binary search tree",
+        "insertion sequence"
+      ],
+      "tags": [
+        "binary search trees"
+      ]
+    },
+    {
+      "id": "A2_3b",
+      "number": "A2.3b",
+      "type": "open-ended",
+      "text": "Briefly explain what a binary search tree (BST) is, listing its properties.",
+      "equation": null,
+      "modelAnswer": "A binary search tree is a rooted binary tree data structure where each node has at most two children. Its key properties are: 1) The left subtree of a node contains only nodes with keys lesser than the node's key. 2) The right subtree of a node contains only nodes with keys greater than the node's key. 3) The left and right subtrees must also be binary search trees.",
+      "keyTerms": [
+        "binary search tree",
+        "left subtree",
+        "right subtree",
+        "keys"
+      ],
+      "tags": [
+        "binary search trees"
+      ]
+    },
+    {
+      "id": "A2_3c",
+      "number": "A2.3c",
+      "type": "open-ended",
+      "text": "What is the height of a balanced binary tree with n internal nodes?",
+      "equation": null,
+      "modelAnswer": "The height of a balanced binary tree with n internal nodes is O(log n).",
+      "keyTerms": [
+        "balanced binary tree",
+        "height",
+        "log n"
+      ],
+      "tags": [
+        "trees",
+        "time complexity"
+      ]
+    },
+    {
+      "id": "A2_3d",
+      "number": "A2.3d",
+      "type": "open-ended",
+      "text": "Describe an optimally efficient algorithm to find the largest element that is smaller than a given node n in a BST and explain why it works.",
+      "equation": null,
+      "modelAnswer": "To find the largest element smaller than node n (its in-order predecessor): 1) If node n has a left child, the predecessor is the maximum value in its left subtree (found by going to the left child, then following right children until a leaf is reached). 2) If node n does not have a left child, traverse up the tree using parent pointers until you find a node that is the right child of its parent; that parent is the predecessor. This works because the left subtree contains all smaller elements, and the rightmost node of that subtree is the largest of those smaller elements.",
+      "keyTerms": [
+        "in-order predecessor",
+        "left subtree",
+        "rightmost node"
+      ],
+      "tags": [
+        "binary search trees",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "A3_1a",
+      "number": "A3.1a",
+      "type": "multiple-choice",
+      "text": "void silly(int n, int x, int y) {\nif (x < y) {\nfor (int i = 0; i < n; ++i)\nfor (int j = 0; j < n * i; ++j)\nSystem.out.println(”y = ” + y);\n} else {\nSystem.out.println(”x = ” + x);\n}\n}",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "O(n^2)"
+        },
+        {
+          "id": "b",
+          "text": "O(n \\log n)"
+        },
+        {
+          "id": "c",
+          "text": "O(n)"
+        },
+        {
+          "id": "d",
+          "text": "O(n^2 \\log n)"
+        },
+        {
+          "id": "e",
+          "text": "O(n^5)"
+        },
+        {
+          "id": "f",
+          "text": "O(2^n)"
+        },
+        {
+          "id": "g",
+          "text": "O(n^3)"
+        },
+        {
+          "id": "h",
+          "text": "O(\\log n)"
+        },
+        {
+          "id": "i",
+          "text": "O(1)"
+        },
+        {
+          "id": "j",
+          "text": "O(n^4)"
+        }
+      ],
+      "correctAnswerId": "g",
+      "tags": [
+        "time complexity",
+        "loops"
+      ]
+    },
+    {
+      "id": "A3_1b",
+      "number": "A3.1b",
+      "type": "multiple-choice",
+      "text": "int silly(int n, int m) {\nif (n < 1) return n;\nelse if (n < 100)\nreturn silly(n - m, m);\nelse\nreturn silly(n - 1, m);\n}",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "O(n^2)"
+        },
+        {
+          "id": "b",
+          "text": "O(n \\log n)"
+        },
+        {
+          "id": "c",
+          "text": "O(n)"
+        },
+        {
+          "id": "d",
+          "text": "O(n^2 \\log n)"
+        },
+        {
+          "id": "e",
+          "text": "O(n^5)"
+        },
+        {
+          "id": "f",
+          "text": "O(2^n)"
+        },
+        {
+          "id": "g",
+          "text": "O(n^3)"
+        },
+        {
+          "id": "h",
+          "text": "O(\\log n)"
+        },
+        {
+          "id": "i",
+          "text": "O(1)"
+        },
+        {
+          "id": "j",
+          "text": "O(n^4)"
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "time complexity",
+        "recursion"
+      ]
+    },
+    {
+      "id": "A3_1c",
+      "number": "A3.1c",
+      "type": "multiple-choice",
+      "text": "void silly(int n) {\nj = 0;\nwhile (j < n) {\nfor (int i = 0; i < n; ++i) {\nSystem.out.println(”j = ” + j);\n}\nj = j + 5;\n}\n}",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "O(n^2)"
+        },
+        {
+          "id": "b",
+          "text": "O(n \\log n)"
+        },
+        {
+          "id": "c",
+          "text": "O(n)"
+        },
+        {
+          "id": "d",
+          "text": "O(n^2 \\log n)"
+        },
+        {
+          "id": "e",
+          "text": "O(n^5)"
+        },
+        {
+          "id": "f",
+          "text": "O(2^n)"
+        },
+        {
+          "id": "g",
+          "text": "O(n^3)"
+        },
+        {
+          "id": "h",
+          "text": "O(\\log n)"
+        },
+        {
+          "id": "i",
+          "text": "O(1)"
+        },
+        {
+          "id": "j",
+          "text": "O(n^4)"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "time complexity",
+        "loops"
+      ]
+    },
+    {
+      "id": "A3_1d",
+      "number": "A3.1d",
+      "type": "multiple-choice",
+      "text": "void silly(int n) {\nfor (int i = 0; i < n * n; ++i) {\nfor (int j = 0; j < n; ++j) {\nfor (int k = 0; k < i; ++k)\nSystem.out.println(”k = ” + k);\nfor (int m = 0; m < 100; ++m)\nSystem.out.println(”m = ” + m);\n}\n}\n}",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "O(n^2)"
+        },
+        {
+          "id": "b",
+          "text": "O(n \\log n)"
+        },
+        {
+          "id": "c",
+          "text": "O(n)"
+        },
+        {
+          "id": "d",
+          "text": "O(n^2 \\log n)"
+        },
+        {
+          "id": "e",
+          "text": "O(n^5)"
+        },
+        {
+          "id": "f",
+          "text": "O(2^n)"
+        },
+        {
+          "id": "g",
+          "text": "O(n^3)"
+        },
+        {
+          "id": "h",
+          "text": "O(\\log n)"
+        },
+        {
+          "id": "i",
+          "text": "O(1)"
+        },
+        {
+          "id": "j",
+          "text": "O(n^4)"
+        }
+      ],
+      "correctAnswerId": "e",
+      "tags": [
+        "time complexity",
+        "loops"
+      ]
+    },
+    {
+      "id": "A3_2",
+      "number": "A3.2",
+      "type": "open-ended",
+      "text": "You have the following max-heap:\n    77\n   /  \\\n  50   60\n / \\   / \\\n22 30 44 55\nInsert the following sequence of elements into it and show the heap after each insertion: 55, 51, 29. Then remove the root node from the heap and show the heap after the removal.",
+      "equation": null,
+      "modelAnswer": "1) Insert 55: Add as left child of 22. 55 > 22, so swap. 55 > 50, so swap. Heap: 77, 55, 60, 50, 30, 44, 55, 22. \n2) Insert 51: Add as right child of 50 (originally 22's position). 51 > 50, swap. Heap: 77, 55, 60, 51, 30, 44, 55, 22, 50.\n3) Insert 29: Add as left child of 30. No swap needed. \nRemoval of root (77): Replace root with last element (29). Heap becomes 29 at root. Bubble down: swap 29 with max child (60). Swap 29 with max child (55). Final heap structure after removal.",
+      "keyTerms": [
+        "max-heap",
+        "insertion",
+        "bubble up",
+        "removal",
+        "bubble down"
+      ],
+      "tags": [
+        "heaps",
+        "trees"
+      ]
+    },
+    {
+      "id": "A3_3a",
+      "number": "A3.3a",
+      "type": "open-ended",
+      "text": "Perform a depth-first traversal of the graph shown above, starting with vertex A. When expanding the search, choose vertices alphabetically. In the space below, list the vertices in the order in which they are visited.",
+      "equation": null,
+      "modelAnswer": "Based on the student's provided answer in the text: A B D E G I H F C K J (Assuming standard DFS alphabetical tie-breaking).",
+      "keyTerms": [
+        "depth-first search",
+        "dfs",
+        "graph traversal"
+      ],
+      "tags": [
+        "graphs",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "A3_3b",
+      "number": "A3.3b",
+      "type": "open-ended",
+      "text": "Perform a breadth-first traversal of the graph shown above, starting with vertex A. Select the smallest edge first when appropriate. In the space below, list the vertices in the order in which they are visited.",
+      "equation": null,
+      "modelAnswer": "Based on the student's provided answer in the text: A B C F D J K H E G I (Assuming standard BFS with edge weight tie-breaking).",
+      "keyTerms": [
+        "breadth-first search",
+        "bfs",
+        "graph traversal"
+      ],
+      "tags": [
+        "graphs",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "A3_3c",
+      "number": "A3.3c",
+      "type": "open-ended",
+      "text": "Suppose you are using Dijkstra’s algorithm which we discussed in the lecture to find the shortest path from vertex A to vertex I. List, in the order in which they become known, all vertices to which a shortest path is determined in the process of solving this problem, and the length of the shortest path to each of these vertices",
+      "equation": null,
+      "modelAnswer": "Initialize distances to infinity, A to 0. Extract min (A, 0). Update neighbors. Extract next min, update its neighbors. Continue until I is extracted. The exact sequence depends on the unseen graph edge weights, but the format is a list of pairs: (A, 0), (NextNode, dist), ..., (I, final_dist).",
+      "keyTerms": [
+        "dijkstra's algorithm",
+        "shortest path",
+        "edge weights"
+      ],
+      "tags": [
+        "graphs",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "B1_A",
+      "number": "B1.A",
+      "type": "open-ended",
+      "text": "Write, in pseudocode, an efficient algorithm to find the longest common prefix between a given set of strings. The input of the algorithm is a List L of length n of strings of varying length. The output should be a single string that is the longest prefix that all strings in L share. Return an empty string “” if no common prefix exists. Use a Trie to implement your algorithm. Show how you would modify the insertion algorithm of a Trie and how you would use the modified Trie to determine the longest common prefix. Your algorithm’s runtime should be O(nm) or faster.",
+      "equation": null,
+      "modelAnswer": "Pseudocode:\nclass TrieNode:\n    Map children\n    boolean isEndOfWord\n    int childCount\n\nclass Trie:\n    TrieNode root = new TrieNode()\n    \n    void insert(String word):\n        TrieNode current = root\n        for char c in word:\n            if not current.children.contains(c):\n                current.children.put(c, new TrieNode())\n                current.childCount++\n            current = current.children.get(c)\n        current.isEndOfWord = true\n\n    String getLongestCommonPrefix():\n        TrieNode current = root\n        String prefix = \"\"\n        while current.childCount == 1 and not current.isEndOfWord:\n            char c = current.children.keys()[0]\n            prefix += c\n            current = current.children.get(c)\n        return prefix\n\nAlgorithm:\n1. If L is empty, return \"\"\n2. Trie trie = new Trie()\n3. For each string s in L:\n       if s is empty, return \"\"\n       trie.insert(s)\n4. return trie.getLongestCommonPrefix()",
+      "keyTerms": [
+        "trie",
+        "longest common prefix",
+        "pseudocode",
+        "insertion"
+      ],
+      "tags": [
+        "tries",
+        "algorithms",
+        "strings"
+      ]
+    },
+    {
+      "id": "B1_B",
+      "number": "B1.B",
+      "type": "open-ended",
+      "text": "What is the runtime complexity of your algorithm expressed in big-O notation? Give a short explanation (max 3 sentences).",
+      "equation": null,
+      "modelAnswer": "The runtime complexity is O(n * m), where n is the number of strings and m is the length of the longest string. Inserting all n strings into the Trie takes O(n * m) time because each character insertion takes O(1) time. Finding the longest common prefix takes at most O(m) time, making the overall time complexity O(n * m).",
+      "keyTerms": [
+        "O(nm)",
+        "time complexity",
+        "trie insertion"
+      ],
+      "tags": [
+        "time complexity",
+        "tries"
+      ]
+    },
+    {
+      "id": "B2_A",
+      "number": "B2.A",
+      "type": "open-ended",
+      "text": "Write an algorithm in pseudocode that, given a stack S of length n, determines which value in the stack is the smallest and moves that value to the top of the stack while otherwise leaving the remainder of S in its original order. The stack class that you have to extend implements only the methods in the interface below: isEmpty(), push(double d), pop(), peek().",
+      "equation": null,
+      "modelAnswer": "Pseudocode:\nvoid moveSmallestToTop(Stack S) {\n    if (S.isEmpty()) return;\n    \n    Stack tempStack = new Stack();\n    double minVal = S.peek();\n    \n    // First pass: find the minimum value\n    while (!S.isEmpty()) {\n        double current = S.pop();\n        if (current < minVal) {\n            minVal = current;\n        }\n        tempStack.push(current);\n    }\n    \n    // Restore elements to S, but skip the first occurrence of minVal\n    boolean minFound = false;\n    while (!tempStack.isEmpty()) {\n        double current = tempStack.pop();\n        if (current == minVal && !minFound) {\n            minFound = true; // Skip pushing the minimum value back yet\n        } else {\n            S.push(current);\n        }\n    }\n    \n    // Elements in S are now reversed. We need to reverse them back.\n    while (!S.isEmpty()) {\n        tempStack.push(S.pop());\n    }\n    while (!tempStack.isEmpty()) {\n        S.push(tempStack.pop());\n    }\n    \n    // Finally, push the minimum value to the top\n    S.push(minVal);\n}",
+      "keyTerms": [
+        "stack",
+        "pseudocode",
+        "minimum value",
+        "temporary stack"
+      ],
+      "tags": [
+        "stacks",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "B2_B",
+      "number": "B2.B",
+      "type": "open-ended",
+      "text": "What is the runtime complexity of your algorithm expressed in big-O notation? Give a short explanation (max 3 sentences).",
+      "equation": null,
+      "modelAnswer": "The runtime complexity is O(n), where n is the number of elements in the stack. The algorithm pops and pushes all elements between the original stack and the temporary stack a constant number of times (3 full passes). Since each push and pop operation takes O(1) time, the overall time complexity scales linearly with the size of the stack.",
+      "keyTerms": [
+        "O(n)",
+        "linear time",
+        "stack operations"
+      ],
+      "tags": [
+        "time complexity",
+        "stacks"
+      ]
+    }
+  ],
+  "id": "dsa_resit_exam_dsa_2021_111f37",
+  "course": "DSA",
+  "source_file": "Resit Exam DSA 2021.pdf"
+}

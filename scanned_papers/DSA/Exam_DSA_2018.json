@@ -1,0 +1,445 @@
+{
+  "title": "Data Structures and Algorithms 2017/2018 Exam",
+  "description": "Past exam paper for Bachelor Data Science and Knowledge Engineering, covering algorithm complexity, trees, graphs, sorting, and algorithm design.",
+  "questions": [
+    {
+      "id": "A1_1a",
+      "number": "A1.1a",
+      "type": "open-ended",
+      "text": "The following algorithm takes as input an array, and returns the array with all the duplicate elements removed. For example, if the input array is: {1, 3, 3, 2, 4, 2} The algorithm returns: {1, 3, 2, 4}\nS = new empty set\nA = new empty dynamic array\nfor every element x in input array\nif not S.member(x) then\nS.insert(x)\nA.append(x)\nreturn A\nWhat is the big-O complexity of this algorithm, if the set is implemented as: a. an AVL tree?",
+      "equation": null,
+      "modelAnswer": "If the set is implemented as an AVL tree, the `member` and `insert` operations both take $O(\\log n)$ time, where $n$ is the number of elements currently in the set. The `append` operation on a dynamic array takes amortized $O(1)$ time. Since the loop iterates $n$ times (where $n$ is the size of the input array), the overall time complexity is $O(n \\log n)$.",
+      "keyTerms": [
+        "AVL tree",
+        "time complexity",
+        "O(n log n)",
+        "logarithmic time"
+      ],
+      "tags": [
+        "algorithm complexity",
+        "avl trees",
+        "big-o notation"
+      ]
+    },
+    {
+      "id": "A1_1b",
+      "number": "A1.1b",
+      "type": "open-ended",
+      "text": "What is the big-O complexity of this algorithm, if the set is implemented as: b. a hash table",
+      "equation": null,
+      "modelAnswer": "If the set is implemented as a hash table, the `member` and `insert` operations both take expected $O(1)$ time. The `append` operation on a dynamic array takes amortized $O(1)$ time. Since the loop iterates $n$ times, the overall expected time complexity is $O(n)$.",
+      "keyTerms": [
+        "hash table",
+        "time complexity",
+        "O(n)",
+        "constant time"
+      ],
+      "tags": [
+        "algorithm complexity",
+        "hash tables",
+        "big-o notation"
+      ]
+    },
+    {
+      "id": "A1_1c",
+      "number": "A1.1c",
+      "type": "open-ended",
+      "text": "c. A trie is a kind of tree data structure used to store a sorted set of strings. To look up a string, begin at the root and follow the path of characters in the string. Nodes store a boolean value to indicate that the path from the root to that node represents a complete string stored in the set, and not a partial prefix. This allows a word that is a substring of another to be stored, for example, \"in\" and \"inn\" shown below. The edges in our trie will be labeled with just a single character. Assuming a 26-character alphabet, what is the Big-O complexity of the lookup operation for a trie containing n strings of maximum length m? How does this differ from a binary search tree containing the same set of strings?",
+      "equation": null,
+      "modelAnswer": "The lookup operation in a trie takes $O(m)$ time, where $m$ is the length of the string being searched, because at each step we follow a character edge and there are at most $m$ characters. In contrast, a binary search tree (BST) containing $n$ strings would take $O(m \\log n)$ time for a lookup. This is because the height of a balanced BST is $O(\\log n)$, and at each node, a string comparison taking up to $O(m)$ time must be performed.",
+      "keyTerms": [
+        "trie",
+        "binary search tree",
+        "O(m)",
+        "O(m log n)",
+        "string comparison"
+      ],
+      "tags": [
+        "tries",
+        "binary search trees",
+        "algorithm complexity"
+      ]
+    },
+    {
+      "id": "A1_1d",
+      "number": "A1.1d",
+      "type": "open-ended",
+      "text": "d. Imagine you are implementing a spellcheck feature for a word processor. Your program needs to be able to identify misspelled words, and also propose corrections. Would a trie be a good data structure for storing a dictionary? Explain.",
+      "equation": null,
+      "modelAnswer": "Yes, a trie is an excellent data structure for a spellchecker. It allows for very fast lookups ($O(m)$) to check if a word is spelled correctly. Furthermore, it efficiently supports prefix matching and finding similar words (proposing corrections) by traversing nearby branches or using algorithms like depth-first search to find valid words with a small edit distance from the misspelled word.",
+      "keyTerms": [
+        "trie",
+        "spellcheck",
+        "prefix matching",
+        "edit distance"
+      ],
+      "tags": [
+        "tries",
+        "data structure design",
+        "strings"
+      ]
+    },
+    {
+      "id": "A1_2a",
+      "number": "A1.2a",
+      "type": "open-ended",
+      "text": "Mark the following statements true or false and give a short explanation or (counter) example. a. If computing something takes expected time O(n^2) for an input of length n, there could be specific inputs for which the function returns in time O(1)",
+      "equation": null,
+      "modelAnswer": "True. Big-O notation for expected time describes the average behavior over all inputs or random choices, but the best-case time complexity for specific inputs can be much lower, such as $O(1)$. For example, an algorithm might immediately return if the first element of an array meets a certain condition.",
+      "keyTerms": [
+        "True",
+        "best-case",
+        "expected time",
+        "O(1)"
+      ],
+      "tags": [
+        "algorithm complexity",
+        "big-o notation"
+      ]
+    },
+    {
+      "id": "A1_2b",
+      "number": "A1.2b",
+      "type": "open-ended",
+      "text": "Mark the following statements true or false and give a short explanation or (counter) example. b. O(3n^4 + 2n + 7) is the same as O(n^4)",
+      "equation": "O(3n^4 + 2n + 7) = O(n^4)",
+      "modelAnswer": "True. In Big-O notation, we drop lower-order terms (like $2n$ and $7$) and constant multipliers (like $3$) because as $n$ grows arbitrarily large, the highest-order term ($n^4$) dominates the growth rate.",
+      "keyTerms": [
+        "True",
+        "lower-order terms",
+        "constants",
+        "dominant term"
+      ],
+      "tags": [
+        "algorithm complexity",
+        "big-o notation"
+      ]
+    },
+    {
+      "id": "A1_2c",
+      "number": "A1.2c",
+      "type": "open-ended",
+      "text": "Mark the following statements true or false and give a short explanation or (counter) example. c. Graphs: Using an adjacency list representation, you can determine if two vertices are connected by an edge in O(1) time.",
+      "equation": null,
+      "modelAnswer": "False. In an adjacency list, determining if two vertices $u$ and $v$ are connected requires searching through the list of neighbors of $u$ (or $v$). This takes $O(\\text{degree}(u))$ time, not $O(1)$. An adjacency matrix would allow $O(1)$ edge lookups.",
+      "keyTerms": [
+        "False",
+        "adjacency list",
+        "adjacency matrix",
+        "degree"
+      ],
+      "tags": [
+        "graphs",
+        "adjacency list",
+        "algorithm complexity"
+      ]
+    },
+    {
+      "id": "A1_3",
+      "number": "A1.3",
+      "type": "open-ended",
+      "text": "Imagine that we are implementing a delete method for a binary search tree. Deleting a value in a leaf node with no children is easy, just “delete” the node by setting the parent’s reference to it to null. However, deleting an internal node this way is not recommended as it will also disconnect its entire subtree. Instead, we swap the value at the internal node to be deleted with that of a leaf node, and then delete the leaf. Which leaf would be a good candidate to swap the internal node’s value with so that the BST is still correct after the deletion and why?",
+      "equation": null,
+      "modelAnswer": "A good candidate to swap with is either the in-order predecessor (the maximum value in the left subtree) or the in-order successor (the minimum value in the right subtree). Swapping with one of these ensures that the binary search tree property (left children are smaller, right children are larger) is maintained after the deletion. Note that the predecessor or successor might not strictly be a leaf, but it will have at most one child, making it easy to delete.",
+      "keyTerms": [
+        "in-order predecessor",
+        "in-order successor",
+        "maximum in left subtree",
+        "minimum in right subtree",
+        "BST property"
+      ],
+      "tags": [
+        "binary search trees",
+        "tree traversal"
+      ]
+    },
+    {
+      "id": "A2_1a",
+      "number": "A2.1a",
+      "type": "open-ended",
+      "text": "a. If all edge weights are equal, to what algorithm is Dijkstra’s shortest paths algorithm equivalent?",
+      "equation": null,
+      "modelAnswer": "If all edge weights are equal, Dijkstra's algorithm is equivalent to Breadth-First Search (BFS).",
+      "keyTerms": [
+        "Breadth-First Search",
+        "BFS"
+      ],
+      "tags": [
+        "graphs",
+        "shortest path",
+        "dijkstra's algorithm",
+        "bfs"
+      ]
+    },
+    {
+      "id": "A2_1b",
+      "number": "A2.1b",
+      "type": "open-ended",
+      "text": "b. What property must a directed graph satisfy in order for topological sort to work on it?",
+      "equation": null,
+      "modelAnswer": "The directed graph must be acyclic. In other words, it must be a Directed Acyclic Graph (DAG). If there are cycles, a valid topological ordering is impossible.",
+      "keyTerms": [
+        "Directed Acyclic Graph",
+        "DAG",
+        "acyclic"
+      ],
+      "tags": [
+        "graphs",
+        "topological sort"
+      ]
+    },
+    {
+      "id": "A2_2",
+      "number": "A2.2",
+      "type": "open-ended",
+      "text": "List the sequence of nodes visited by preorder, inorder, and postorder traversals of the following tree: Preorder: Inorder: Postorder:",
+      "equation": null,
+      "modelAnswer": "[Note: The tree image is missing from the source text. A complete answer would list the nodes according to the rules: Preorder (Root, Left, Right), Inorder (Left, Root, Right), Postorder (Left, Right, Root).]",
+      "keyTerms": [
+        "preorder",
+        "inorder",
+        "postorder"
+      ],
+      "tags": [
+        "trees",
+        "tree traversal"
+      ]
+    },
+    {
+      "id": "A2_3",
+      "number": "A2.3",
+      "type": "open-ended",
+      "text": "If we want a hash table that stores a set of strings, one possible hash function is the string’s length, h(x) = x.length. Is this a good hash function? Explain your answer.",
+      "equation": "h(x) = x.length",
+      "modelAnswer": "No, this is a very poor hash function. It will result in a massive number of collisions because all strings of the same length will hash to the exact same bucket. A good hash function should distribute the keys uniformly across the hash table.",
+      "keyTerms": [
+        "collisions",
+        "uniform distribution",
+        "poor hash function"
+      ],
+      "tags": [
+        "hash tables",
+        "hash functions"
+      ]
+    },
+    {
+      "id": "A2_4a",
+      "number": "A2.4a",
+      "type": "open-ended",
+      "text": "Have a look at the following three binary trees. a) One of these trees is an AVL tree. Which one?",
+      "equation": null,
+      "modelAnswer": "[Note: The tree images are missing from the source text. An AVL tree is a binary search tree where the height difference between the left and right subtrees of any node is at most 1.]",
+      "keyTerms": [
+        "AVL tree",
+        "balance factor",
+        "height difference"
+      ],
+      "tags": [
+        "avl trees",
+        "binary search trees"
+      ]
+    },
+    {
+      "id": "A2_4b",
+      "number": "A2.4b",
+      "type": "open-ended",
+      "text": "b) Draw the binary search tree that results after inserting these numbers (in order): 3, 5, 7, 2, 9, 10, 12. It will help me give partial credit if you show the resulting tree after each insert.",
+      "equation": null,
+      "modelAnswer": "Insert 3: Root is 3.\nInsert 5: 5 > 3, goes to right of 3.\nInsert 7: 7 > 3, 7 > 5, goes to right of 5.\nInsert 2: 2 < 3, goes to left of 3.\nInsert 9: 9 > 3, 9 > 5, 9 > 7, goes to right of 7.\nInsert 10: 10 > 3, 10 > 5, 10 > 7, 10 > 9, goes to right of 9.\nInsert 12: 12 > 3, 12 > 5, 12 > 7, 12 > 9, 12 > 10, goes to right of 10.\nThe resulting tree is highly unbalanced (essentially a linked list on the right side, with 2 as the left child of the root 3).",
+      "keyTerms": [
+        "binary search tree",
+        "insertion",
+        "unbalanced"
+      ],
+      "tags": [
+        "binary search trees",
+        "trees"
+      ]
+    },
+    {
+      "id": "A3_1a",
+      "number": "A3.1a",
+      "type": "open-ended",
+      "text": "The following questions concern the quicksort algorithm\na. There are three fundamental steps to the Quicksort algorithm. What are they?",
+      "equation": null,
+      "modelAnswer": "1. Choose a pivot element from the array.\n2. Partition the array so that all elements less than the pivot come before it, and all elements greater than the pivot come after it.\n3. Recursively apply the above steps to the sub-arrays of elements with smaller values and elements with greater values.",
+      "keyTerms": [
+        "pivot",
+        "partition",
+        "recursively sort"
+      ],
+      "tags": [
+        "sorting",
+        "quicksort",
+        "divide and conquer"
+      ]
+    },
+    {
+      "id": "A3_1b",
+      "number": "A3.1b",
+      "type": "open-ended",
+      "text": "b. Quicksort has an average case runtime of O(n log n), but a worst case complexity of O(n^2). Is this an issue in practice? Explain.",
+      "equation": null,
+      "modelAnswer": "In practice, the $O(n^2)$ worst-case is rarely an issue. By using good pivot selection strategies (such as choosing a random pivot, or the median-of-three), the probability of encountering the worst-case scenario (e.g., an already sorted array with a poor pivot choice) becomes astronomically small. Furthermore, Quicksort has very small hidden constant factors and excellent cache locality, making it faster than other $O(n \\log n)$ algorithms like Merge Sort in most real-world scenarios.",
+      "keyTerms": [
+        "pivot selection",
+        "randomized",
+        "cache locality",
+        "rare worst-case"
+      ],
+      "tags": [
+        "sorting",
+        "quicksort",
+        "algorithm complexity"
+      ]
+    },
+    {
+      "id": "A3_2a",
+      "number": "A3.2a",
+      "type": "open-ended",
+      "text": "Mark the following statements true or false and give a short explanation or (counter) example. a. A binary tree with at most 7 nodes has at most 3 levels.",
+      "equation": null,
+      "modelAnswer": "False. A binary tree with 7 nodes can be completely unbalanced (degenerate), essentially forming a linked list. In this case, it would have 7 levels.",
+      "keyTerms": [
+        "False",
+        "degenerate tree",
+        "unbalanced"
+      ],
+      "tags": [
+        "trees",
+        "binary trees"
+      ]
+    },
+    {
+      "id": "A3_2b",
+      "number": "A3.2b",
+      "type": "open-ended",
+      "text": "Mark the following statements true or false and give a short explanation or (counter) example. b. The average case complexity of every comparison based sorting algorithm is O(n log n), where n is the number of elements in the array.",
+      "equation": null,
+      "modelAnswer": "False. While $O(n \\log n)$ is the theoretical lower bound for comparison-based sorting, not *every* comparison-based sorting algorithm achieves this in the average case. For example, Bubble Sort, Insertion Sort, and Selection Sort all have an average-case complexity of $O(n^2)$.",
+      "keyTerms": [
+        "False",
+        "Bubble Sort",
+        "Insertion Sort",
+        "O(n^2)"
+      ],
+      "tags": [
+        "sorting",
+        "algorithm complexity"
+      ]
+    },
+    {
+      "id": "A3_2c",
+      "number": "A3.2c",
+      "type": "open-ended",
+      "text": "Mark the following statements true or false and give a short explanation or (counter) example. c. If a graph G is connected, then the minimum spanning tree for G will also be connected.",
+      "equation": null,
+      "modelAnswer": "True. By definition, a spanning tree of a connected graph $G$ is a subgraph that contains all the vertices of $G$ and is a tree (which implies it is connected and acyclic). Therefore, the minimum spanning tree must also be connected.",
+      "keyTerms": [
+        "True",
+        "spanning tree definition",
+        "connected"
+      ],
+      "tags": [
+        "graphs",
+        "minimum spanning tree"
+      ]
+    },
+    {
+      "id": "A3_3",
+      "number": "A3.3",
+      "type": "open-ended",
+      "text": "Give the asymptotic complexity in terms of n (e.g O(n^2)) and explain your answer. You should give the tightest possible big-Oh bound.\nint sum= 0;\nfor (int i= 1; i <= n; i= i + 1) {\nfor (int j= 1; j <= Math.min(1000000, i); j= j + 1) {\nsum= sum + 10;\n}\n}\nsum= sum + 9999;",
+      "equation": null,
+      "modelAnswer": "The outer loop runs $n$ times. The inner loop runs $\\min(1000000, i)$ times. As $n$ grows arbitrarily large, the inner loop will run exactly $1,000,000$ times for all $i > 1,000,000$. Since $1,000,000$ is a constant, the inner loop takes $O(1)$ time asymptotically. Therefore, the overall time complexity is $O(n) \\times O(1) = O(n)$.",
+      "keyTerms": [
+        "O(n)",
+        "constant upper bound",
+        "asymptotic complexity"
+      ],
+      "tags": [
+        "algorithm complexity",
+        "big-o notation"
+      ]
+    },
+    {
+      "id": "A3_4",
+      "number": "A3.4",
+      "type": "open-ended",
+      "text": "Draw the heap that results from inserting the following sequence of integers, in the order given, into a (min or max) heap. 10, 5, 7, 2, 1, 30, 15, 9 It will help me give partial credit if you show the heap after each insertion.",
+      "equation": null,
+      "modelAnswer": "Assuming a Min-Heap:\n1. Insert 10: [10]\n2. Insert 5: [10, 5] -> swap -> [5, 10]\n3. Insert 7: [5, 10, 7]\n4. Insert 2: [5, 10, 7, 2] -> swap 10,2 -> [5, 2, 7, 10] -> swap 5,2 -> [2, 5, 7, 10]\n5. Insert 1: [2, 5, 7, 10, 1] -> swap 5,1 -> [2, 1, 7, 10, 5] -> swap 2,1 -> [1, 2, 7, 10, 5]\n6. Insert 30: [1, 2, 7, 10, 5, 30]\n7. Insert 15: [1, 2, 7, 10, 5, 30, 15]\n8. Insert 9: [1, 2, 7, 10, 5, 30, 15, 9] -> swap 10,9 -> [1, 2, 7, 9, 5, 30, 15, 10]\nFinal Min-Heap array: [1, 2, 7, 9, 5, 30, 15, 10].",
+      "keyTerms": [
+        "heap insertion",
+        "bubble up",
+        "min-heap",
+        "max-heap"
+      ],
+      "tags": [
+        "heaps",
+        "trees"
+      ]
+    },
+    {
+      "id": "B1",
+      "number": "B1",
+      "type": "open-ended",
+      "text": "Design an algorithm that takes two arrays, and returns true if the arrays are disjoint, i.e. have no elements in common. You may freely use standard data structures and algorithms from the course in your solution, without explaining how they are implemented. Write down your algorithm as pseudocode and in English. You don’t need to write Java code, but be precise – a competent programmer should be able to take your description and easily implement it. Show that your algorithm takes O(n log n) time.",
+      "equation": null,
+      "modelAnswer": "Algorithm Description:\n1. Sort the first array using a fast sorting algorithm like Merge Sort or Heap Sort.\n2. Iterate through each element of the second array.\n3. For each element in the second array, perform a Binary Search on the sorted first array.\n4. If the element is found, return false (the arrays are not disjoint).\n5. If the loop finishes without finding any common elements, return true.\n\nPseudocode:\nfunction areDisjoint(A, B):\n  sort(A) // O(n log n)\n  for each element x in B: // n iterations\n    if binarySearch(A, x) is true: // O(log n)\n      return false\n  return true\n\nComplexity Analysis:\nAssuming both arrays are of size $n$. Sorting array A takes $O(n \\log n)$ time. The loop runs $n$ times, and in each iteration, binary search takes $O(\\log n)$ time, resulting in $O(n \\log n)$ for the loop. The total time complexity is $O(n \\log n) + O(n \\log n) = O(n \\log n)$.\n(Alternatively, sorting both arrays and using two pointers also yields $O(n \\log n)$).",
+      "keyTerms": [
+        "sort",
+        "binary search",
+        "O(n log n)",
+        "disjoint"
+      ],
+      "tags": [
+        "algorithm design",
+        "sorting",
+        "searching",
+        "algorithm complexity"
+      ]
+    },
+    {
+      "id": "B2",
+      "number": "B2",
+      "type": "open-ended",
+      "text": "Design an algorithm that takes:\n• An array containing n distinct natural numbers\n• A number k ≤ n and calculates the sum of the k largest numbers in the array.\nFor example, if the array is {3, 7, 5, 12, 6} and k = 3, then the algorithm should return 25 (12+7+6).\nYou may freely use standard data structures and algorithms from the course in your solution, without explaining how they are implemented. Write down your algorithm as pseudocode and English.\nShow that your algorithm takes O(n log n) time.",
+      "equation": null,
+      "modelAnswer": "Algorithm Description:\n1. Sort the input array in descending order using an $O(n \\log n)$ sorting algorithm (like Merge Sort or Heap Sort).\n2. Initialize a sum variable to 0.\n3. Loop from index 0 to $k-1$ (inclusive).\n4. In each iteration, add the element at the current index to the sum.\n5. Return the sum.\n\nPseudocode:\nfunction sumKLargest(A, k):\n  sortDescending(A) // O(n log n)\n  sum = 0\n  for i = 0 to k - 1:\n    sum = sum + A[i]\n  return sum\n\nComplexity Analysis:\nSorting the array takes $O(n \\log n)$ time. The loop runs $k$ times, doing an $O(1)$ addition each time, taking $O(k)$ time. Since $k \\le n$, $O(k)$ is bounded by $O(n)$. The overall time complexity is $O(n \\log n) + O(n) = O(n \\log n)$.",
+      "keyTerms": [
+        "sort descending",
+        "sum",
+        "O(n log n)"
+      ],
+      "tags": [
+        "algorithm design",
+        "sorting",
+        "algorithm complexity"
+      ]
+    },
+    {
+      "id": "B3",
+      "number": "B3",
+      "type": "open-ended",
+      "text": "Consider a general tree T, which represents a file system. Thus, the internal nodes of T represent directories (or folders) and external nodes of T represent individual files. Assume further that each internal node uses 8 bytes of storage, and each external node has a size() method that returns the size of its associated file. Describe in pseudo-code and in English a recursive procedure for computing the total size of all the files and directories in T. What is the running time complexity of your method in terms of n, the number of nodes in T?",
+      "equation": null,
+      "modelAnswer": "Algorithm Description:\nWe use a recursive Depth-First Search (DFS) approach to traverse the tree. \n- Base case: If the current node is an external node (a file), return the value of its `size()` method.\n- Recursive step: If the current node is an internal node (a directory), initialize its size to 8 bytes. Then, iterate over all its children. Recursively call the procedure on each child and add the returned size to the current node's size. Finally, return the accumulated size.\n\nPseudocode:\nfunction computeTotalSize(node):\n  if node.isExternal():\n    return node.size()\n  else:\n    total = 8\n    for each child in node.getChildren():\n      total = total + computeTotalSize(child)\n    return total\n\nComplexity Analysis:\nThe algorithm visits each node in the tree exactly once. At each node, it performs a constant amount of work (checking if it's external, adding to a sum) plus the work to iterate over its children. Across the entire tree, the total number of child iterations is equal to the number of edges, which is $n-1$. Therefore, the running time complexity is $O(n)$, where $n$ is the total number of nodes in the tree.",
+      "keyTerms": [
+        "recursive",
+        "depth-first search",
+        "base case",
+        "O(n)"
+      ],
+      "tags": [
+        "trees",
+        "recursion",
+        "algorithm design",
+        "algorithm complexity"
+      ]
+    }
+  ],
+  "id": "dsa_exam_dsa_2018_1460b5",
+  "course": "DSA",
+  "source_file": "Exam DSA 2018.pdf"
+}

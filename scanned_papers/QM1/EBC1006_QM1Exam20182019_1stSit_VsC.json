@@ -1,0 +1,1209 @@
+{
+  "title": "Quantitative Methods 1, EBC1005/1006/1007, 2018/2019, 1st Sit Exam, Version C",
+  "description": "Past exam paper for Quantitative Methods 1 covering Mathematics and Statistics.",
+  "questions": [
+    {
+      "id": "q1",
+      "number": 1,
+      "type": "multiple-choice",
+      "text": "Consider V as a function of d. Approximate, with help of the marginal function of V(d), the change in speed if the minimum distance decreases from 200 meters to 190 meters between the trains.",
+      "equation": "(d+200)(75-V)=15000",
+      "options": [
+        {
+          "id": "a",
+          "text": "The speed decreases with (rounded) 0.94 km/h"
+        },
+        {
+          "id": "b",
+          "text": "The speed increases with (rounded) 0.94 km/h"
+        },
+        {
+          "id": "c",
+          "text": "The speed decreases with (rounded) 0.094 km/h"
+        },
+        {
+          "id": "d",
+          "text": "The speed increases with (rounded) 0.094 km/h"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "derivatives",
+        "marginal function"
+      ]
+    },
+    {
+      "id": "q2",
+      "number": 2,
+      "type": "multiple-choice",
+      "text": "Its derivative f'(x) is",
+      "equation": "f(x) = \\frac{3x-2}{2x-3}",
+      "options": [
+        {
+          "id": "a",
+          "text": "\\frac{3}{2}"
+        },
+        {
+          "id": "b",
+          "text": "\\frac{5}{(2x-3)^2}"
+        },
+        {
+          "id": "c",
+          "text": "\\frac{-5}{(2x-3)^2}"
+        },
+        {
+          "id": "d",
+          "text": "\\frac{12x}{(2x-3)^2}"
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "derivatives",
+        "quotient rule"
+      ]
+    },
+    {
+      "id": "q3",
+      "number": 3,
+      "type": "multiple-choice",
+      "text": "Its inverse is f^{-1}(y) is",
+      "equation": "f(x) = \\frac{3x-2}{2x-3}",
+      "options": [
+        {
+          "id": "a",
+          "text": "\\frac{3y-2}{2y-3}"
+        },
+        {
+          "id": "b",
+          "text": "\\frac{2y-3}{3y-2}"
+        },
+        {
+          "id": "c",
+          "text": "\\frac{2y-3}{(3y-2)^2}"
+        },
+        {
+          "id": "d",
+          "text": "\\frac{3y-2}{(2y-3)^2}"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "functions",
+        "inverse functions"
+      ]
+    },
+    {
+      "id": "q4",
+      "number": 4,
+      "type": "multiple-choice",
+      "text": "We consider the differentiable function f(x) on the domain(0,\\infty). We know that f(x) is positive on the whole domain. Which property should f(x) have, so that its point elasticity is guaranteed to be positive, on the whole domain?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "Convex."
+        },
+        {
+          "id": "b",
+          "text": "Increasing."
+        },
+        {
+          "id": "c",
+          "text": "Decreasing."
+        },
+        {
+          "id": "d",
+          "text": "None of the above: the point elasticity is always negative."
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "elasticity",
+        "derivatives"
+      ]
+    },
+    {
+      "id": "q5",
+      "number": 5,
+      "type": "multiple-choice",
+      "text": "In which of the following intervals lies the price at which the demand is 5?",
+      "equation": "d(p) = \\frac{15}{1+\\sqrt{p}}",
+      "options": [
+        {
+          "id": "a",
+          "text": "p in [0,3)"
+        },
+        {
+          "id": "b",
+          "text": "p in [3,6)"
+        },
+        {
+          "id": "c",
+          "text": "p in [6,9)"
+        },
+        {
+          "id": "d",
+          "text": "p in [9,12)"
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "functions",
+        "algebra"
+      ]
+    },
+    {
+      "id": "q6",
+      "number": 6,
+      "type": "multiple-choice",
+      "text": "At a price of 9 Euro’s per liter, what is the elasticity of the demand function",
+      "equation": "d(p) = \\frac{15}{1+\\sqrt{p}}",
+      "options": [
+        {
+          "id": "a",
+          "text": "-0.375"
+        },
+        {
+          "id": "b",
+          "text": "+0.125"
+        },
+        {
+          "id": "c",
+          "text": "+0.375"
+        },
+        {
+          "id": "d",
+          "text": "-0.125"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "elasticity",
+        "derivatives"
+      ]
+    },
+    {
+      "id": "q7",
+      "number": 7,
+      "type": "multiple-choice",
+      "text": "In which of the following intervals lies the price at which the revenue is maximum",
+      "equation": "r'(p) = \\frac{15}{(1+\\sqrt{p})} - \\frac{7.5\\sqrt{p}}{(1+\\sqrt{p})^2}",
+      "options": [
+        {
+          "id": "a",
+          "text": "p in [0,6)"
+        },
+        {
+          "id": "b",
+          "text": "p in [6,12)"
+        },
+        {
+          "id": "c",
+          "text": "p in [12,18)"
+        },
+        {
+          "id": "d",
+          "text": "None of the above, since the revenue is increasing."
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "optimization",
+        "derivatives"
+      ]
+    },
+    {
+      "id": "q8",
+      "number": 8,
+      "type": "multiple-choice",
+      "text": "What is the shape of the revenue function.",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "First increasing, then decreasing and convex"
+        },
+        {
+          "id": "b",
+          "text": "First increasing, then decreasing and concave"
+        },
+        {
+          "id": "c",
+          "text": "Increasing, and convex"
+        },
+        {
+          "id": "d",
+          "text": "Increasing, and concave"
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "functions",
+        "derivatives"
+      ]
+    },
+    {
+      "id": "q9",
+      "number": 9,
+      "type": "multiple-choice",
+      "text": "The sales of a certain product as a function of time can be described with a logistic growth function. On t=0 the process has value 6 and derivative 4. What are the values of c1 and c2?",
+      "equation": "f(t) = \\frac{c_1}{1+c_2 e^{-2t}}",
+      "options": [
+        {
+          "id": "a",
+          "text": "c1 = 2 and c2 = 5"
+        },
+        {
+          "id": "b",
+          "text": "c1 = 5 and c2 = 2"
+        },
+        {
+          "id": "c",
+          "text": "c1 = 2 and c2 = 8"
+        },
+        {
+          "id": "d",
+          "text": "c1 = 4 and c2 = 4"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "exponential functions",
+        "derivatives"
+      ]
+    },
+    {
+      "id": "q10",
+      "number": 10,
+      "type": "multiple-choice",
+      "text": "A farmer wants to fence off a rectangular parcel of land, with length L en width B and with an area of 1200 m2. One of the sides with length L borders on a ditch and on this side no fence is needed. One of the sides with width B borders on a forest and on this forest side the costs equal 200 guilders per linear meter. The costs corresponding to the remaining two sides equal 100 guilders per linear meter. The farmer wants to minimize the costs of this fence. Then the ratio of the length L and the width B of this rectangular parcel will be equal to",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "L/B = 1.5"
+        },
+        {
+          "id": "b",
+          "text": "L/B = 2.0"
+        },
+        {
+          "id": "c",
+          "text": "L/B = 2.5"
+        },
+        {
+          "id": "d",
+          "text": "L/B = 3.0"
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "optimization",
+        "derivatives"
+      ]
+    },
+    {
+      "id": "q11",
+      "number": 11,
+      "type": "multiple-choice",
+      "text": "Consider the function f(x) for positive values of x. Let the elasticity of f(x) be given by E_f(x). Now let g(x) := \\alpha f(x) where \\alpha < 0. What do you know about the elasticity E_g(x) of g(x)?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "E_g(x) = E_f(x)"
+        },
+        {
+          "id": "b",
+          "text": "E_g(x) = E_f(x)/\\alpha"
+        },
+        {
+          "id": "c",
+          "text": "E_g(x) = \\alpha E_f(x)"
+        },
+        {
+          "id": "d",
+          "text": "E_g(x) = constant"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "elasticity",
+        "derivatives"
+      ]
+    },
+    {
+      "id": "q12",
+      "number": 12,
+      "type": "multiple-choice",
+      "text": "Learning Italian is done with the function N(t)=2000(1-2^{-t}) which expresses the number of words a person knows after t years. After how many years is the number of words that one learns per year, dropped to below one.",
+      "equation": "N(t)=2000(1-2^{-t})",
+      "options": [
+        {
+          "id": "a",
+          "text": "After 11.0 years (rounded)"
+        },
+        {
+          "id": "b",
+          "text": "After 10.4 years (rounded)"
+        },
+        {
+          "id": "c",
+          "text": "After 2000 years"
+        },
+        {
+          "id": "d",
+          "text": "After 20.0 years (rounded)"
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "derivatives",
+        "exponential functions"
+      ]
+    },
+    {
+      "id": "q13",
+      "number": 13,
+      "type": "multiple-choice",
+      "text": "The table below gives values for the functions f(x) and g(x) and their derivatives for certain values of x. If the function h(x) = f(g(x)), what is the value of h'(2)?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "-12"
+        },
+        {
+          "id": "b",
+          "text": "12"
+        },
+        {
+          "id": "c",
+          "text": "24"
+        },
+        {
+          "id": "d",
+          "text": "30"
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "chain rule",
+        "derivatives"
+      ]
+    },
+    {
+      "id": "q14",
+      "number": 14,
+      "type": "multiple-choice",
+      "text": "The domain of the function f(x,y) is described by",
+      "equation": "f(x,y) = \\frac{1}{\\sqrt{-1+y-x}}",
+      "options": [
+        {
+          "id": "a",
+          "text": "y \\ge x."
+        },
+        {
+          "id": "b",
+          "text": "y \\ge x and y \\neq x+1."
+        },
+        {
+          "id": "c",
+          "text": "y \\neq x+1."
+        },
+        {
+          "id": "d",
+          "text": "y > x."
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "functions",
+        "domain"
+      ]
+    },
+    {
+      "id": "q15",
+      "number": 15,
+      "type": "multiple-choice",
+      "text": "The partial derivative of the function is equal to",
+      "equation": "\\frac{\\partial f(x,y)}{\\partial x} \\text{ for } f(x,y) = e^{x^2-y}",
+      "options": [
+        {
+          "id": "a",
+          "text": "(x^2 - y) e^{x^2-y}"
+        },
+        {
+          "id": "b",
+          "text": "(2x - 1) e^{x^2-y}"
+        },
+        {
+          "id": "c",
+          "text": "(2x - y) e^{x^2-y}"
+        },
+        {
+          "id": "d",
+          "text": "2x e^{x^2-y}"
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "partial derivatives",
+        "exponential functions"
+      ]
+    },
+    {
+      "id": "q16",
+      "number": 16,
+      "type": "multiple-choice",
+      "text": "Let f(x,y) be a function of two variables. Which one of the following statements is true?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "The function g(x,y) = f(x,y) + x has the same level curves as f(x,y)."
+        },
+        {
+          "id": "b",
+          "text": "The function g(x,y) = f(x,y) + x + y has the same level curves as f(x,y)."
+        },
+        {
+          "id": "c",
+          "text": "The function g(x,y) = f(x,y) + 1 has the same level curves as f(x,y)."
+        },
+        {
+          "id": "d",
+          "text": "The function g(x,y) = f(x,y) + e^x has the same level curves as f(x,y)."
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "functions",
+        "level curves"
+      ]
+    },
+    {
+      "id": "q17",
+      "number": 17,
+      "type": "multiple-choice",
+      "text": "Consider El_x f(x,y), and El_y f(x,y), the elasticities with respect to x and y of the function f(x,y). Which of the following is true about these two elasticities?",
+      "equation": "f(x,y) = \\frac{-xy}{x+y}",
+      "options": [
+        {
+          "id": "a",
+          "text": "El_x f(x,y) + El_y f(x,y) = 1"
+        },
+        {
+          "id": "b",
+          "text": "El_x f(x,y) - El_y f(x,y) = 1"
+        },
+        {
+          "id": "c",
+          "text": "El_x f(x,y) = El_y f(x,y)."
+        },
+        {
+          "id": "d",
+          "text": "El_x f(x,y) = -El_y f(x,y)"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "elasticity",
+        "partial derivatives"
+      ]
+    },
+    {
+      "id": "q18",
+      "number": 18,
+      "type": "multiple-choice",
+      "text": "When prices can be chosen independently, the maximal profit is in the interval",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "[0, 50)"
+        },
+        {
+          "id": "b",
+          "text": "[150, 300)"
+        },
+        {
+          "id": "c",
+          "text": "[300, 500)"
+        },
+        {
+          "id": "d",
+          "text": "[50, 150)"
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "optimization",
+        "profit maximization"
+      ]
+    },
+    {
+      "id": "q19",
+      "number": 19,
+      "type": "multiple-choice",
+      "text": "When one price in both markets is charged, the maximal profit is in the interval",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "[0, 10)"
+        },
+        {
+          "id": "b",
+          "text": "[10, 50)"
+        },
+        {
+          "id": "c",
+          "text": "[50, 150)"
+        },
+        {
+          "id": "d",
+          "text": "[150, 300)"
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "optimization",
+        "profit maximization"
+      ]
+    },
+    {
+      "id": "q20",
+      "number": 20,
+      "type": "multiple-choice",
+      "text": "The function f(x,y) = 3x^3 + 9x^2y + 4y^3 - 48y has",
+      "equation": "f(x,y) = 3x^3 + 9x^2y + 4y^3 - 48y",
+      "options": [
+        {
+          "id": "a",
+          "text": "2 stationary points, 1 local maximum location and 1 local minimum location."
+        },
+        {
+          "id": "b",
+          "text": "2 stationary points, both saddle points."
+        },
+        {
+          "id": "c",
+          "text": "4 stationary points, 1 local maximum location, 1 local minimum location, and 2 saddle points."
+        },
+        {
+          "id": "d",
+          "text": "4 stationary points, 2 local maximum locations and 2 local minimum locations."
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "partial derivatives",
+        "optimization"
+      ]
+    },
+    {
+      "id": "q21",
+      "number": 21,
+      "type": "multiple-choice",
+      "text": "Which of the following is/are categorical variable(s)? I The modal income of teachers in the Netherlands II The types of desserts available at a restaurant III The colours of cars in a parking lot",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "I"
+        },
+        {
+          "id": "b",
+          "text": "I & II"
+        },
+        {
+          "id": "c",
+          "text": "I & III"
+        },
+        {
+          "id": "d",
+          "text": "II & III"
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "data types",
+        "descriptive statistics"
+      ]
+    },
+    {
+      "id": "q22",
+      "number": 22,
+      "type": "multiple-choice",
+      "text": "Recent figures of the customer bases of the seven main supermarkets in the Netherlands (percentage of households visiting the supermarket in a certain week) are: Albert Heijn 63.6%, Lidl 44.9%, Jumbo 43.6%, Aldi 31.1%, Plus 17.9%, Dirk 13.0%, Coop 9.2% and Emté 6.9%. An appropriate display to compare the customer bases of different supermarkets is:",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "Bar chart"
+        },
+        {
+          "id": "b",
+          "text": "Segmented bar chart"
+        },
+        {
+          "id": "c",
+          "text": "Histogram"
+        },
+        {
+          "id": "d",
+          "text": "Pie Chart"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "data visualization",
+        "descriptive statistics"
+      ]
+    },
+    {
+      "id": "q23",
+      "number": 23,
+      "type": "multiple-choice",
+      "text": "Four histograms with identical horizontal and vertical scales. All histograms refer to datasets with same number of observations and the same mean. What histogram has largest standard deviation?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "A"
+        },
+        {
+          "id": "b",
+          "text": "B"
+        },
+        {
+          "id": "c",
+          "text": "C"
+        },
+        {
+          "id": "d",
+          "text": "D"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "standard deviation",
+        "descriptive statistics"
+      ]
+    },
+    {
+      "id": "q24",
+      "number": 24,
+      "type": "multiple-choice",
+      "text": "Descriptive statistics of the QM1 MathEntryTest, as calculated by StatCrunch, are provided in the table. In what range falls the MathEntryTest z-score of a student getting 10 points in the test?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "0 \\le z < 0.5"
+        },
+        {
+          "id": "b",
+          "text": "0.5 \\le z < 1"
+        },
+        {
+          "id": "c",
+          "text": "1 \\le z < 2"
+        },
+        {
+          "id": "d",
+          "text": "2 \\le z"
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "z-scores",
+        "normal distribution"
+      ]
+    },
+    {
+      "id": "q25",
+      "number": 25,
+      "type": "multiple-choice",
+      "text": "An automobile service station performances oil changes and tire replacements, as well as other services. Sixty percent of its customers request an oil change, 30 percent request tire replacements, and 10 percent request both. A customer requests an oil change. What is the probability this customer does not request tire replacements?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "1/2"
+        },
+        {
+          "id": "b",
+          "text": "7/10"
+        },
+        {
+          "id": "c",
+          "text": "5/6"
+        },
+        {
+          "id": "d",
+          "text": "6/7"
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "probability",
+        "conditional probability"
+      ]
+    },
+    {
+      "id": "q26",
+      "number": 26,
+      "type": "multiple-choice",
+      "text": "Three datasets (scores on a test for three classes), pictured as histograms (Class 1, Class 2, Class 3, from left to right) and pictured as boxplots (A, B, C). What boxplot matches with what histogram?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "Class 1 = A, Class 2 = B, Class 3 = C"
+        },
+        {
+          "id": "b",
+          "text": "Class 1 = B, Class 2 = A, Class 3 = C"
+        },
+        {
+          "id": "c",
+          "text": "Class 1 = C, Class 2 = A, Class 3 = B"
+        },
+        {
+          "id": "d",
+          "text": "Class 1 = C, Class 2 = B, Class 3 = A"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "boxplots",
+        "histograms"
+      ]
+    },
+    {
+      "id": "q27",
+      "number": 27,
+      "type": "multiple-choice",
+      "text": "Which of the following statements about any two events A and B is true?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "P(A or B) = 0 implies events A and B are independent"
+        },
+        {
+          "id": "b",
+          "text": "P(A or B) = 1 implies events A and B are mutually exclusive"
+        },
+        {
+          "id": "c",
+          "text": "P(A and B) = 0 implies events A and B are independent"
+        },
+        {
+          "id": "d",
+          "text": "P(A and B) = 0 implies events A and B are mutually exclusive"
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "probability",
+        "mutually exclusive"
+      ]
+    },
+    {
+      "id": "q28",
+      "number": 28,
+      "type": "multiple-choice",
+      "text": "In which of the following situations is a Binomial model not an appropriate model to describe the outcome?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "The number of heads in three tosses of a coin"
+        },
+        {
+          "id": "b",
+          "text": "The number of rainy days in Maastricht in a given week"
+        },
+        {
+          "id": "c",
+          "text": "The number of even faces when rolling four dice"
+        },
+        {
+          "id": "d",
+          "text": "The number of students in your tutorial group having blood type B."
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "binomial distribution",
+        "probability"
+      ]
+    },
+    {
+      "id": "q29",
+      "number": 29,
+      "type": "multiple-choice",
+      "text": "Scores on quiz part of the course assessment are distributed with a mean of 4 and a standard deviation of 0.3. Scores on the written exam part of the course assessment are independent and distributed with a mean of 24 and a standard deviation of 0.6. What are the mean and standard deviation of the final assessment score (sum of quiz and exam score)?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "mean 14 and standard deviation 0.45"
+        },
+        {
+          "id": "b",
+          "text": "mean 28 and standard deviation 0.45"
+        },
+        {
+          "id": "c",
+          "text": "mean 28 and standard deviation 0.67"
+        },
+        {
+          "id": "d",
+          "text": "mean 28 and standard deviation 0.90"
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "random variables",
+        "variance"
+      ]
+    },
+    {
+      "id": "q30",
+      "number": 30,
+      "type": "multiple-choice",
+      "text": "The amount of rainfall per month in October in Maastricht is Normally distributed with a mean of 60 cm and a standard deviation of 16 cm. Which of the following is the highest amount of rainfall Maastricht could have this October to be among the 10% driest months?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "80.5 cm"
+        },
+        {
+          "id": "b",
+          "text": "76.0 cm"
+        },
+        {
+          "id": "c",
+          "text": "39.5 cm"
+        },
+        {
+          "id": "d",
+          "text": "33.7 cm"
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "normal distribution",
+        "percentiles"
+      ]
+    },
+    {
+      "id": "q31",
+      "number": 31,
+      "type": "multiple-choice",
+      "text": "A company has 400 employees. Their mean income is €41000, and the standard deviation of their incomes is €7500, The distribution of incomes is approximately Normal. How many of the 400 employees are expected to have an income between €26000 and €48500?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "320"
+        },
+        {
+          "id": "b",
+          "text": "327"
+        },
+        {
+          "id": "c",
+          "text": "342"
+        },
+        {
+          "id": "d",
+          "text": "348"
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "normal distribution",
+        "probability"
+      ]
+    },
+    {
+      "id": "q32",
+      "number": 32,
+      "type": "multiple-choice",
+      "text": "A company with offices in five different countries is interested in estimating the proportion of its employees in favour of banning smoking on the office premises. It is known that the views of people from different countries on issues like smoking tend to vary due to the different local social structures. Which of the following is an appropriate sampling technique to use in this situation?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "simple random sample"
+        },
+        {
+          "id": "b",
+          "text": "systematic sample"
+        },
+        {
+          "id": "c",
+          "text": "cluster sample"
+        },
+        {
+          "id": "d",
+          "text": "stratified sample"
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "sampling",
+        "survey design"
+      ]
+    },
+    {
+      "id": "q33",
+      "number": 33,
+      "type": "multiple-choice",
+      "text": "From a survey of co-workers you find that 48% of 200 have already received this year’s flu vaccine. An approximate 95% confidence interval is (0.409, 0.551). Which of the following are true?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "95% of the co-workers fall in the interval (0.409, 0.551)."
+        },
+        {
+          "id": "b",
+          "text": "We are 95% confident that the proportion of co-workers who have received this year’s flu vaccine is between 40.9% and 55.1%."
+        },
+        {
+          "id": "c",
+          "text": "There is a 95% chance that a random selected co-worker has received the vaccine."
+        },
+        {
+          "id": "d",
+          "text": "We are 95% confident that between 40.9% and 55.1% of the samples will have a proportion near 48%."
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "confidence intervals",
+        "interpretation"
+      ]
+    },
+    {
+      "id": "q34",
+      "number": 34,
+      "type": "multiple-choice",
+      "text": "The registrar’s office at a university has noticed that a large proportion of students fail to report a change of address. The registrar decides to take a random sample of 200 students and determine the number of students with the correct address on record. She finds that 60% of the students have the correct address on record. What would be the 95% confidence interval of the true proportion of students who have failed to report a change of address?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "(0.543, 0.657)"
+        },
+        {
+          "id": "b",
+          "text": "(0.532, 0.668)"
+        },
+        {
+          "id": "c",
+          "text": "(0.343, 0.457)"
+        },
+        {
+          "id": "d",
+          "text": "(0.332, 0.468)"
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "confidence intervals",
+        "proportions"
+      ]
+    },
+    {
+      "id": "q35",
+      "number": 35,
+      "type": "multiple-choice",
+      "text": "A team of engineers at the research centre of a car manufacturer perform crash tests to determine the proportion of times the cars’ airbag fail to operate in a crash. With the airbag system’s new modified design, the team expected to reduce the failed proportion to below the last year’s proportion of 0.08. They decide to test H0 : p = 0.08 versus HA : p < 0.08, where p = the proportion of failed airbags during crash test. If 300 crashes performed in the lab resulted in 18 failures, which of the following is the test statistic for this test?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "z = \\frac{0.06-0.08}{\\sqrt{\\frac{0.08(1-0.08)}{300}}}"
+        },
+        {
+          "id": "b",
+          "text": "z = \\frac{0.06-0.08}{\\sqrt{\\frac{0.06(1-0.06)}{300}}}"
+        },
+        {
+          "id": "c",
+          "text": "z = \\frac{0.08-0.06}{\\sqrt{\\frac{0.08(1-0.08)}{300}}}"
+        },
+        {
+          "id": "d",
+          "text": "z = \\frac{0.08-0.06}{\\sqrt{\\frac{0.06(1-0.06)}{300}}}"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "hypothesis testing",
+        "proportions"
+      ]
+    },
+    {
+      "id": "q36",
+      "number": 36,
+      "type": "multiple-choice",
+      "text": "A grocer would like to determine the proportion of milk cartons that have expired within 0.05 of the true proportion with a 95% confidence interval. What is the minimum required sample size?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "385"
+        },
+        {
+          "id": "b",
+          "text": "380"
+        },
+        {
+          "id": "c",
+          "text": "375"
+        },
+        {
+          "id": "d",
+          "text": "390"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "sample size",
+        "confidence intervals"
+      ]
+    },
+    {
+      "id": "q37",
+      "number": 37,
+      "type": "multiple-choice",
+      "text": "Researchers are concerned that the mean number of eggs per nest of robin’s eggs in a particular forest has decreased from the mean of 4.8 eggs measured 10 years ago. They plan to send out teams to locate and count the number of eggs in 50 different nests, and then perform a hypothesis test to determine if their concerns are well founded. What is the most appropriate test to perform in this situation?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "A one-tailed z-test on one population proportion."
+        },
+        {
+          "id": "b",
+          "text": "A one-tailed t-test on one population proportion."
+        },
+        {
+          "id": "c",
+          "text": "A one-tailed z-test on one population mean."
+        },
+        {
+          "id": "d",
+          "text": "A one-tailed t-test on one population mean."
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "hypothesis testing",
+        "t-test"
+      ]
+    },
+    {
+      "id": "q38",
+      "number": 38,
+      "type": "multiple-choice",
+      "text": "A farmer wants to know whether a new fertilizer has increased the mean weight of his apples. With the old fertilizer, the mean weight was 4 ounces per apple. The farmer decides to test H0 : \\mu = 4 ounces versus HA : \\mu > 4 ounces, at a 5 percent level of significance. The weights of apples are approximately normally distributed. The farmer takes a random sample of 16 apples and computes a mean of 4.3 ounces and a standard deviation of 0.6 ounces. Which of the following gives the p-value for this test?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "P(z > 2)"
+        },
+        {
+          "id": "b",
+          "text": "P(z < 2)"
+        },
+        {
+          "id": "c",
+          "text": "P(t > 2) with 15 degrees of freedom"
+        },
+        {
+          "id": "d",
+          "text": "P(t < 2) with 15 degrees of freedom"
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "hypothesis testing",
+        "p-value"
+      ]
+    },
+    {
+      "id": "q39",
+      "number": 39,
+      "type": "multiple-choice",
+      "text": "Given the null hypothesis that all adults sleep 8 hours, which of the following is a Type I error?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "Claiming all adults do not sleep 8 hours, when in fact, they do."
+        },
+        {
+          "id": "b",
+          "text": "Failing to reject the claim that all adults sleep 8 hours when the statement is not true."
+        },
+        {
+          "id": "c",
+          "text": "Claiming all adults sleep 8 hours when it is true."
+        },
+        {
+          "id": "d",
+          "text": "Accepting the claim that all adults sleep 8 hours, when that statement is not true."
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "hypothesis testing",
+        "type I error"
+      ]
+    },
+    {
+      "id": "q40",
+      "number": 40,
+      "type": "multiple-choice",
+      "text": "Which of the following is true about the power of a test?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "the power decreases as the sample size increases."
+        },
+        {
+          "id": "b",
+          "text": "the power decreases as the effect size decreases."
+        },
+        {
+          "id": "c",
+          "text": "the power decreases as \\beta increases."
+        },
+        {
+          "id": "d",
+          "text": "the power decreases as the Type I error rate increases."
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "hypothesis testing",
+        "power"
+      ]
+    }
+  ],
+  "id": "qm1_ebc1006_qm1exam20182019_1stsit_vsc_d3b036",
+  "course": "QM1",
+  "source_file": "EBC1006_QM1Exam20182019_1stSit_VsC.pdf"
+}

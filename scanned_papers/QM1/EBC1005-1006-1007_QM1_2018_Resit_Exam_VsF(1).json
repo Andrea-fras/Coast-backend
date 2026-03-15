@@ -1,0 +1,1210 @@
+{
+  "title": "Quantitative Methods 1 Resit Exam 2018/2019",
+  "description": "Past exam paper for Quantitative Methods 1 (EBC1005/1006/1007), covering Mathematics and Statistics.",
+  "questions": [
+    {
+      "id": "q1",
+      "number": 1,
+      "type": "multiple-choice",
+      "text": "Consider the function f(x). Its derivative f'(x) is",
+      "equation": "f(x) = \\frac{e^x}{e^x+1}",
+      "options": [
+        {
+          "id": "a",
+          "text": "\\frac{e^x}{(e^x+1)^2}"
+        },
+        {
+          "id": "b",
+          "text": "\\frac{e \\cdot e^x}{(e^x+1)^2}"
+        },
+        {
+          "id": "c",
+          "text": "0"
+        },
+        {
+          "id": "d",
+          "text": "1"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "derivatives",
+        "functions",
+        "calculus"
+      ]
+    },
+    {
+      "id": "q2",
+      "number": 2,
+      "type": "multiple-choice",
+      "text": "Its inverse f^{-1}(y) is",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "\\ln(\\frac{y}{1-y})"
+        },
+        {
+          "id": "b",
+          "text": "\\ln(\\frac{y}{1+y})"
+        },
+        {
+          "id": "c",
+          "text": "0"
+        },
+        {
+          "id": "d",
+          "text": "1"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "functions",
+        "algebra"
+      ]
+    },
+    {
+      "id": "q3",
+      "number": 3,
+      "type": "multiple-choice",
+      "text": "The Italian government is currently making plans that will increase the interest r that the Italian state must offer, on new 10-year state bonds, with a face value of 1000 Euros. This will affect the value V of the current bonds, since these have a fixed and significantly lower interest. The relation between the interest rate r (in percentage) and value V (in Euro) is given by the following formula. Consider V as a function of r. Approximate, with help of the derivative of V(r), the change in value V if the interest rate increases from 3.8% to 4%.",
+      "equation": "\\frac{200-V}{r-18} = 50",
+      "options": [
+        {
+          "id": "a",
+          "text": "The value decreases with (approximately) 10 Euros"
+        },
+        {
+          "id": "b",
+          "text": "The value decreases with (approximately) 1 Euro"
+        },
+        {
+          "id": "c",
+          "text": "The value increases with (approximately) 1 Euro"
+        },
+        {
+          "id": "d",
+          "text": "The value increases with (approximately) 10 Euros"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "derivatives",
+        "linear equations"
+      ]
+    },
+    {
+      "id": "q4",
+      "number": 4,
+      "type": "multiple-choice",
+      "text": "The Chinese company Alibama is selling a low-end smartphone at reasonable prices. It wishes to determine the optimal price p of the smartphone. The researchers of the company found a formula (given below) for the demand as function of the price. Suppose that the weekly demand d as function of the price p(> 0) in Euro’s is given by the equation. In which of the following intervals lies the price at which the weekly demand is 150?",
+      "equation": "d(p) = \\frac{900}{1+\\ln(1+p)}",
+      "options": [
+        {
+          "id": "a",
+          "text": "p in [72,88)"
+        },
+        {
+          "id": "b",
+          "text": "p in [88,106)"
+        },
+        {
+          "id": "c",
+          "text": "p in [106,128)"
+        },
+        {
+          "id": "d",
+          "text": "p in [128,150)"
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "functions",
+        "algebra",
+        "supply and demand"
+      ]
+    },
+    {
+      "id": "q5",
+      "number": 5,
+      "type": "multiple-choice",
+      "text": "At a price of 73 Euros per smartphone, in which interval lies the elasticity of the demand function.",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "[-1,-0.25)"
+        },
+        {
+          "id": "b",
+          "text": "[-0.25,0)"
+        },
+        {
+          "id": "c",
+          "text": "(0,0.25]"
+        },
+        {
+          "id": "d",
+          "text": "(0.25,1]"
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "elasticity",
+        "derivatives"
+      ]
+    },
+    {
+      "id": "q6",
+      "number": 6,
+      "type": "multiple-choice",
+      "text": "The derivative of the revenue function r(p) = p \\cdot d(p) is quite difficult to determine. Therefore, it is given to you by the following function. In which of the following intervals lies the price at which the revenue is maximum?",
+      "equation": "r'(p) = \\frac{900(1+\\ln(1+p)-\\frac{p}{1+p})}{[1+\\ln(1+p)]^2}",
+      "options": [
+        {
+          "id": "a",
+          "text": "p in [0,100)"
+        },
+        {
+          "id": "b",
+          "text": "p in [100,1000)"
+        },
+        {
+          "id": "c",
+          "text": "p in [1000,\\infty)"
+        },
+        {
+          "id": "d",
+          "text": "None of the above, since the revenue is increasing for p > 0."
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "derivatives",
+        "optimization"
+      ]
+    },
+    {
+      "id": "q7",
+      "number": 7,
+      "type": "multiple-choice",
+      "text": "What is the shape of the revenue function (for p > 0).",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "First increasing, then decreasing"
+        },
+        {
+          "id": "b",
+          "text": "First decreasing, then increasing"
+        },
+        {
+          "id": "c",
+          "text": "Increasing"
+        },
+        {
+          "id": "d",
+          "text": "Decreasing"
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "functions",
+        "derivatives"
+      ]
+    },
+    {
+      "id": "q8",
+      "number": 8,
+      "type": "multiple-choice",
+      "text": "Consider the function f(x) = x^3 - 2x + a. For which value(s) of a is the line y = x - 3 a tangent of the function.",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "a = -1 and a = 1"
+        },
+        {
+          "id": "b",
+          "text": "a = -1"
+        },
+        {
+          "id": "c",
+          "text": "a = 1"
+        },
+        {
+          "id": "d",
+          "text": "a = -1 and a = -5"
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "derivatives",
+        "algebra"
+      ]
+    },
+    {
+      "id": "q9",
+      "number": 9,
+      "type": "multiple-choice",
+      "text": "Let f(x) be a differentiable function. What is the derivative of the function g(x) = f(\\ln x)?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "g'(x) = f'(\\ln x)"
+        },
+        {
+          "id": "b",
+          "text": "g'(x) = 1"
+        },
+        {
+          "id": "c",
+          "text": "g'(x) = f'(\\ln x) \\frac{1}{x}"
+        },
+        {
+          "id": "d",
+          "text": "g'(x) = \\frac{1}{f'(\\ln x)}"
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "derivatives",
+        "calculus"
+      ]
+    },
+    {
+      "id": "q10",
+      "number": 10,
+      "type": "multiple-choice",
+      "text": "In the oil industry, it is well known that if the price P increases with say 10% then the demand Q(P) will barely react: the demand decrease is much smaller than 10%, say 1%. What does that say about the elasticity of the demand function Q(P)? Which of the following alternatives is correct?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "The elasticity of Q(P) is in the interval (-1,0]"
+        },
+        {
+          "id": "b",
+          "text": "The elasticity of Q(P) is in the interval [0,1)"
+        },
+        {
+          "id": "c",
+          "text": "The elasticity of Q(P) is in the interval [1,\\infty)"
+        },
+        {
+          "id": "d",
+          "text": "The elasticity of Q(P) is in the interval (-\\infty,-1]"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "elasticity",
+        "percentages"
+      ]
+    },
+    {
+      "id": "q11",
+      "number": 11,
+      "type": "multiple-choice",
+      "text": "Due to wars in the neighboring countries the number of inhabitants of a city grows exponentially. On January 1st, the number of inhabitants is 10 000 and three months later, on April 1st, this number of inhabitants equals 15 000. Per day each person in this city needs 8 Euros for fresh food. There is a maximum of 200 000 Euros for fresh food that can be delivered daily. According to this model a shortage of fresh food will arise",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "during the month of May"
+        },
+        {
+          "id": "b",
+          "text": "during the month of June"
+        },
+        {
+          "id": "c",
+          "text": "during the month of July"
+        },
+        {
+          "id": "d",
+          "text": "during the month of August"
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "functions",
+        "algebra"
+      ]
+    },
+    {
+      "id": "q12",
+      "number": 12,
+      "type": "multiple-choice",
+      "text": "A factory produces chemicals. If q equals the daily production in units (q doesn’t have to be an integer) the production costs expressed in thousands of Euros equal K = -0.5q^2 + 6q - 5, 3 \\le q \\le 10. If p equals the price in thousands of Euros per unit of this product, then daily demand is q = 14 - p. This factory possesses a monopoly position and will determine the price per unit of the product in such a way that the (daily) profit will be maximized. Then the price per unit, in thousands of Euros, will be lying between",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "7 and 9 and the profit, in thousands of Euros, will be more than 40"
+        },
+        {
+          "id": "b",
+          "text": "7 and 9 and the profit, in thousands of Euros, will be less than 40"
+        },
+        {
+          "id": "c",
+          "text": "5 and 7 and the profit, in thousands of Euros, will be more than 40"
+        },
+        {
+          "id": "d",
+          "text": "5 and 7 and the profit, in thousands of Euros, will be less than 40"
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "optimization",
+        "quadratics",
+        "derivatives"
+      ]
+    },
+    {
+      "id": "q13",
+      "number": 13,
+      "type": "multiple-choice",
+      "text": "Using the marginal costs you are able to approximate the change \\Delta K of the costs, if the daily production increases from 6 to 6.01 units.",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "\\Delta K equals -10 Euros"
+        },
+        {
+          "id": "b",
+          "text": "\\Delta K equals 10 Euros"
+        },
+        {
+          "id": "c",
+          "text": "\\Delta K equals 1000 Euros"
+        },
+        {
+          "id": "d",
+          "text": "\\Delta K equals -1000 Euros"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "derivatives",
+        "calculus"
+      ]
+    },
+    {
+      "id": "q14",
+      "number": 14,
+      "type": "multiple-choice",
+      "text": "Assume that the speed with which the number of flatscreen TV users increases in time develops as follows: We now want to model the increase of flatscreen TV users in time, using a function. Then the most appropriate type of function (among the four types below) would be",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "the logistic function"
+        },
+        {
+          "id": "b",
+          "text": "the exponential function"
+        },
+        {
+          "id": "c",
+          "text": "the logarithmic function"
+        },
+        {
+          "id": "d",
+          "text": "the quadratic function"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "functions"
+      ]
+    },
+    {
+      "id": "q15",
+      "number": 15,
+      "type": "multiple-choice",
+      "text": "On January 1st 2019 you will receive 15000 Euros. For which annual interest percentage r will you have 20000 Euros on January 1st 2030.",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "r in [3%,4%]"
+        },
+        {
+          "id": "b",
+          "text": "r in [2%,3%]"
+        },
+        {
+          "id": "c",
+          "text": "r in [1%,2%]"
+        },
+        {
+          "id": "d",
+          "text": "r in [0%,1%]"
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "algebra",
+        "percentages"
+      ]
+    },
+    {
+      "id": "q16",
+      "number": 16,
+      "type": "multiple-choice",
+      "text": "The function f(x) = \\ln x + \\frac{1}{x} with the domain (0,\\infty) has",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "one maximum point and one inflection point."
+        },
+        {
+          "id": "b",
+          "text": "one maximum point and no inflection point."
+        },
+        {
+          "id": "c",
+          "text": "one minimum point and one inflection point."
+        },
+        {
+          "id": "d",
+          "text": "one minimum point and no inflection point."
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "derivatives",
+        "functions"
+      ]
+    },
+    {
+      "id": "q17",
+      "number": 17,
+      "type": "multiple-choice",
+      "text": "The table below gives values for the functions f(x) and g(x) and their derivatives for certain values of x. If the function h(x) = f(g(x)), what is the value of h'(2)?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "6"
+        },
+        {
+          "id": "b",
+          "text": "12"
+        },
+        {
+          "id": "c",
+          "text": "0"
+        },
+        {
+          "id": "d",
+          "text": "3"
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "derivatives",
+        "calculus"
+      ]
+    },
+    {
+      "id": "q18",
+      "number": 18,
+      "type": "multiple-choice",
+      "text": "The level curves of f(x,y) = x^2 - y + x + 3 are",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "Circles."
+        },
+        {
+          "id": "b",
+          "text": "Quadratic functions."
+        },
+        {
+          "id": "c",
+          "text": "Ellipses."
+        },
+        {
+          "id": "d",
+          "text": "Lines."
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "functions",
+        "geometry"
+      ]
+    },
+    {
+      "id": "q19",
+      "number": 19,
+      "type": "multiple-choice",
+      "text": "Consider the function E(p,r) = A p^{-a} r^b. What is k expressed in a and b in the relation k E(p,r) = p E_p(p,r) + r E_r(p,r). Here E_p(p,r), and E_r(p,r) are the first order derivatives of E(p,r) with respect to p and r, respectively.",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "k=ab"
+        },
+        {
+          "id": "b",
+          "text": "k=b-a"
+        },
+        {
+          "id": "c",
+          "text": "k=1"
+        },
+        {
+          "id": "d",
+          "text": "You cannot express k only in a and b."
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "derivatives",
+        "calculus"
+      ]
+    },
+    {
+      "id": "q20",
+      "number": 20,
+      "type": "multiple-choice",
+      "text": "The function f(x,y) = x^3 + 3xy + y^3 has",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "0 stationary points,"
+        },
+        {
+          "id": "b",
+          "text": "1 stationary point,"
+        },
+        {
+          "id": "c",
+          "text": "2 stationary points,"
+        },
+        {
+          "id": "d",
+          "text": "3 stationary points,"
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "derivatives",
+        "optimization"
+      ]
+    },
+    {
+      "id": "q21",
+      "number": 21,
+      "type": "multiple-choice",
+      "text": "A summary measure that is computed from sampled data to describe a characteristic of interest is called a:",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "census"
+        },
+        {
+          "id": "b",
+          "text": "variable"
+        },
+        {
+          "id": "c",
+          "text": "parameter"
+        },
+        {
+          "id": "d",
+          "text": "statistic"
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "sampling",
+        "statistics"
+      ]
+    },
+    {
+      "id": "q22",
+      "number": 22,
+      "type": "multiple-choice",
+      "text": "The UM has about 6000 employees. As an alternative to the traditional five day work week, employees were asked whether they preferred a four day work week (10 hours per day) or flexible hours. The table below shows the results by age category. The most appropriate display for these data is a …",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "Box plot"
+        },
+        {
+          "id": "b",
+          "text": "Segmented bar chart"
+        },
+        {
+          "id": "c",
+          "text": "Histogram"
+        },
+        {
+          "id": "d",
+          "text": "Pie Chart"
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "statistics",
+        "data visualization"
+      ]
+    },
+    {
+      "id": "q23",
+      "number": 23,
+      "type": "multiple-choice",
+      "text": "A shop in Maastricht carries items in the price range of €25 to €50, with a mean price of €40. The shop is faced with an increase of the rent charged for the shop. To make up for the increased rent, the shop owner decides to increase the prices of all items by €1. As a result, which of the following will happen?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "The mean price and the standard deviation of prices will increase."
+        },
+        {
+          "id": "b",
+          "text": "The mean price will remain the same, but the standard deviation of prices will increase."
+        },
+        {
+          "id": "c",
+          "text": "The mean price will increase, but the standard deviation of prices will remain the same."
+        },
+        {
+          "id": "d",
+          "text": "The mean price and the standard deviation of prices will remain the same."
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "standard deviation",
+        "statistics"
+      ]
+    },
+    {
+      "id": "q24",
+      "number": 24,
+      "type": "multiple-choice",
+      "text": "An experienced runner of marathons finished her last marathon in a running time that can be expressed with a z-score of −2. Which of the following is a correct interpretation of her z-score?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "This last running time was two minutes lower than the previous running time."
+        },
+        {
+          "id": "b",
+          "text": "This last running time was two minutes lower than the best running time ever."
+        },
+        {
+          "id": "c",
+          "text": "This last running time was two minutes lower than the average running time."
+        },
+        {
+          "id": "d",
+          "text": "This last running time was two standard deviations lower than the average running time."
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "normal distribution",
+        "standard deviation"
+      ]
+    },
+    {
+      "id": "q25",
+      "number": 25,
+      "type": "multiple-choice",
+      "text": "The probability that Ted passes QM1 in the first sit is 2/3. If he passes QM1 in the first sit, the probability he passes QM2 in the first sit is 4/5. If he does not pass QM1 in the first sit, the probability he will pass QM2 in the first sit equals 3/5. If we learn that Ted passed QM2 in the first sit, what is the probability that he passed QM1 in the first sit?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "2/3"
+        },
+        {
+          "id": "b",
+          "text": "8/15"
+        },
+        {
+          "id": "c",
+          "text": "8/11"
+        },
+        {
+          "id": "d",
+          "text": "11/15"
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "probability",
+        "statistics"
+      ]
+    },
+    {
+      "id": "q26",
+      "number": 26,
+      "type": "multiple-choice",
+      "text": "Consider the five number summary of hourly wages (€) for a sample of sales managers. The IQR for these data is:",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "€ 11.70"
+        },
+        {
+          "id": "b",
+          "text": "€ 20.94"
+        },
+        {
+          "id": "c",
+          "text": "€ 44.77"
+        },
+        {
+          "id": "d",
+          "text": "€ 46.17"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "statistics"
+      ]
+    },
+    {
+      "id": "q27",
+      "number": 27,
+      "type": "multiple-choice",
+      "text": "A recent survey of local cell phone retailers showed that of all cell phones sold last month, 80% had a camera, 60% had a music player and 50% had both. The probability that a cell phone sold last month had a camera or a music player is:",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "50%"
+        },
+        {
+          "id": "b",
+          "text": "70%"
+        },
+        {
+          "id": "c",
+          "text": "90%"
+        },
+        {
+          "id": "d",
+          "text": "100%"
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "probability",
+        "percentages"
+      ]
+    },
+    {
+      "id": "q28",
+      "number": 28,
+      "type": "multiple-choice",
+      "text": "Which of the following is true about any discrete probability distribution of a random variable X?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "The expected value of X equals np."
+        },
+        {
+          "id": "b",
+          "text": "The sum of all possible values of X is equal to 1."
+        },
+        {
+          "id": "c",
+          "text": "The probabilities of all possible values of X must add up to 1."
+        },
+        {
+          "id": "d",
+          "text": "Approximately 95% of the values of X fall within two standard deviations of the mean."
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "probability",
+        "statistics"
+      ]
+    },
+    {
+      "id": "q29",
+      "number": 29,
+      "type": "multiple-choice",
+      "text": "Two coins are tossed simultaneously. If both coins show head, then the player wins €10; otherwise the player loses the game. It costs €2 to play the game. What is the variance in the gain of the player per game?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "16"
+        },
+        {
+          "id": "b",
+          "text": "18.75"
+        },
+        {
+          "id": "c",
+          "text": "20.25"
+        },
+        {
+          "id": "d",
+          "text": "24.5"
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "probability",
+        "statistics"
+      ]
+    },
+    {
+      "id": "q30",
+      "number": 30,
+      "type": "multiple-choice",
+      "text": "The number of customers served per day by a large department store is Normally distributed with a mean of 3250 customers and a standard deviation of 320. Find the range of customers served on the middle 50% of days.",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "(3034, 3466)"
+        },
+        {
+          "id": "b",
+          "text": "(2928, 3572)"
+        },
+        {
+          "id": "c",
+          "text": "(2611, 3889)"
+        },
+        {
+          "id": "d",
+          "text": "(2450, 4050)"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "normal distribution",
+        "standard deviation"
+      ]
+    },
+    {
+      "id": "q31",
+      "number": 31,
+      "type": "multiple-choice",
+      "text": "For writing your statistics quiz, one has 30 minutes of quiz time. Assume that the time students require writing the quiz is described by a Normal model with a mean of 22 minutes and a standard deviation of four minutes. But all student need five minutes (fixed time) to start up the session, to open all relevant applications. What percent of quizzes are completed within the available 30 minutes?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "22.7%"
+        },
+        {
+          "id": "b",
+          "text": "27.3%"
+        },
+        {
+          "id": "c",
+          "text": "72.7%"
+        },
+        {
+          "id": "d",
+          "text": "77.3%"
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "normal distribution",
+        "probability"
+      ]
+    },
+    {
+      "id": "q32",
+      "number": 32,
+      "type": "multiple-choice",
+      "text": "As a volunteer for a local political party, you periodically conduct polls to estimate the proportion of people in the city who are planning to vote in the upcoming election. Two weeks before the election, you decide to double the sample size in the polls. The main purpose of this is to:",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "reduce nonresponse bias;"
+        },
+        {
+          "id": "b",
+          "text": "reduce bias due to the interviewer effect;"
+        },
+        {
+          "id": "c",
+          "text": "decrease the variability in the population;"
+        },
+        {
+          "id": "d",
+          "text": "decrease the standard deviation of the sampling distribution of the sample proportion."
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "sampling",
+        "statistics"
+      ]
+    },
+    {
+      "id": "q33",
+      "number": 33,
+      "type": "multiple-choice",
+      "text": "The principal of a school is interested in estimating the average income per family of her students. She selects a random sample of students and collects information about their family income. A 95% confidence interval computed from this data for the mean income per family is (€35095, €45005). Which of the following provides a correct interpretation of this confidence interval?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "95% of the students in her school are from families whose income is between €35095 and €45005."
+        },
+        {
+          "id": "b",
+          "text": "There is a 95% probability that the families of all the students in this school have an income of between €35095 and €45005."
+        },
+        {
+          "id": "c",
+          "text": "There is a 95% probability that the mean of another sample with the same size will fall between €35095 and €45005."
+        },
+        {
+          "id": "d",
+          "text": "We expect 95% of the confidence intervals calculated this way to contain the true population mean."
+        }
+      ],
+      "correctAnswerId": "d",
+      "tags": [
+        "confidence intervals",
+        "statistics"
+      ]
+    },
+    {
+      "id": "q34",
+      "number": 34,
+      "type": "multiple-choice",
+      "text": "75 UM students were randomly selected and surveyed, and it is found that 15 plan to work in Maastricht or southern Limburg. Construct a 98% confidence interval for the percentage of all UM students planning their career in the neighbourhood of the university based on this sample.",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "(9.3%, 30.7%)"
+        },
+        {
+          "id": "b",
+          "text": "(10.5%, 29.5%)"
+        },
+        {
+          "id": "c",
+          "text": "(10.9%, 29.1%)"
+        },
+        {
+          "id": "d",
+          "text": "(12.4%, 27.6%)"
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "confidence intervals",
+        "statistics"
+      ]
+    },
+    {
+      "id": "q35",
+      "number": 35,
+      "type": "multiple-choice",
+      "text": "A company manufacturing tablets finds that 4% of all tablets manufactured are defective. Management is concerned that high employee turnover is partially responsible for the high defect rate. In an effort to decrease the percentage of defectives, management provides additional training to those employees hired within the last year. After training was implemented, a sample of 450 chips revealed only 13 defects. Was the additional training effective in lowering the defect rate? What type of hypothesis test is appropriate in this context?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "a two-sided test for a proportion"
+        },
+        {
+          "id": "b",
+          "text": "a one-sided test for a proportion"
+        },
+        {
+          "id": "c",
+          "text": "a two-sided test for a mean"
+        },
+        {
+          "id": "d",
+          "text": "a one-sided test for a mean"
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "hypothesis testing",
+        "statistics"
+      ]
+    },
+    {
+      "id": "q36",
+      "number": 36,
+      "type": "multiple-choice",
+      "text": "A chicken farmer is experimenting with a new type of chicken feed in order to increase the mass of chicken eggs. Based on data from the feed company, the standard deviation of eggs laid by chickens consuming the new feed is 5 g. Of the following, what is the least number of chicken eggs that should be sampled to obtain an estimate within 1 g. of the true mean of egg weight with a 95% confidence?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "95"
+        },
+        {
+          "id": "b",
+          "text": "97"
+        },
+        {
+          "id": "c",
+          "text": "135"
+        },
+        {
+          "id": "d",
+          "text": "136"
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "sampling",
+        "confidence intervals"
+      ]
+    },
+    {
+      "id": "q37",
+      "number": 37,
+      "type": "multiple-choice",
+      "text": "A department store at a large mall claims that over 60% of the mall’s visitors shop at that store. Let p = proportion of the mall’s visitors who shop at the store. Which of the following pairs of hypotheses should be used to support this claim?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "H_0 : p > 0.60 and H_A : p = 0.60."
+        },
+        {
+          "id": "b",
+          "text": "H_0 : p < 0.60 and H_A : p = 0.60."
+        },
+        {
+          "id": "c",
+          "text": "H_0 : p = 0.60 and H_A : p > 0.60."
+        },
+        {
+          "id": "d",
+          "text": "H_0 : p = 0.60 and H_A : p \\neq 0.60."
+        }
+      ],
+      "correctAnswerId": "c",
+      "tags": [
+        "hypothesis testing",
+        "statistics"
+      ]
+    },
+    {
+      "id": "q38",
+      "number": 38,
+      "type": "multiple-choice",
+      "text": "A botanist is interested in testing H_0 : \\mu = 3.5 cm versus H_A : \\mu > 3.5 cm, where \\mu is the mean petal length of one variety of flowers. A random sample of 50 petals gives significant results at a 5% level of significance. Which of the following statements about the confidence interval to estimate the mean petal length is true?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "The specified length of 3.5 cm is within a 90% confidence interval."
+        },
+        {
+          "id": "b",
+          "text": "The specified length of 3.5 cm is not within a 90% confidence interval."
+        },
+        {
+          "id": "c",
+          "text": "The specified length of 3.5 cm is within a 95% confidence interval."
+        },
+        {
+          "id": "d",
+          "text": "The specified length of 3.5 cm is not within a 95% confidence interval."
+        }
+      ],
+      "correctAnswerId": "b",
+      "tags": [
+        "hypothesis testing",
+        "confidence intervals"
+      ]
+    },
+    {
+      "id": "q39",
+      "number": 39,
+      "type": "multiple-choice",
+      "text": "The municipality plans to test the lead level in a specific park. Because a high lead level is harmful to children, the park will be closed if the lead level exceeds the allowed limit. Several locations in the park are randomly selected, soil samples from these locations were collected and tested for their lead levels. Which of the following decisions would result from a Type I error?",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "Closing the park when the lead levels are within the allowed limit."
+        },
+        {
+          "id": "b",
+          "text": "Keeping the park open when the lead levels are in access of the allowed limit."
+        },
+        {
+          "id": "c",
+          "text": "Closing the park when the lead levels are in access of the allowed limit."
+        },
+        {
+          "id": "d",
+          "text": "Keeping the park open when the lead levels are within the allowed limit."
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "hypothesis testing",
+        "statistics"
+      ]
+    },
+    {
+      "id": "q40",
+      "number": 40,
+      "type": "multiple-choice",
+      "text": "When in an hypothesis test the true value under the alternative hypothesis shifts closer to the value under the null hypothesis, while the significance level stays the same, …",
+      "equation": null,
+      "options": [
+        {
+          "id": "a",
+          "text": "the power of the test decreases."
+        },
+        {
+          "id": "b",
+          "text": "the power of the test increases."
+        },
+        {
+          "id": "c",
+          "text": "the probability of Type I error decreases."
+        },
+        {
+          "id": "d",
+          "text": "the probability of Type II error decreases."
+        }
+      ],
+      "correctAnswerId": "a",
+      "tags": [
+        "hypothesis testing",
+        "statistics"
+      ]
+    }
+  ],
+  "id": "qm1_ebc1005-1006-1007_qm1_2018_resit_exam_vsf(1)_146ce1",
+  "course": "QM1",
+  "source_file": "EBC1005-1006-1007 QM1 2018 Resit Exam VsF(1).pdf"
+}

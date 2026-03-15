@@ -1,0 +1,48 @@
+{
+  "title": "Exam Data Structures And Algorithms (B)",
+  "description": "Past exam paper focusing on data structures and algorithms, specifically hash tables and binary trees.",
+  "questions": [
+    {
+      "id": "b1",
+      "number": 1,
+      "type": "open-ended",
+      "text": "You are given an array of integers, and you want to find the two numbers that add up to a given target. Write a Java function that takes the array and target as inputs, and returns the indices of the two numbers that add up to the target. If no such pair exists, the function should return null. Your solution should use a hash table and should have a time complexity of O(n).\n\nYour method should be defined as follows:\n\n/**\n* Given an array of integers and a target, returns the indices of the two numbers that add up to the target. If no such pair exists, returns null.\n*\n* @param nums the array of integers\n* @param target the target sum\n* @return the indices of the two numbers that add up to the target, or null if no such pair exists\n*/\npublic static int[] twoSum(int[] nums, int target) {\n// your code here\n}\n\nExamples of what the algorithm should return:\ntwoSum([2, 7, 11, 15], 9) // expected output: [0, 1]\ntwoSum([3, 2, 4], 6) // expected output: [1, 2]\ntwoSum([3, 3], 6) // expected output: [0, 1]\ntwoSum([1, 2, 3, 4, 5], 10) // expected output: [3, 4]\ntwoSum([1, 2, 3, 4, 5], 2) // expected output: [0, 1]",
+      "equation": null,
+      "modelAnswer": "public static int[] twoSum(int[] nums, int target) {\nMap<Integer, Integer> map = new HashMap<>();\nfor (int i = 0; i < nums.length; i++) {\nint complement = target - nums[i];\nif (map.containsKey(complement)) {\nreturn new int[] { map.get(complement), i };\n}\nmap.put(nums[i], i);\n}\nreturn null;\n}\n\nThe solution uses a hash table to keep track of the values in the array and their indices. For each element nums[i] in the array, we compute its complement target - nums[i] and check if the complement is already in the hash table. If it is, we return the indices of the two numbers. If it is not, we add nums[i] and its index to the hash table so that we can look it up later. If we reach the end of the loop without finding a pair that adds up to the target, we return null.\n\nThe time complexity of this solution is O(n), where n is the number of elements in the array. The loop iterates over each element once, and the hash table lookups take constant time on average. We can prove this time complexity by considering the worst case scenario where all elements need to be checked, and noting that the hash table lookups take O(1) time on average (assuming a good hash function). Therefore, the overall time complexity is O(n).",
+      "keyTerms": [
+        "hash table",
+        "time complexity",
+        "O(n)",
+        "complement"
+      ],
+      "tags": [
+        "hash tables",
+        "algorithms",
+        "arrays"
+      ]
+    },
+    {
+      "id": "b2",
+      "number": 2,
+      "type": "open-ended",
+      "text": "You are given a binary tree and a node in the tree, and you want to find the inorder successor of the given node in the tree.\n\nThe inorder successor of a node in a binary tree is defined as the next node in the inorder traversal of the tree. In other words, it is the node that you would visit immediately after the given node when doing an inorder traversal.\n\nTo find the inorder successor of a node, you can follow these steps:\n1. If the given node has a right child, then the inorder successor is the leftmost node in the right subtree of the given node.\n2. If the given node does not have a right child, then the inorder successor is the first ancestor that is a left child of its parent. In other words, you need to follow the path up the tree to the root until you encounter a node that is a left child of its parent. The parent of this node is the inorder successor.\n\nIf there is no inorder successor (i.e., the given node is the rightmost node in the tree), then the function should return null.\n\nWrite a Java function or pseudocode that takes the root of the binary tree and the node as inputs, and returns the inorder successor of the given node. If there is no inorder successor, the function should return null.\n\nAfter writing the code, give a short explanation of your approach, and explain the complexity of your solution in O notation.\n\nYour method should be defined as follows:\n/**\n* Given the root of a binary tree and a node in the tree, returns the inorder successor of the node.\n* @param root the root of the binary tree\n* @param node the node whose inorder successor is to be found\n* @return the inorder successor of the node, or null if there is no inorder successor\n*/\npublic static TreeNode inorderSuccessor(TreeNode root, TreeNode node) {\n// your code here\n}\n\nExample calls to the algorithm will be:\ninorderSuccessor(root, root.right); // Returns node number 6\ninorderSuccessor(root, root.left.left); // Returns node number 2\ninorderSuccessor(root, root.right.right); // Return null",
+      "equation": null,
+      "modelAnswer": "public static TreeNode inorderSuccessor(TreeNode root, TreeNode node) {\nif (node.right != null) {\n// If the node has a right subtree, the inorder successor is the leftmost node in the right subtree\nTreeNode current = node.right;\nwhile (current.left != null) {\ncurrent = current.left;\n}\nreturn current;\n} else {\n// If the node doesn't have a right subtree, the inorder successor is the nearest ancestor whose left child is also an ancestor of the node\nTreeNode current = root;\nTreeNode successor = null;\nwhile (current != null) {\nif (node.val < current.val) {\nsuccessor = current;\ncurrent = current.left;\n} else if (node.val > current.val) {\ncurrent = current.right;\n} else {\nbreak;\n}\n}\nreturn successor;\n}\n}\n\nExplanation:\nThe algorithm first checks if the given node has a right subtree. If it does, the inorder successor of the node is the leftmost node in the right subtree. If the given node does not have a right subtree, the algorithm searches for the nearest ancestor whose left child is also an ancestor of the node. This can be done by starting at the root of the tree and traversing the tree while keeping track of the nearest ancestor that has a left child on the path to the given node.\n\nTime complexity:\nThe time complexity of the algorithm is O(h) (can also be explained as O(n) but then we should explain that n is the height of the tree), where h is the height of the tree. This is because in the worst case, the algorithm may need to traverse the entire height of the tree to find the inorder successor.",
+      "keyTerms": [
+        "binary tree",
+        "inorder successor",
+        "inorder traversal",
+        "time complexity",
+        "O(h)"
+      ],
+      "tags": [
+        "binary trees",
+        "algorithms",
+        "tree traversal"
+      ]
+    }
+  ],
+  "id": "dsa_dsa_2023_-_b1_&_b2_a32e1a",
+  "course": "DSA",
+  "source_file": "DSA 2023 - B1 & B2.pdf"
+}

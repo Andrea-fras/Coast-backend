@@ -12,9 +12,6 @@ __pycache__/
 *_output/
 generated/
 
-# Test files
-*.pdf
-
 # Manim rendered media (large GIFs)
 media/
 
@@ -35,8 +32,8 @@ Thumbs.db
 tmp/
 *.tmp
 
-# User-uploaded content & extracted data (large, per-instance)
-curated_content/
+# User-uploaded content (per-instance, not shared)
 folder_uploads/
-scanned_papers/
+
+# Past paper PDFs (admin source files, not needed in repo)
 past_papers/

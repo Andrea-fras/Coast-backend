@@ -1,0 +1,429 @@
+{
+  "title": "Data Structures and Algorithms Exam 2021/2022",
+  "description": "Past exam paper for Data Structures and Algorithms (KEN1420), covering time complexity, graphs, strings/tries, sorting, trees, hashing, heaps, and algorithm implementation.",
+  "questions": [
+    {
+      "id": "q1a",
+      "number": "1a",
+      "type": "open-ended",
+      "text": "Consider the algorithm represented by the following Java fragment. What value does the method bar compute? Derive a tight big Oh expression for the running time of the method bar. Explain how you arrive at this complexity in at least two, and at most five sentences\nprivate int bar(int x, int n) {\nint sum = 0;\nfor (int i = 1; i <= n; ++i) {\nsum = sum + i ;\n}\nreturn x + sum;\n}",
+      "equation": null,
+      "modelAnswer": "The method computes the sum of the first n integers added to x, which is mathematically x + (n(n+1))/2. The running time is O(n) because there is a single loop that iterates n times, and the addition operations inside the loop take constant O(1) time.",
+      "keyTerms": [
+        "O(n)",
+        "linear time",
+        "summation"
+      ],
+      "tags": [
+        "time complexity",
+        "big-o notation",
+        "loops"
+      ]
+    },
+    {
+      "id": "q1b",
+      "number": "1b",
+      "type": "open-ended",
+      "text": "Consider the algorithm represented by the following Java program fragment. The method bar1 computes the same method as bar in question 1a. However, bar1 is based on a different algorithm and its big oh bound is O(n). What value does foo compute? Give the tightest big Oh expression for the worst case running time of the method foo. Explain how you arrive at this complexity in at least two, and at most five sentences.\nprivate int foo(int x, int n) {\nint sum = 0;\nfor (int i = 1; i <= n; ++i) {\nsum = sum + bar1(i , n);\n}\nreturn x + sum;\n}",
+      "equation": null,
+      "modelAnswer": "The method foo computes the sum of the results of bar1(i, n) for i from 1 to n, added to x. Since bar1 has a worst-case running time of O(n) and it is called inside a loop that iterates n times, the total running time is n * O(n) = O(n^2).",
+      "keyTerms": [
+        "O(n^2)",
+        "quadratic time",
+        "nested complexity"
+      ],
+      "tags": [
+        "time complexity",
+        "big-o notation",
+        "loops"
+      ]
+    },
+    {
+      "id": "q1c",
+      "number": "1c",
+      "type": "open-ended",
+      "text": "Given the above graph, write down the order that nodes are visited in, by a breath-first search starting at node E",
+      "equation": null,
+      "modelAnswer": "In a breadth-first search (BFS), nodes are visited level by level. Starting at node E, the algorithm visits E first, then all of E's immediate neighbors, followed by the neighbors' neighbors, using a queue data structure.",
+      "keyTerms": [
+        "breadth-first search",
+        "queue",
+        "level-order"
+      ],
+      "tags": [
+        "graphs",
+        "breadth-first search"
+      ]
+    },
+    {
+      "id": "q1d",
+      "number": "1d",
+      "type": "open-ended",
+      "text": "Given the above graph, write down the order that nodes are visited in, by a depth-first search starting at node F",
+      "equation": null,
+      "modelAnswer": "In a depth-first search (DFS), the algorithm explores as far as possible along each branch before backtracking. Starting at node F, it will visit F, then recursively visit an unvisited neighbor until a dead end is reached, using a stack or recursion.",
+      "keyTerms": [
+        "depth-first search",
+        "stack",
+        "backtracking"
+      ],
+      "tags": [
+        "graphs",
+        "depth-first search"
+      ]
+    },
+    {
+      "id": "q1e",
+      "number": "1e",
+      "type": "open-ended",
+      "text": "Given the following words, show the process of creating a Trie. Starting with an empty Trie at the first word, draw the Trie that results after each individual word is inserted.\nExit, Abyss, Imperfect, Amoral, Extra, Amour, Imp",
+      "equation": null,
+      "modelAnswer": "A Trie is built by inserting words character by character. The root is empty. 'Exit' creates a path E-x-i-t. 'Abyss' creates A-b-y-s-s. 'Imperfect' creates I-m-p-e-r-f-e-c-t. 'Amoral' shares the 'A' node with Abyss, branching at 'm'. 'Extra' shares E-x with Exit, branching at 't'. 'Amour' shares A-m-o with Amoral. 'Imp' shares I-m-p with Imperfect and marks 'p' as an end node.",
+      "keyTerms": [
+        "trie",
+        "prefix tree",
+        "character insertion"
+      ],
+      "tags": [
+        "tries",
+        "strings",
+        "trees"
+      ]
+    },
+    {
+      "id": "q1f",
+      "number": "1f",
+      "type": "open-ended",
+      "text": "Can you save space in terms of number of nodes, by compressing the final Trie of question a? If so, draw the compressed Trie, or explain why compressing the Trie will not result in a lower space requirement in terms of total number of nodes.",
+      "equation": null,
+      "modelAnswer": "Yes, space can be saved by compressing the Trie into a Radix Tree (or Patricia Trie). Nodes with only one child can be merged with their child, combining characters into string segments (e.g., 'I-m-p' followed by a single branch 'e-r-f-e-c-t' can be compressed). This reduces the total number of nodes.",
+      "keyTerms": [
+        "compressed trie",
+        "radix tree",
+        "node merging"
+      ],
+      "tags": [
+        "tries",
+        "data compression",
+        "trees"
+      ]
+    },
+    {
+      "id": "q2a",
+      "number": "2a",
+      "type": "open-ended",
+      "text": "void silly (int n, int x, int y) {\nif (x > y) {\nfor (int i = 0; i < n; ++i)\nfor (int j = 0; j < 2 * i ; ++j)\nSystem.out. println (\"y = \" + y);\n} else {\nSystem.out. println (\"x = \" + x);\n}\n}",
+      "equation": null,
+      "modelAnswer": "O(n^2). The outer loop runs n times. The inner loop runs 2*i times. The total number of operations is proportional to the sum of the first n integers, which is O(n^2).",
+      "keyTerms": [
+        "O(n^2)",
+        "nested loops",
+        "arithmetic progression"
+      ],
+      "tags": [
+        "time complexity",
+        "big-o notation"
+      ]
+    },
+    {
+      "id": "q2b",
+      "number": "2b",
+      "type": "open-ended",
+      "text": "int silly (int n, int m) {\nif (n < 1)\nreturn n;\nelse if (n > 200)\nreturn silly (n − m, m);\nelse\nreturn silly (n − 1, m);\n}",
+      "equation": null,
+      "modelAnswer": "O(n). In the worst case, when n <= 200, the function recursively calls itself by decrementing n by 1 each time. This results in a linear number of recursive calls.",
+      "keyTerms": [
+        "O(n)",
+        "linear time",
+        "recursion"
+      ],
+      "tags": [
+        "time complexity",
+        "recursion"
+      ]
+    },
+    {
+      "id": "q2c",
+      "number": "2c",
+      "type": "open-ended",
+      "text": "void silly (int n) {\nj = n * n;\nwhile (j > n) {\nfor (int i = 0; i < n; ++i) {\nSystem.out. println (\" j = \" + j);\n}\nj = j − 7;\n}\n}",
+      "equation": null,
+      "modelAnswer": "O(n^3). The outer while loop starts at n^2 and decrements by 7 until it reaches n, so it runs O(n^2) times. Inside, the for loop runs exactly n times. O(n^2) * O(n) = O(n^3).",
+      "keyTerms": [
+        "O(n^3)",
+        "cubic time",
+        "nested loops"
+      ],
+      "tags": [
+        "time complexity",
+        "loops"
+      ]
+    },
+    {
+      "id": "q2d",
+      "number": "2d",
+      "type": "open-ended",
+      "text": "void silly (int n) {\nfor (int i = 0; i < n * n; ++i) {\nfor (int j = 0; j < n; ++j) {\nfor (int k = 0; k < i ; ++k)\nSystem.out. println (\"k = \" + k);\nfor (int m = 0; m < n; ++m)\nSystem.out. println (\"m = \" + m);\n}\n}\n}",
+      "equation": null,
+      "modelAnswer": "O(n^5). The outermost loop runs n^2 times. The second loop runs n times. The third loop runs i times (where i goes up to n^2). The dominant term is the third loop: sum_{i=0}^{n^2-1} (n * i) = n * (n^2)^2 / 2 = O(n^5).",
+      "keyTerms": [
+        "O(n^5)",
+        "nested loops",
+        "summation"
+      ],
+      "tags": [
+        "time complexity",
+        "nested loops"
+      ]
+    },
+    {
+      "id": "q2e",
+      "number": "2e",
+      "type": "multiple-choice",
+      "text": "A programmer is wondering which sort algorithm to use in their program and has just asked you about the speed difference between a sort function that uses the insertion sort algorithm and one that uses the quicksort algorithm. Which of the following can you say? (If more than one is correct, select the most informative of them).\n1. A quicksort function will always be faster than an insertion sort function\n2. An insertion sort function will always be faster than a quicksort function\n3. A quicksort function will usually be faster than an insertion sort function\n4. An insertion sort function will usually be faster than a quicksort function\n5. None of the above\nExplain your answer in minimum two and maximum five sentences.",
+      "equation": null,
+      "options": [
+        {
+          "id": "1",
+          "text": "A quicksort function will always be faster than an insertion sort function"
+        },
+        {
+          "id": "2",
+          "text": "An insertion sort function will always be faster than a quicksort function"
+        },
+        {
+          "id": "3",
+          "text": "A quicksort function will usually be faster than an insertion sort function"
+        },
+        {
+          "id": "4",
+          "text": "An insertion sort function will usually be faster than a quicksort function"
+        },
+        {
+          "id": "5",
+          "text": "None of the above"
+        }
+      ],
+      "correctAnswerId": "3",
+      "tags": [
+        "sorting algorithms",
+        "quicksort",
+        "insertion sort"
+      ]
+    },
+    {
+      "id": "q2f",
+      "number": "2f",
+      "type": "open-ended",
+      "text": "Suppose that an array contains n numbers, each of which is 1, 0, or -1. Can the array can be sorted in O(n) time in the worst case? Explain your answer in minimum two and maximum five sentences.",
+      "equation": null,
+      "modelAnswer": "Yes, the array can be sorted in O(n) time. Since there are only three distinct possible values, we can use a Counting Sort or the Dutch National Flag algorithm. We simply count the occurrences of -1, 0, and 1 in a single O(n) pass, and then overwrite the array with the correct number of each value in a second O(n) pass.",
+      "keyTerms": [
+        "O(n) time",
+        "counting sort",
+        "Dutch National Flag"
+      ],
+      "tags": [
+        "sorting algorithms",
+        "time complexity"
+      ]
+    },
+    {
+      "id": "q2g",
+      "number": "2g",
+      "type": "open-ended",
+      "text": "What is the main advantage of an AVL Tree over a Binary Search Tree (BST)? Explain your answer in minimum two and maximum five sentences.",
+      "equation": null,
+      "modelAnswer": "The main advantage of an AVL Tree is that it is strictly self-balancing, ensuring that the height of the tree remains O(log n). In contrast, a standard BST can become unbalanced and degrade into a linked list with a height of O(n). Because of this balance, AVL trees guarantee O(log n) worst-case time complexity for search, insertion, and deletion operations.",
+      "keyTerms": [
+        "self-balancing",
+        "O(log n)",
+        "worst-case time complexity"
+      ],
+      "tags": [
+        "avl trees",
+        "binary search trees"
+      ]
+    },
+    {
+      "id": "q2h",
+      "number": "2h",
+      "type": "open-ended",
+      "text": "Consider the binary tree shown below. For each of the traversals listed, give the order in which the nodes are visited.\nWrite the order of each traversal in this table",
+      "equation": null,
+      "modelAnswer": "Pre-order traversal visits nodes in the order: Root, Left, Right. In-order traversal visits: Left, Root, Right. Post-order traversal visits: Left, Right, Root.",
+      "keyTerms": [
+        "pre-order",
+        "in-order",
+        "post-order"
+      ],
+      "tags": [
+        "tree traversal",
+        "binary trees"
+      ]
+    },
+    {
+      "id": "q3a",
+      "number": "3a",
+      "type": "open-ended",
+      "text": "Pop a value off a stack containing n elements implemented as an array.",
+      "equation": null,
+      "modelAnswer": "O(1). Popping an element from an array-based stack only requires accessing the element at the current top index and decrementing the top pointer, which takes constant time.",
+      "keyTerms": [
+        "O(1)",
+        "constant time",
+        "stack pop"
+      ],
+      "tags": [
+        "stacks",
+        "time complexity"
+      ]
+    },
+    {
+      "id": "q3b",
+      "number": "3b",
+      "type": "open-ended",
+      "text": "Printing out all the odd values stored in a binary search tree containing n positive integers in ascending order.",
+      "equation": null,
+      "modelAnswer": "O(n). To print the values in ascending order, an in-order traversal must be performed. This requires visiting every single node in the tree to check if its value is odd, taking linear time.",
+      "keyTerms": [
+        "O(n)",
+        "in-order traversal",
+        "linear time"
+      ],
+      "tags": [
+        "binary search trees",
+        "tree traversal",
+        "time complexity"
+      ]
+    },
+    {
+      "id": "q3c",
+      "number": "3c",
+      "type": "open-ended",
+      "text": "Finding the minimum value in a binary search tree with n nodes.",
+      "equation": null,
+      "modelAnswer": "O(n). In the worst case, the binary search tree is completely unbalanced (skewed to the left), meaning you have to traverse n nodes down the left child pointers to find the minimum.",
+      "keyTerms": [
+        "O(n)",
+        "worst-case",
+        "unbalanced tree"
+      ],
+      "tags": [
+        "binary search trees",
+        "time complexity"
+      ]
+    },
+    {
+      "id": "q3d",
+      "number": "3d",
+      "type": "open-ended",
+      "text": "Moving n values from a binary min heap, into an initially empty array of the same size. The final contents of the array will be sorted from low to high.",
+      "equation": null,
+      "modelAnswer": "O(n log n). Extracting the minimum element from a binary min heap takes O(log n) time because the heap must be restructured (heapified). Doing this n times results in O(n log n) total time.",
+      "keyTerms": [
+        "O(n log n)",
+        "extract-min",
+        "heapify"
+      ],
+      "tags": [
+        "heaps",
+        "sorting algorithms",
+        "time complexity"
+      ]
+    },
+    {
+      "id": "q3e",
+      "number": "3e",
+      "type": "open-ended",
+      "text": "Consider a hash table with separate chaining with ten hash locations. Using the hash function h(x) = x mod 9, insert the keys 33, 54, 69, 74, 18, 19, 52, 44 (in the order given) into the hash table. Draw the resulting hash-table in the area below.",
+      "equation": "h(x) = x \\mod 9",
+      "modelAnswer": "Calculate the hash for each key: 33 mod 9 = 6; 54 mod 9 = 0; 69 mod 9 = 6; 74 mod 9 = 2; 18 mod 9 = 0; 19 mod 9 = 1; 52 mod 9 = 7; 44 mod 9 = 8. The hash table will have linked lists at these indices: Index 0: 54 -> 18. Index 1: 19. Index 2: 74. Index 6: 33 -> 69. Index 7: 52. Index 8: 44.",
+      "keyTerms": [
+        "modulo arithmetic",
+        "separate chaining",
+        "collisions"
+      ],
+      "tags": [
+        "hash tables",
+        "hashing"
+      ]
+    },
+    {
+      "id": "q3f",
+      "number": "3f",
+      "type": "open-ended",
+      "text": "The method isHeap below determines whether a particular binary tree is a heap. The implementation this method given below contains a few bugs. Find these bugs and correct them.\npublic boolean isHeap() {\n// isEmpty returns true if the heap contains no nodes\nif (isEmpty()) {\nreturn true;\n}\n// getKey() returns the key value of the node\nif (! leftChild () .isEmpty() || leftChild () .getKey() < getKey()) {\nreturn false;\n}\nif (! rightChild() .isEmpty() || rightChild() .getLey() < getKey()) {\nreturn false;\n}\nreturn leftChild () .isHeap() || rightChild() .isHeap() ;\n}",
+      "equation": null,
+      "modelAnswer": "1. Typo: `rightChild().getLey()` should be `rightChild().getKey()`. 2. Logic error in condition: `!leftChild().isEmpty() || ...` should be `!leftChild().isEmpty() && ...` because we only want to check the key if the child is not empty. 3. Logic error in return statement: `leftChild().isHeap() || rightChild().isHeap()` should use `&&` because both the left and right subtrees must be valid heaps for the entire tree to be a heap.",
+      "keyTerms": [
+        "logical operators",
+        "syntax error",
+        "recursion"
+      ],
+      "tags": [
+        "heaps",
+        "debugging",
+        "binary trees"
+      ]
+    },
+    {
+      "id": "q3g",
+      "number": "3g",
+      "type": "open-ended",
+      "text": "Draw the binary min heap that results from inserting 8, 2, 7, 6, 9, 3, 1 in that order into an initially empty binary min heap. You do not need to show the array representation of the heap.",
+      "equation": null,
+      "modelAnswer": "Insert 8 (root). Insert 2 (left child of 8, swap with 8 -> root is 2). Insert 7 (right child of 2). Insert 6 (left child of 8, swap with 8). Insert 9 (right child of 6). Insert 3 (left child of 7, swap with 7). Insert 1 (right child of 3, swap with 3, then swap with 2). Final tree structure: Root is 1. Left child is 6, right child is 2. Left child of 6 is 8, right child of 6 is 9. Left child of 2 is 7, right child of 2 is 3.",
+      "keyTerms": [
+        "min heap",
+        "insertion",
+        "bubble up"
+      ],
+      "tags": [
+        "heaps",
+        "binary trees"
+      ]
+    },
+    {
+      "id": "q4",
+      "number": "4",
+      "type": "open-ended",
+      "text": "Write a method isBinaryTree which takes as input a BinaryTree<E> instance and returns a boolean value: the returned value is true if the BST in input is a Binary Search Tree, false otherwise. To achieve the maximum grade you need to provide a solution such that, assuming that N is the number of nodes in the Tree:\n-The time complexity is linear on the number of nodes, hence O(N)\n-The space complexity is linear on the number of nodes, hence O(N)",
+      "equation": null,
+      "modelAnswer": "An optimal solution uses an in-order traversal. We can maintain a reference to the previously visited node's value. During the recursive in-order traversal (Left, Root, Right), we compare the current node's value with the previous value. If the current value is less than or equal to the previous value, it violates the BST property, and we return false. The recursion stack takes O(N) space in the worst case, and we visit each node once, yielding O(N) time.",
+      "keyTerms": [
+        "in-order traversal",
+        "O(N) time",
+        "O(N) space",
+        "BST property"
+      ],
+      "tags": [
+        "binary search trees",
+        "algorithms",
+        "java"
+      ]
+    },
+    {
+      "id": "q5",
+      "number": "5",
+      "type": "open-ended",
+      "text": "Write a method isCyclic which takes as input a directed Graph<T> and returns a Boolean value. The returned value is true if the graph is cyclic (i.e. the graph contains at least 1 cycle), false otherwise (i.e. the graph contains no cycles).\nTo achieve the maximum grade you need to provide a solution such that, assuming that V is the number of verteces and E is the number of edges in the Graph:\n- The time complexity is linear on the number of verteces plus the number of edges, hence O(V+E) assuming the graph is implemented with adjacency lists\n-The space complexity is linear on the number of verteces, hence O(V)",
+      "equation": null,
+      "modelAnswer": "We can use Depth-First Search (DFS) to detect cycles in a directed graph. We maintain two sets (or boolean arrays/HashMaps): 'visited' to track all nodes that have been fully processed, and 'recursionStack' (or 'visiting') to track nodes currently in the DFS path. For each unvisited node, we start a DFS. If we encounter a neighbor that is already in the 'recursionStack', a back-edge exists, meaning there is a cycle, and we return true. If the DFS completes without finding such an edge, we return false. This takes O(V+E) time and O(V) space.",
+      "keyTerms": [
+        "depth-first search",
+        "recursion stack",
+        "back-edge",
+        "O(V+E)"
+      ],
+      "tags": [
+        "graphs",
+        "cycle detection",
+        "depth-first search"
+      ]
+    }
+  ],
+  "id": "dsa_dsa_exam_2022_1aa440",
+  "course": "DSA",
+  "source_file": "DSA Exam 2022.pdf"
+}
