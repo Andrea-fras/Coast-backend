@@ -376,7 +376,7 @@ def _find_relevant_images(
         if not top:
             return ""
 
-        api_base = os.getenv("API_BASE_URL", "")
+        api_base = os.getenv("API_BASE_URL", "https://coast-backend-dlg6.onrender.com")
         lines = []
         for si, _ in top:
             src = db.query(FolderSource).filter(FolderSource.source_id == si.source_id).first()
