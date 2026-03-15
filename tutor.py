@@ -674,7 +674,13 @@ def send_message(
         if context_type == "lesson" and context_id:
             try:
                 import lesson as lesson_mod
-                notebook_content = lesson_mod.build_lesson_prompt(user_id, context_id)
+                from curated_config import curated_source_uid as _curated_uid, get_lesson_structure
+                src_uid = _curated_uid(context_id)
+                notebook_content = lesson_mod.build_lesson_prompt(
+                    user_id, context_id,
+                    source_user_id=src_uid if src_uid is not None else None,
+                    structure=get_lesson_structure(context_id),
+                )
             except Exception:
                 import traceback as tb
                 tb.print_exc()
@@ -682,7 +688,12 @@ def send_message(
         elif context_type == "folder" and context_id:
             try:
                 import rag
-                notebook_content = rag.build_folder_context(user_id, context_id, message)
+                from curated_config import curated_source_uid as _curated_uid
+                rag_uid = _curated_uid(context_id)
+                notebook_content = rag.build_folder_context(
+                    rag_uid if rag_uid is not None else user_id,
+                    context_id, message,
+                )
             except Exception:
                 import traceback as tb
                 tb.print_exc()
@@ -851,14 +862,25 @@ def send_message_stream(
         if context_type == "lesson" and context_id:
             try:
                 import lesson as lesson_mod
-                notebook_content = lesson_mod.build_lesson_prompt(user_id, context_id)
+                from curated_config import curated_source_uid as _curated_uid, get_lesson_structure
+                src_uid = _curated_uid(context_id)
+                notebook_content = lesson_mod.build_lesson_prompt(
+                    user_id, context_id,
+                    source_user_id=src_uid if src_uid is not None else None,
+                    structure=get_lesson_structure(context_id),
+                )
             except Exception:
                 import traceback as tb
                 tb.print_exc()
         elif context_type == "folder" and context_id:
             try:
                 import rag
-                notebook_content = rag.build_folder_context(user_id, context_id, message)
+                from curated_config import curated_source_uid as _curated_uid
+                rag_uid = _curated_uid(context_id)
+                notebook_content = rag.build_folder_context(
+                    rag_uid if rag_uid is not None else user_id,
+                    context_id, message,
+                )
             except Exception:
                 import traceback as tb
                 tb.print_exc()
@@ -1098,8 +1120,13 @@ def update_skill_profile(user_id: int):
         for session in sessions:
             answers = db.query(SessionAnswer).filter(SessionAnswer.session_id == session.id).all()
             for ans in answers:
-                # Extract topics from question text (simple keyword extraction)
-                tags = _extract_topic_tags(ans.question_text, ans.correct_answer)
+                stored_tags = []
+                if hasattr(ans, 'tags_json') and ans.tags_json:
+                    try:
+                        stored_tags = json.loads(ans.tags_json)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                tags = stored_tags if stored_tags else _extract_topic_tags(ans.question_text, ans.correct_answer)
                 for tag in tags:
                     if tag not in topic_stats:
                         topic_stats[tag] = {"correct": 0, "total": 0}

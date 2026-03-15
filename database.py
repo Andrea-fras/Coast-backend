@@ -89,6 +89,7 @@ class SessionAnswer(Base):
     correct_answer = Column(Text, default="")
     is_correct = Column(Boolean, default=False)
     time_spent_ms = Column(Integer, default=0)
+    tags_json = Column(Text, default="[]")
 
     session = relationship("QuizSession", back_populates="answers")
 
@@ -228,6 +229,22 @@ class FolderSource(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class SourceImage(Base):
+    """An educationally relevant image extracted from a folder source document."""
+    __tablename__ = "source_images"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source_id = Column(String(50), nullable=False, index=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    folder_name = Column(String(100), nullable=False, index=True)
+    page_number = Column(Integer, default=0)
+    context_text = Column(Text, default="")
+    image_path = Column(String(500), nullable=False)
+    width = Column(Integer, default=0)
+    height = Column(Integer, default=0)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class CourseOutline(Base):
     """Structured lesson outline generated from folder sources."""
     __tablename__ = "course_outlines"
@@ -252,6 +269,11 @@ def _run_migrations():
         if "file_path" not in cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE folder_sources ADD COLUMN file_path TEXT"))
+    if "session_answers" in insp.get_table_names():
+        cols = [c["name"] for c in insp.get_columns("session_answers")]
+        if "tags_json" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE session_answers ADD COLUMN tags_json TEXT DEFAULT '[]'"))
     if "users" in insp.get_table_names():
         cols = [c["name"] for c in insp.get_columns("users")]
         if "learning_preferences" not in cols:
@@ -285,27 +307,30 @@ def load_papers_from_json(data_dir: str | Path):
 
     try:
         for f in data_dir.glob("*.json"):
-            if f.name in ("notebooks.json", "notebookContent.json"):
+            if f.name in ("notebooks.json", "notebookContent.json", "curatedLessons.json"):
                 continue
 
             with open(f, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
 
+            if not isinstance(data, dict):
+                continue
+
             paper_id = data.get("id", f.stem)
             existing = db.query(Paper).filter(Paper.paper_id == paper_id).first()
 
             if existing:
-                # Update
                 existing.title = data.get("title", "")
                 existing.description = data.get("description", "")
+                existing.course = data.get("course", existing.course or "")
                 existing.questions_json = json.dumps(data.get("questions", []))
                 existing.question_count = len(data.get("questions", []))
             else:
-                # Insert
                 paper = Paper(
                     paper_id=paper_id,
                     title=data.get("title", ""),
                     description=data.get("description", ""),
+                    course=data.get("course", ""),
                     questions_json=json.dumps(data.get("questions", [])),
                     question_count=len(data.get("questions", [])),
                 )

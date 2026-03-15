@@ -292,6 +292,10 @@ fragments — each is a partial study guide generated from a batch of lecture sl
 ### Output format
 Return a SINGLE JSON object following the exact same Notebook schema as the inputs.
 Return **only** the JSON object. No markdown fences, no commentary.
+
+**CRITICAL**: You MUST output complete, valid JSON. Do NOT let the output get truncated.
+If the merged content is very large, prioritize keeping all sections but write more concisely
+within each subsection rather than risk an incomplete JSON response.
 """
 
 
@@ -1178,6 +1182,7 @@ def _call_text_llm(
     api_key: str,
     model: str,
     provider: str,
+    max_tokens: int = 16384,
 ) -> str:
     """Call an LLM with text-only input (no images). Used for question matching and merging."""
     if provider in ("openai", "kimi"):
@@ -1195,7 +1200,7 @@ def _call_text_llm(
                 {"role": "user", "content": user_text},
             ],
             temperature=0.1,
-            max_tokens=16384,
+            max_tokens=max_tokens,
         )
         return response.choices[0].message.content or ""
 
@@ -1211,7 +1216,7 @@ def _call_text_llm(
             system=system_prompt,
             messages=[{"role": "user", "content": user_text}],
             temperature=0.1,
-            max_tokens=16384,
+            max_tokens=max_tokens,
         )
         return response.content[0].text
     else:
@@ -1402,6 +1407,37 @@ def _extract_chunked(
     return merged
 
 
+def _repair_truncated_json(text: str) -> str:
+    """Attempt to repair JSON truncated mid-output by closing open brackets/braces."""
+    stack = []
+    in_string = False
+    escape = False
+    for ch in text:
+        if escape:
+            escape = False
+            continue
+        if ch == '\\' and in_string:
+            escape = True
+            continue
+        if ch == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch in ('{', '['):
+            stack.append('}' if ch == '{' else ']')
+        elif ch in ('}', ']'):
+            if stack and stack[-1] == ch:
+                stack.pop()
+
+    if in_string:
+        text += '"'
+    text = text.rstrip().rstrip(',')
+    while stack:
+        text += stack.pop()
+    return text
+
+
 def _merge_partial_notebooks(
     partials: list[dict[str, Any]],
     api_key: str,
@@ -1412,10 +1448,10 @@ def _merge_partial_notebooks(
     if len(partials) == 1:
         return partials[0]
 
-    # Build compact representations to fit in context
     chunks_text = []
     for i, p in enumerate(partials):
-        chunks_text.append(f"=== CHUNK {i + 1} of {len(partials)} ===\n{json.dumps(p, indent=1)}")
+        compact = json.dumps(p, separators=(',', ':'))
+        chunks_text.append(f"=== CHUNK {i + 1} of {len(partials)} ===\n{compact}")
 
     user_text = (
         "Here are partial study guides generated from different batches of the same lecture.\n"
@@ -1423,14 +1459,19 @@ def _merge_partial_notebooks(
         + "\n\n".join(chunks_text)
     )
 
-    raw = _call_text_llm(MERGE_SYSTEM_PROMPT, user_text, api_key, model, provider)
+    raw = _call_text_llm(MERGE_SYSTEM_PROMPT, user_text, api_key, model, provider, max_tokens=32768)
     cleaned = _clean_json_response(raw)
 
     try:
         merged = json.loads(cleaned)
     except json.JSONDecodeError:
-        # Fallback: manual merge if LLM fails
-        merged = _manual_merge_fallback(partials)
+        try:
+            repaired = _repair_truncated_json(cleaned)
+            merged = json.loads(repaired)
+            print("  [merge] repaired truncated JSON successfully")
+        except (json.JSONDecodeError, Exception):
+            print("  [merge] LLM JSON failed, using manual merge fallback")
+            merged = _manual_merge_fallback(partials)
 
     return merged
 

@@ -34,3 +34,9 @@ Thumbs.db
 # Temp files
 tmp/
 *.tmp
+
+# User-uploaded content & extracted data (large, per-instance)
+curated_content/
+folder_uploads/
+scanned_papers/
+past_papers/

@@ -280,7 +280,8 @@ def search_folder(user_id: int, folder: str, query: str, top_k: int = 8) -> list
 
 def build_folder_context(user_id: int, folder: str, query: str, max_chars: int = 10000) -> str:
     """Search folder and format results as context for Pedro's system prompt."""
-    hits = search_folder(user_id, folder, query, top_k=10)
+    top_k = max(10, min(25, max_chars // 1000))
+    hits = search_folder(user_id, folder, query, top_k=top_k)
     if not hits:
         return ""
 

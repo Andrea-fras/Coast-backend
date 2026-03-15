@@ -30,6 +30,7 @@ from database import (
     SessionAnswer,
     SessionLocal,
     SkillProfile,
+    SourceImage,
     StudyFolder,
     TutorMemo,
     User,
@@ -108,7 +109,12 @@ GENERATED_DIR.mkdir(exist_ok=True)
 FOLDER_UPLOADS_DIR = Path(os.environ.get("FOLDER_UPLOADS_DIR", str(Path(__file__).parent / "folder_uploads")))
 FOLDER_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
+SOURCE_IMAGES_DIR = FOLDER_UPLOADS_DIR / "images"
+SOURCE_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+
 PAPERS_DIR = Path(os.getenv("PAPERS_DIR", str(Path(__file__).parent.parent / "Coast" / "testing" / "src" / "data")))
+
+from curated_config import curated_source_uid as _curated_uid, get_lesson_structure
 
 QUESTIONS_PER_BATCH = 10
 
@@ -127,6 +133,10 @@ def on_startup():
     if PAPERS_DIR.exists():
         load_papers_from_json(PAPERS_DIR)
         print(f"Loaded papers from {PAPERS_DIR}")
+    from paper_scanner import load_scanned_into_db
+    load_scanned_into_db()
+    from curated_config import ingest_curated_sources
+    ingest_curated_sources()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -422,6 +432,164 @@ def get_questions_by_tags(tags: str, batch: int = 1):
             "total_matched": len(matched),
             "questions": matched[start:end],
             "has_more": end < len(matched),
+        }
+    finally:
+        db.close()
+
+
+@app.get("/api/folders/{folder_name}/section-questions")
+def get_section_questions(
+    folder_name: str,
+    user: User = Depends(get_current_user),
+    max_questions: int = 5,
+):
+    """Find past paper questions matching the current lesson section's topics.
+
+    Scores each question by overlap between question tags and section key_topics.
+    Returns empty list if no matching questions — frontend hides the exam block.
+    """
+    from database import CourseOutline
+    db = SessionLocal()
+    try:
+        outline = db.query(CourseOutline).filter(
+            CourseOutline.user_id == user.id,
+            CourseOutline.folder_name == folder_name,
+        ).first()
+        if not outline:
+            return {"questions": [], "section_title": ""}
+
+        sections = json.loads(outline.outline_json)
+        idx = outline.current_section
+        if idx >= len(sections):
+            return {"questions": [], "section_title": ""}
+
+        section = sections[idx]
+        section_title = section.get("title", "")
+        key_topics = [t.lower() for t in section.get("key_topics", [])]
+        objectives = [o.lower() for o in section.get("learning_objectives", [])]
+
+        search_terms = key_topics + objectives + [section_title.lower()]
+        search_words = set()
+        for term in search_terms:
+            for word in term.split():
+                if len(word) > 3:
+                    search_words.add(word)
+
+        papers = db.query(Paper).all()
+
+        answered_ids = set()
+        answered_rows = (
+            db.query(SessionAnswer.question_id)
+            .join(QuizSession)
+            .filter(QuizSession.user_id == user.id)
+            .all()
+        )
+        for row in answered_rows:
+            answered_ids.add(row[0])
+
+        scored = []
+        for paper in papers:
+            questions = json.loads(paper.questions_json)
+            for q in questions:
+                compound_id = f"{paper.paper_id}_{q.get('id', '')}"
+                if compound_id in answered_ids or q.get("id", "") in answered_ids:
+                    continue
+
+                q_tags = [t.lower() for t in (q.get("tags", []) or [])]
+                q_key_terms = [t.lower() for t in (q.get("keyTerms", []) or [])]
+                q_text_lower = q.get("text", "").lower()
+
+                score = 0
+                for topic in key_topics:
+                    for tag in q_tags:
+                        if topic in tag or tag in topic:
+                            score += 10
+                    for kt in q_key_terms:
+                        if topic in kt or kt in topic:
+                            score += 5
+                    if topic in q_text_lower:
+                        score += 3
+                for word in search_words:
+                    if any(word in tag for tag in q_tags):
+                        score += 2
+                    if word in q_text_lower:
+                        score += 1
+
+                if score > 0:
+                    scored.append((q, paper, score))
+
+        scored.sort(key=lambda x: -x[2])
+        top = scored[:max_questions]
+
+        result_questions = []
+        for q, paper, sc in top:
+            out = {**q}
+            out["_paper_id"] = paper.paper_id
+            out["_paper_title"] = paper.title
+            out["_match_score"] = sc
+            result_questions.append(out)
+
+        return {
+            "questions": result_questions,
+            "section_title": section_title,
+            "section_topics": key_topics,
+        }
+    finally:
+        db.close()
+
+
+@app.post("/api/folders/{folder_name}/section-answers")
+def submit_section_answers(
+    folder_name: str,
+    request: dict = {},
+    user: User = Depends(get_current_user),
+):
+    """Submit answers for section past-paper questions and track per-topic results."""
+    answers = request.get("answers", [])
+    if not answers:
+        return {"status": "no_answers"}
+
+    db = SessionLocal()
+    try:
+        session = QuizSession(
+            user_id=user.id,
+            paper_id=f"lesson_{folder_name}",
+            paper_title=f"Lesson: {folder_name}",
+            score=sum(1 for a in answers if a.get("is_correct")),
+            total=len(answers),
+            completed=True,
+            completed_at=datetime.now(timezone.utc),
+        )
+        db.add(session)
+        db.flush()
+
+        for a in answers:
+            sa = SessionAnswer(
+                session_id=session.id,
+                question_id=a.get("question_id", ""),
+                question_text=a.get("question_text", ""),
+                user_answer=a.get("user_answer", ""),
+                correct_answer=a.get("correct_answer", ""),
+                is_correct=a.get("is_correct", False),
+                tags_json=json.dumps(a.get("tags", [])),
+            )
+            db.add(sa)
+
+        db.commit()
+
+        def _bg_update_skills():
+            try:
+                tutor.update_skill_profile(user.id)
+            except Exception:
+                import traceback as tb
+                tb.print_exc()
+        threading.Thread(target=_bg_update_skills, daemon=True).start()
+
+        return {
+            "status": "recorded",
+            "score": session.score,
+            "total": session.total,
+            "session_id": session.id,
         }
     finally:
         db.close()
@@ -880,7 +1048,8 @@ def delete_folder(folder_name: str, user: User = Depends(get_current_user)):
 def embed_folder(folder_name: str, user: User = Depends(get_current_user)):
     """Embed all notebooks in a folder into ChromaDB."""
     try:
-        result = rag.embed_all_in_folder(user.id, folder_name)
+        embed_uid = _curated_uid(folder_name) if _curated_uid(folder_name) is not None else user.id
+        result = rag.embed_all_in_folder(embed_uid, folder_name)
         return result
     except Exception:
         import traceback
@@ -976,7 +1145,12 @@ async def upload_folder_source(
                 import traceback
                 traceback.print_exc()
 
+        def _bg_images():
+            from image_extractor import extract_and_store_images
+            extract_and_store_images(stored_path, ext, source_id, user.id, folder_name, SOURCE_IMAGES_DIR)
+
         threading.Thread(target=_bg_embed, daemon=True).start()
+        threading.Thread(target=_bg_images, daemon=True).start()
 
         return {
             "source_id": source_id,
@@ -998,11 +1172,12 @@ async def upload_folder_source(
 @app.delete("/api/folders/{folder_name}/sources/{source_id}")
 def delete_folder_source(folder_name: str, source_id: str, user: User = Depends(get_current_user)):
     """Delete a raw source from a folder."""
+    owner_id = _curated_uid(folder_name) if _curated_uid(folder_name) is not None else user.id
     db = SessionLocal()
     file_path = None
     try:
         fs = db.query(FolderSource).filter(
-            FolderSource.user_id == user.id,
+            FolderSource.user_id == owner_id,
             FolderSource.folder_name == folder_name,
             FolderSource.source_id == source_id,
         ).first()
@@ -1018,7 +1193,7 @@ def delete_folder_source(folder_name: str, source_id: str, user: User = Depends(
         Path(file_path).unlink(missing_ok=True)
 
     try:
-        rag.delete_notebook_embeddings(user.id, folder_name, source_id)
+        rag.delete_notebook_embeddings(owner_id, folder_name, source_id)
     except Exception:
         pass
 
@@ -1028,10 +1203,11 @@ def delete_folder_source(folder_name: str, source_id: str, user: User = Depends(
 @app.get("/api/folders/{folder_name}/sources/{source_id}/file")
 def get_source_file(folder_name: str, source_id: str, user: User = Depends(get_current_user)):
     """Serve the original uploaded file for a folder source."""
+    owner_id = _curated_uid(folder_name) if _curated_uid(folder_name) is not None else user.id
     db = SessionLocal()
     try:
         fs = db.query(FolderSource).filter(
-            FolderSource.user_id == user.id,
+            FolderSource.user_id == owner_id,
             FolderSource.folder_name == folder_name,
             FolderSource.source_id == source_id,
         ).first()
@@ -1057,6 +1233,52 @@ def get_source_file(folder_name: str, source_id: str, user: User = Depends(get_c
         filename=filename,
         headers={"Content-Disposition": f'inline; filename="{filename}"'},
     )
+
+
+@app.get("/api/source-images/{image_id}")
+def serve_source_image(image_id: int):
+    """Serve an extracted source image by its DB id."""
+    db = SessionLocal()
+    try:
+        si = db.query(SourceImage).filter(SourceImage.id == image_id).first()
+        if not si:
+            raise HTTPException(404, "Image not found")
+        file_path = Path(si.image_path)
+        if not file_path.exists():
+            raise HTTPException(404, "Image file missing")
+        from fastapi.responses import FileResponse
+        return FileResponse(
+            path=str(file_path),
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+    finally:
+        db.close()
+
+
+@app.get("/api/folders/{folder_name}/images")
+def list_folder_images(folder_name: str, user: User = Depends(get_current_user)):
+    """List all extracted images for a folder."""
+    owner_id = _curated_uid(folder_name) if _curated_uid(folder_name) is not None else user.id
+    db = SessionLocal()
+    try:
+        images = db.query(SourceImage).filter(
+            SourceImage.user_id == owner_id,
+            SourceImage.folder_name == folder_name,
+        ).all()
+        return [
+            {
+                "id": si.id,
+                "source_id": si.source_id,
+                "page_number": si.page_number,
+                "context_text": si.context_text[:200],
+                "width": si.width,
+                "height": si.height,
+            }
+            for si in images
+        ]
+    finally:
+        db.close()
 
 
 @app.post("/api/folders/{folder_name}/sources/{source_id}/generate-notebook")
@@ -1178,8 +1400,9 @@ async def generate_notebook_from_source(
 @app.get("/api/folders/{folder_name}/sources")
 def folder_sources(folder_name: str, user: User = Depends(get_current_user)):
     """List all sources (notebooks + raw documents) with metadata."""
+    src_uid = _curated_uid(folder_name) if _curated_uid(folder_name) is not None else user.id
     try:
-        chroma_sources = rag.get_folder_sources(user.id, folder_name)
+        chroma_sources = rag.get_folder_sources(src_uid, folder_name)
     except Exception:
         import traceback
         traceback.print_exc()
@@ -1192,7 +1415,7 @@ def folder_sources(folder_name: str, user: User = Depends(get_current_user)):
         notebooks = (
             db.query(SavedNotebook)
             .filter(
-                SavedNotebook.user_id == user.id,
+                SavedNotebook.user_id == src_uid,
                 SavedNotebook.folder == folder_name,
                 SavedNotebook.deleted_at == None,
             )
@@ -1201,7 +1424,7 @@ def folder_sources(folder_name: str, user: User = Depends(get_current_user)):
         raw_sources = (
             db.query(FolderSource)
             .filter(
-                FolderSource.user_id == user.id,
+                FolderSource.user_id == src_uid,
                 FolderSource.folder_name == folder_name,
             )
             .all()
@@ -1276,7 +1499,9 @@ def folder_notebooks(folder_name: str, user: User = Depends(get_current_user)):
 @app.post("/api/folders/{folder_name}/outline")
 def generate_outline(folder_name: str, user: User = Depends(get_current_user)):
     """Generate or regenerate a course outline from folder sources."""
-    result = lesson.generate_outline(user.id, folder_name)
+    src_uid = _curated_uid(folder_name) if _curated_uid(folder_name) is not None else user.id
+    structure = get_lesson_structure(folder_name)
+    result = lesson.generate_outline(user.id, folder_name, source_user_id=src_uid, structure=structure)
     if "error" in result:
         raise HTTPException(400, result["error"])
     return result
