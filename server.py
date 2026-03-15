@@ -1324,22 +1324,48 @@ def serve_source_image(image_id: int):
 
 @app.get("/api/debug/images")
 def debug_images():
-    """Debug endpoint: show image paths and whether files exist."""
+    """Debug endpoint: show image status and curated source file_paths."""
     db = SessionLocal()
     try:
-        all_imgs = db.query(SourceImage).limit(30).all()
-        result = []
+        all_imgs = db.query(SourceImage).all()
+        by_folder: dict[str, dict] = {}
         for si in all_imgs:
-            fp = Path(si.image_path)
-            result.append({
-                "id": si.id,
-                "source_id": si.source_id,
-                "folder": si.folder_name,
-                "path": si.image_path,
-                "exists": fp.exists(),
-                "parent_exists": fp.parent.exists(),
-            })
-        return result
+            f = si.folder_name
+            if f not in by_folder:
+                by_folder[f] = {"total": 0, "exists": 0, "missing": 0, "sample_ids": [], "sample_paths": []}
+            by_folder[f]["total"] += 1
+            if Path(si.image_path).exists():
+                by_folder[f]["exists"] += 1
+            else:
+                by_folder[f]["missing"] += 1
+            if len(by_folder[f]["sample_ids"]) < 3:
+                by_folder[f]["sample_ids"].append(si.id)
+                by_folder[f]["sample_paths"].append(si.image_path)
+
+        curated_sources = []
+        from curated_config import CURATED_FOLDER_NAMES, CURATED_USER_ID
+        for fn in CURATED_FOLDER_NAMES:
+            sources = db.query(FolderSource).filter(
+                FolderSource.user_id == CURATED_USER_ID,
+                FolderSource.folder_name == fn,
+            ).all()
+            for s in sources[:3]:
+                fp = Path(s.file_path) if s.file_path else None
+                curated_sources.append({
+                    "folder": fn,
+                    "source_id": s.source_id,
+                    "title": s.title[:50],
+                    "file_path": s.file_path,
+                    "file_exists": fp.exists() if fp else False,
+                })
+
+        data_dir = Path("/data")
+        return {
+            "images_by_folder": by_folder,
+            "curated_sources_sample": curated_sources,
+            "persistent_disk_exists": data_dir.is_dir(),
+            "data_contents": [str(p) for p in data_dir.iterdir()] if data_dir.is_dir() else [],
+        }
     finally:
         db.close()
 
