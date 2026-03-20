@@ -524,10 +524,9 @@ def get_section_questions(
 
         from curated_config import get_course_for_folder
         course_code = get_course_for_folder(folder_name)
-        if course_code:
-            papers = db.query(Paper).filter(Paper.course == course_code).all()
-        else:
-            papers = db.query(Paper).all()
+        if not course_code:
+            return {"questions": [], "section_title": section_title}
+        papers = db.query(Paper).filter(Paper.course == course_code).all()
 
         answered_ids = set()
         answered_rows = (
@@ -1476,7 +1475,9 @@ async def generate_notebook_from_source(
     def run_pipeline():
         try:
             from pipeline import run_notebook_pipeline
-            paper_paths = _get_paper_paths()
+            from curated_config import get_course_for_folder
+            course = get_course_for_folder(folder_name)
+            paper_paths = _get_paper_paths(course)
             result = run_notebook_pipeline(
                 src_path,
                 output_path=None,
@@ -2012,8 +2013,10 @@ async def generate_notes(
     def run_pipeline_thread():
         try:
             from pipeline import run_notebook_pipeline
+            from curated_config import get_course_for_folder
 
-            paper_paths = _get_paper_paths()
+            course = get_course_for_folder(folder) if folder else None
+            paper_paths = _get_paper_paths(course)
             result = run_notebook_pipeline(
                 tmp_path,
                 output_path=None,
@@ -2291,13 +2294,27 @@ def health():
         db.close()
 
 
-def _get_paper_paths() -> list[Path]:
+def _get_paper_paths(course: str | None = None) -> list[Path]:
+    """Get past paper JSON paths, optionally filtered by course.
+
+    If course is None, returns nothing — we only match papers
+    when we know the course to avoid cross-course contamination.
+    """
+    if not course:
+        return []
     paper_files = []
     if PAPERS_DIR.exists():
         for f in PAPERS_DIR.glob("*.json"):
             if f.name in ("notebooks.json", "notebookContent.json"):
                 continue
-            paper_files.append(f)
+            try:
+                import json as _json
+                with open(f) as _fh:
+                    data = _json.load(_fh)
+                if data.get("course", "").upper() == course.upper():
+                    paper_files.append(f)
+            except Exception:
+                pass
     return paper_files
 
 
