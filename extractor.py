@@ -666,27 +666,37 @@ def _hybrid_single_chunk(
     if extra_instructions:
         user_text += f"\n\nAdditional instructions: {extra_instructions}"
 
-    try:
-        if all_images:
-            raw = _call_llm_raw(all_images, HYBRID_NOTEBOOK_PROMPT, user_text, api_key, model, provider, detail="low")
-        else:
-            raw = _call_text_llm(HYBRID_NOTEBOOK_PROMPT, user_text, api_key, model, provider)
-    except Exception as e:
-        err_str = str(e)
-        if "429" in err_str or "rate_limit" in err_str:
-            import time
-            time.sleep(2)
-            text_model = "gpt-4o-mini" if provider == "openai" else model
-            raw = _call_text_llm(HYBRID_NOTEBOOK_PROMPT, user_text, api_key, text_model, provider)
-            diagram_map = {}
-        else:
-            raise
+    raw = None
+    if not all_images:
+        raw = _call_gemini_text(HYBRID_NOTEBOOK_PROMPT, user_text, max_tokens=32768)
+
+    if not raw:
+        try:
+            if all_images:
+                raw = _call_llm_raw(all_images, HYBRID_NOTEBOOK_PROMPT, user_text, api_key, model, provider, detail="low")
+            else:
+                raw = _call_text_llm(HYBRID_NOTEBOOK_PROMPT, user_text, api_key, model, provider)
+        except Exception as e:
+            err_str = str(e)
+            if "429" in err_str or "rate_limit" in err_str:
+                import time
+                time.sleep(2)
+                text_model = "gpt-4o-mini" if provider == "openai" else model
+                raw = _call_text_llm(HYBRID_NOTEBOOK_PROMPT, user_text, api_key, text_model, provider)
+                diagram_map = {}
+            else:
+                raise
 
     cleaned = _clean_json_response(raw)
     try:
         result = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"LLM returned invalid JSON. Raw:\n{raw[:1000]}") from exc
+    except json.JSONDecodeError:
+        try:
+            repaired = _repair_truncated_json(cleaned)
+            result = json.loads(repaired)
+            print("  [chunk] repaired truncated JSON")
+        except (json.JSONDecodeError, Exception) as exc:
+            raise ValueError(f"LLM returned invalid JSON. Raw:\n{raw[:1000]}") from exc
 
     return result, diagram_map
 
@@ -778,8 +788,8 @@ def _inject_diagrams_post_merge(
     return notebook
 
 
-HYBRID_CHUNK_SIZE_TEXT = 10  # larger chunks when no images (text-only PDFs)
-MAX_CHARS_PER_CHUNK = 80000  # hard cap on text length per API call (~20k tokens)
+HYBRID_CHUNK_SIZE_TEXT = 8  # slides per chunk when text-only
+MAX_CHARS_PER_CHUNK = 100000  # Gemini supports much larger contexts
 
 def _hybrid_chunked(
     slides_data: list[dict],
@@ -1228,6 +1238,39 @@ def _call_text_llm(
         raise ValueError(f"Unknown provider: {provider}")
 
 
+def _call_gemini_text(
+    system_prompt: str,
+    user_text: str,
+    max_tokens: int = 32768,
+    model: str = "gemini-2.0-flash",
+) -> str | None:
+    """Call Gemini for text generation. Returns None if unavailable."""
+    gemini_key = os.getenv("GEMINI_API_KEY", "")
+    if not gemini_key:
+        return None
+    try:
+        from google import genai
+        client = genai.Client(api_key=gemini_key)
+        response = client.models.generate_content(
+            model=model,
+            contents=user_text,
+            config={
+                "system_instruction": system_prompt,
+                "max_output_tokens": max_tokens,
+                "temperature": 0.15,
+            },
+        )
+        text = ""
+        if response.candidates and response.candidates[0].content:
+            for part in (response.candidates[0].content.parts or []):
+                if hasattr(part, "text") and part.text:
+                    text += part.text
+        return text if text else None
+    except Exception as e:
+        print(f"[gemini] Failed: {e}")
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Public API – Exam Paper Extraction (original)
 # ---------------------------------------------------------------------------
@@ -1467,7 +1510,9 @@ def _merge_partial_notebooks(
         + "\n\n".join(chunks_text)
     )
 
-    raw = _call_text_llm(MERGE_SYSTEM_PROMPT, user_text, api_key, model, provider, max_tokens=16384)
+    raw = _call_gemini_text(MERGE_SYSTEM_PROMPT, user_text, max_tokens=32768)
+    if not raw:
+        raw = _call_text_llm(MERGE_SYSTEM_PROMPT, user_text, api_key, model, provider, max_tokens=16384)
     cleaned = _clean_json_response(raw)
 
     try:
