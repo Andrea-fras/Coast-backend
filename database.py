@@ -138,6 +138,7 @@ class ChatMessage(Base):
     content = Column(Text, nullable=False)
     context_type = Column(String(20), nullable=False)  # "notebook", "global", "session"
     context_id = Column(String(100), nullable=True)  # notebook_id or session_id
+    section_index = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="chat_messages")
@@ -247,6 +248,17 @@ class SourceImage(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class LessonNotes(Base):
+    """Personal student notes per lesson (one per user+folder)."""
+    __tablename__ = "lesson_notes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    folder_name = Column(String(100), nullable=False, index=True)
+    content_html = Column(Text, default="")
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class CourseOutline(Base):
     """Structured lesson outline generated from folder sources."""
     __tablename__ = "course_outlines"
@@ -276,6 +288,11 @@ def _run_migrations():
         if "tags_json" not in cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE session_answers ADD COLUMN tags_json TEXT DEFAULT '[]'"))
+    if "chat_messages" in insp.get_table_names():
+        cols = [c["name"] for c in insp.get_columns("chat_messages")]
+        if "section_index" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE chat_messages ADD COLUMN section_index INTEGER"))
     if "users" in insp.get_table_names():
         cols = [c["name"] for c in insp.get_columns("users")]
         if "learning_preferences" not in cols:

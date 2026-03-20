@@ -838,6 +838,7 @@ def send_message_stream(
     context_type: str,
     context_id: Optional[str] = None,
     notebook_ids: Optional[list[str]] = None,
+    section_index: Optional[int] = None,
 ):
     """Streaming version of send_message. Yields (token, None) for each chunk,
     then (None, result_dict) for the final metadata."""
@@ -1008,12 +1009,14 @@ def send_message_stream(
             user_id=user_id, conversation_id=conversation_id,
             role="user", content=message,
             context_type=context_type, context_id=context_id,
+            section_index=section_index,
         )
         db.add(user_msg)
         pedro_msg = ChatMessage(
             user_id=user_id, conversation_id=conversation_id,
             role="pedro", content=full_reply,
             context_type=context_type, context_id=context_id,
+            section_index=section_index,
         )
         db.add(pedro_msg)
         db.commit()

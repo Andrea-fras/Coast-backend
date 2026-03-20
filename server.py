@@ -24,6 +24,7 @@ from auth import create_access_token, decode_access_token, hash_password, verify
 from database import (
     ChatMessage,
     FolderSource,
+    LessonNotes,
     Paper,
     QuizSession,
     SavedNotebook,
@@ -1677,6 +1678,70 @@ def reset_lesson(folder_name: str, user: User = Depends(get_current_user)):
     return result
 
 
+@app.get("/api/folders/{folder_name}/lesson-notes")
+def get_lesson_notes(folder_name: str, user: User = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        row = db.query(LessonNotes).filter(
+            LessonNotes.user_id == user.id,
+            LessonNotes.folder_name == folder_name,
+        ).first()
+        return {"content_html": row.content_html if row else ""}
+    finally:
+        db.close()
+
+
+@app.put("/api/folders/{folder_name}/lesson-notes")
+def save_lesson_notes(folder_name: str, body: dict, user: User = Depends(get_current_user)):
+    html = body.get("content_html", "")
+    db = SessionLocal()
+    try:
+        row = db.query(LessonNotes).filter(
+            LessonNotes.user_id == user.id,
+            LessonNotes.folder_name == folder_name,
+        ).first()
+        if row:
+            row.content_html = html
+            row.updated_at = datetime.now(timezone.utc)
+        else:
+            row = LessonNotes(
+                user_id=user.id,
+                folder_name=folder_name,
+                content_html=html,
+            )
+            db.add(row)
+        db.commit()
+        return {"ok": True}
+    finally:
+        db.close()
+
+
+@app.get("/api/folders/{folder_name}/all-feedback")
+def get_all_feedback(folder_name: str, user: User = Depends(get_current_user)):
+    return {"sections": []}
+
+
+@app.get("/api/folders/{folder_name}/section-chat/{section_index}")
+def get_section_chat(folder_name: str, section_index: int, user: User = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(ChatMessage)
+            .filter(
+                ChatMessage.user_id == user.id,
+                ChatMessage.context_type == "lesson",
+                ChatMessage.context_id == folder_name,
+                ChatMessage.section_index == section_index,
+            )
+            .order_by(ChatMessage.created_at.asc())
+            .all()
+        )
+        messages = [{"role": r.role, "content": r.content} for r in rows]
+        return {"messages": messages}
+    finally:
+        db.close()
+
+
 @app.post("/api/notebooks/save")
 def save_notebook(notebook: dict, user: User = Depends(get_current_user)):
     """Save a generated notebook to the user's account."""
@@ -1739,6 +1804,7 @@ class ChatSendRequest(BaseModel):
     context_type: str = "global"  # "notebook", "global", "session"
     context_id: Optional[str] = None
     notebook_ids: Optional[list[str]] = None
+    section_index: Optional[int] = None
 
 
 @app.post("/api/chat/send")
@@ -1797,6 +1863,7 @@ def chat_stream(req: ChatSendRequest, user: User = Depends(get_current_user)):
                 context_type=req.context_type,
                 context_id=req.context_id,
                 notebook_ids=req.notebook_ids,
+                section_index=req.section_index,
             ):
                 if token is not None:
                     yield f"data: {json.dumps({'token': token})}\n\n"
