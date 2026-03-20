@@ -442,15 +442,18 @@ def get_questions_paginated(paper_id: str, batch: int = 1, user: User = Depends(
 
 
 @app.get("/api/questions/by-tags")
-def get_questions_by_tags(tags: str, batch: int = 1):
-    """Get questions matching any of the given tags (comma-separated). Searches across all papers."""
+def get_questions_by_tags(tags: str, batch: int = 1, course: str = ""):
+    """Get questions matching any of the given tags (comma-separated). Optionally filter by course."""
     tag_list = [t.strip().lower() for t in tags.split(",") if t.strip()]
     if not tag_list:
         raise HTTPException(400, "No tags provided")
 
     db = SessionLocal()
     try:
-        papers = db.query(Paper).all()
+        if course:
+            papers = db.query(Paper).filter(Paper.course == course).all()
+        else:
+            papers = db.query(Paper).all()
         matched = []
 
         for paper in papers:
@@ -519,7 +522,12 @@ def get_section_questions(
                 if len(word) > 3:
                     search_words.add(word)
 
-        papers = db.query(Paper).all()
+        from curated_config import get_course_for_folder
+        course_code = get_course_for_folder(folder_name)
+        if course_code:
+            papers = db.query(Paper).filter(Paper.course == course_code).all()
+        else:
+            papers = db.query(Paper).all()
 
         answered_ids = set()
         answered_rows = (

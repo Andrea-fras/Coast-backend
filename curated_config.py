@@ -11,6 +11,30 @@ CURATED_FOLDER_NAMES = {"Quantitative Methods 1", "Data Structures & Algorithms"
 CURATED_CONTENT_DIR = Path(__file__).parent / "curated_content"
 CURATED_USER_ID = 0
 
+FOLDER_TO_COURSE: dict[str, str] = {
+    "Quantitative Methods 1": "QM1",
+    "Data Structures & Algorithms": "DSA",
+}
+
+_COURSE_KEYWORDS: dict[str, list[str]] = {
+    "QM1": ["quantitative methods", "qm1", "statistics"],
+    "DSA": ["data structures", "algorithms", "dsa"],
+}
+
+def get_course_for_folder(folder_name: str) -> str | None:
+    """Return the past-paper course code for a folder, or None.
+
+    Checks exact mapping first, then fuzzy-matches folder name
+    against course keywords so user-created folders also work.
+    """
+    if folder_name in FOLDER_TO_COURSE:
+        return FOLDER_TO_COURSE[folder_name]
+    name_lower = folder_name.lower()
+    for course, keywords in _COURSE_KEYWORDS.items():
+        if any(kw in name_lower for kw in keywords):
+            return course
+    return None
+
 CURATED_LESSON_STRUCTURES = {
     "Quantitative Methods 1": {
         "description": "This course has THREE distinct parts that MUST be reflected as top-level groupings:",
