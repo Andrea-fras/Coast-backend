@@ -1144,18 +1144,35 @@ async def upload_folder_source(
             page_count = len(pages)
             raw_text = "\n\n".join(p.get("text", "") for p in pages if p.get("text"))
         elif ext == ".pdf":
-            from extractor import extract_content_from_pdf
-            pages = extract_content_from_pdf(str(tmp_path))
+            pages = None
+            try:
+                from extractor import extract_content_from_pdf
+                pages = extract_content_from_pdf(str(tmp_path))
+            except Exception:
+                import traceback; traceback.print_exc()
+            if not pages:
+                try:
+                    import pdfplumber
+                    with pdfplumber.open(str(tmp_path)) as pdf:
+                        pages = []
+                        for i, pg in enumerate(pdf.pages):
+                            txt = pg.extract_text() or ""
+                            pages.append({"slide_number": i + 1, "text": txt, "images": []})
+                except Exception:
+                    import traceback; traceback.print_exc()
             if pages:
                 page_count = len(pages)
                 raw_text = "\n\n".join(p.get("text", "") for p in pages if p.get("text"))
             else:
-                return JSONResponse(status_code=400, content={"detail": "Could not extract text from PDF"})
+                return JSONResponse(status_code=400, content={"detail": "Could not extract text from PDF"},
+                                    headers=_cors_headers)
         else:
-            return JSONResponse(status_code=400, content={"detail": "Image files must be uploaded via the full notebook pipeline"})
+            return JSONResponse(status_code=400, content={"detail": "Image files must be uploaded via the full notebook pipeline"},
+                                headers=_cors_headers)
 
         if not raw_text.strip():
-            return JSONResponse(status_code=400, content={"detail": "No text could be extracted from this file"})
+            return JSONResponse(status_code=400, content={"detail": "No text could be extracted from this file"},
+                                headers=_cors_headers)
 
         source_id = f"src_{uuid.uuid4().hex[:10]}"
         title = Path(file.filename).stem.replace("_", " ").replace("-", " ")
@@ -1207,7 +1224,8 @@ async def upload_folder_source(
     except Exception:
         import traceback
         traceback.print_exc()
-        return JSONResponse(status_code=500, content={"detail": "Upload failed — server error"})
+        return JSONResponse(status_code=500, content={"detail": "Upload failed — server error"},
+                            headers=_cors_headers)
     finally:
         if tmp_path:
             tmp_path.unlink(missing_ok=True)

@@ -645,19 +645,23 @@ def _hybrid_single_chunk(
     for i, img in enumerate(all_images):
         diagram_map[i + 1] = _image_to_base64(img, max_size=800)
 
+    joined_text = "\n".join(text_parts)
+    if len(joined_text) > MAX_CHARS_PER_CHUNK:
+        joined_text = joined_text[:MAX_CHARS_PER_CHUNK] + "\n\n[... text truncated for API limits ...]"
+
     if all_images:
         user_text = (
             "Here is the extracted text content from university lecture slides.\n"
             f"There are {len(all_images)} embedded image(s) attached (numbered 1–{len(all_images)}).\n"
             "Use [DIAGRAM:N] placeholders in your content where each image should appear.\n"
             "Transform this into an intuitive, Socratic study guide.\n\n"
-            + "\n".join(text_parts)
+            + joined_text
         )
     else:
         user_text = (
             "Here is the extracted text content from university lecture slides.\n"
             "Transform this into an intuitive, Socratic study guide.\n\n"
-            + "\n".join(text_parts)
+            + joined_text
         )
     if extra_instructions:
         user_text += f"\n\nAdditional instructions: {extra_instructions}"
@@ -774,7 +778,8 @@ def _inject_diagrams_post_merge(
     return notebook
 
 
-HYBRID_CHUNK_SIZE_TEXT = 15  # larger chunks when no images (text-only PDFs)
+HYBRID_CHUNK_SIZE_TEXT = 10  # larger chunks when no images (text-only PDFs)
+MAX_CHARS_PER_CHUNK = 80000  # hard cap on text length per API call (~20k tokens)
 
 def _hybrid_chunked(
     slides_data: list[dict],
@@ -1448,9 +1453,12 @@ def _merge_partial_notebooks(
     if len(partials) == 1:
         return partials[0]
 
+    max_per_chunk = MAX_CHARS_PER_CHUNK // max(len(partials), 1)
     chunks_text = []
     for i, p in enumerate(partials):
         compact = json.dumps(p, separators=(',', ':'))
+        if len(compact) > max_per_chunk:
+            compact = compact[:max_per_chunk] + '..."}'
         chunks_text.append(f"=== CHUNK {i + 1} of {len(partials)} ===\n{compact}")
 
     user_text = (
