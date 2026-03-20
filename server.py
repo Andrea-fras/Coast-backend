@@ -24,11 +24,9 @@ from auth import create_access_token, decode_access_token, hash_password, verify
 from database import (
     ChatMessage,
     FolderSource,
-    LessonNotes,
     Paper,
     QuizSession,
     SavedNotebook,
-    SectionFeedback,
     SessionAnswer,
     SessionLocal,
     SkillProfile,
@@ -166,55 +164,23 @@ RATE_LIMIT_WINDOW_DAYS = 7          # rolling window for chat limit
 # STARTUP
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _log_mem(label: str):
-    """Log current RSS memory usage."""
-    try:
-        import resource
-        rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
-        print(f"[mem] {label}: {rss_mb:.0f} MB", flush=True)
-    except Exception:
-        pass
-
-
 @app.on_event("startup")
 def on_startup():
-    _log_mem("before init_db")
     init_db()
-    _log_mem("after init_db")
-
     if PAPERS_DIR.exists():
         load_papers_from_json(PAPERS_DIR)
-    _log_mem("after papers")
-
+        print(f"Loaded papers from {PAPERS_DIR}")
     from paper_scanner import load_scanned_into_db
     load_scanned_into_db()
-    _log_mem("after scanned papers")
 
-    import gc
-    gc.collect()
-    _log_mem("after gc")
-
+    import threading
     def _bg_curated():
         try:
-            _log_mem("bg_curated start")
             from curated_config import ingest_curated_sources
             ingest_curated_sources()
-            _log_mem("bg_curated done")
         except Exception:
             import traceback; traceback.print_exc()
     threading.Thread(target=_bg_curated, daemon=True).start()
-    print("[startup] Server ready", flush=True)
-
-
-@app.get("/health")
-def health():
-    """Simple health check — no auth needed."""
-    try:
-        import resource
-        rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
-    except Exception:
-        rss_mb = -1
-    return {"status": "ok", "memory_mb": round(rss_mb)}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1711,302 +1677,6 @@ def reset_lesson(folder_name: str, user: User = Depends(get_current_user)):
     return result
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# LESSON CHAT HISTORY & SECTION FEEDBACK
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-@app.get("/api/folders/{folder_name}/section-chat/{section_index}")
-def get_section_chat(folder_name: str, section_index: int, user: User = Depends(get_current_user)):
-    """Load persisted chat history for a specific section."""
-    db = SessionLocal()
-    try:
-        messages = (
-            db.query(ChatMessage)
-            .filter(
-                ChatMessage.user_id == user.id,
-                ChatMessage.context_type == "lesson",
-                ChatMessage.context_id == folder_name,
-                ChatMessage.section_index == section_index,
-            )
-            .order_by(ChatMessage.created_at.asc())
-            .all()
-        )
-        conv_id = messages[0].conversation_id if messages else None
-        return {
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
-            "conversation_id": conv_id,
-        }
-    finally:
-        db.close()
-
-
-class SectionFeedbackRequest(BaseModel):
-    section_index: int
-    section_title: str = ""
-
-
-@app.post("/api/folders/{folder_name}/section-feedback")
-def generate_section_feedback(folder_name: str, req: SectionFeedbackRequest, user: User = Depends(get_current_user)):
-    """Generate feedback on what the student got wrong or could refine in a section."""
-    db = SessionLocal()
-    try:
-        existing = db.query(SectionFeedback).filter(
-            SectionFeedback.user_id == user.id,
-            SectionFeedback.folder_name == folder_name,
-            SectionFeedback.section_index == req.section_index,
-        ).first()
-        if existing:
-            return {"feedback": json.loads(existing.feedback_json)}
-
-        messages = (
-            db.query(ChatMessage)
-            .filter(
-                ChatMessage.user_id == user.id,
-                ChatMessage.context_type == "lesson",
-                ChatMessage.context_id == folder_name,
-                ChatMessage.section_index == req.section_index,
-            )
-            .order_by(ChatMessage.created_at.asc())
-            .all()
-        )
-        if not messages:
-            return {"feedback": {"strengths": [], "weaknesses": [], "tips": []}}
-
-        chat_transcript = "\n".join(
-            f"{'Student' if m.role == 'user' else 'Tutor'}: {m.content}" for m in messages
-        )
-
-        feedback = _generate_feedback_with_llm(chat_transcript, req.section_title)
-
-        fb_row = SectionFeedback(
-            user_id=user.id,
-            folder_name=folder_name,
-            section_index=req.section_index,
-            section_title=req.section_title,
-            feedback_json=json.dumps(feedback),
-        )
-        db.add(fb_row)
-        db.commit()
-        return {"feedback": feedback}
-    finally:
-        db.close()
-
-
-@app.get("/api/folders/{folder_name}/all-feedback")
-def get_all_feedback(folder_name: str, user: User = Depends(get_current_user)):
-    """Get feedback for all completed sections."""
-    db = SessionLocal()
-    try:
-        rows = (
-            db.query(SectionFeedback)
-            .filter(
-                SectionFeedback.user_id == user.id,
-                SectionFeedback.folder_name == folder_name,
-            )
-            .order_by(SectionFeedback.section_index.asc())
-            .all()
-        )
-        return {
-            "sections": [
-                {
-                    "section_index": r.section_index,
-                    "section_title": r.section_title,
-                    "feedback": json.loads(r.feedback_json),
-                }
-                for r in rows
-            ]
-        }
-    finally:
-        db.close()
-
-
-class ReviewRequest(BaseModel):
-    up_to_section: int
-
-
-@app.post("/api/folders/{folder_name}/review")
-def generate_review(folder_name: str, req: ReviewRequest, user: User = Depends(get_current_user)):
-    """Generate a cumulative review covering all sections up to the given index."""
-    db = SessionLocal()
-    try:
-        feedbacks = (
-            db.query(SectionFeedback)
-            .filter(
-                SectionFeedback.user_id == user.id,
-                SectionFeedback.folder_name == folder_name,
-                SectionFeedback.section_index <= req.up_to_section,
-            )
-            .order_by(SectionFeedback.section_index.asc())
-            .all()
-        )
-        from database import CourseOutline
-        outline = db.query(CourseOutline).filter(
-            CourseOutline.user_id == user.id,
-            CourseOutline.folder_name == folder_name,
-        ).first()
-        sections = json.loads(outline.outline_json).get("sections", []) if outline else []
-
-        review_context = ""
-        for fb in feedbacks:
-            fdata = json.loads(fb.feedback_json)
-            review_context += f"\n## Section {fb.section_index + 1}: {fb.section_title}\n"
-            if fdata.get("strengths"):
-                review_context += "Strengths: " + ", ".join(fdata["strengths"]) + "\n"
-            if fdata.get("weaknesses"):
-                review_context += "Needs work: " + ", ".join(fdata["weaknesses"]) + "\n"
-            if fdata.get("tips"):
-                review_context += "Tips: " + ", ".join(fdata["tips"]) + "\n"
-
-        section_titles = [s.get("title", f"Section {i+1}") for i, s in enumerate(sections[:req.up_to_section + 1])]
-
-        def event_stream():
-            try:
-                for token in _stream_review(review_context, section_titles, folder_name):
-                    yield f"data: {json.dumps({'token': token})}\n\n"
-                yield f"data: {json.dumps({'done': True})}\n\n"
-            except Exception as e:
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
-
-        return StreamingResponse(event_stream(), media_type="text/event-stream")
-    finally:
-        db.close()
-
-
-@app.get("/api/folders/{folder_name}/lesson-notes")
-def get_lesson_notes(folder_name: str, user: User = Depends(get_current_user)):
-    """Get the student's personal notes for a lesson."""
-    db = SessionLocal()
-    try:
-        notes = db.query(LessonNotes).filter(
-            LessonNotes.user_id == user.id,
-            LessonNotes.folder_name == folder_name,
-        ).first()
-        return {"content_html": notes.content_html if notes else ""}
-    finally:
-        db.close()
-
-
-class SaveNotesRequest(BaseModel):
-    content_html: str
-
-
-@app.put("/api/folders/{folder_name}/lesson-notes")
-def save_lesson_notes(folder_name: str, req: SaveNotesRequest, user: User = Depends(get_current_user)):
-    """Save the student's personal notes for a lesson."""
-    db = SessionLocal()
-    try:
-        notes = db.query(LessonNotes).filter(
-            LessonNotes.user_id == user.id,
-            LessonNotes.folder_name == folder_name,
-        ).first()
-        if notes:
-            notes.content_html = req.content_html
-            notes.updated_at = datetime.now(timezone.utc)
-        else:
-            notes = LessonNotes(
-                user_id=user.id,
-                folder_name=folder_name,
-                content_html=req.content_html,
-            )
-            db.add(notes)
-        db.commit()
-        return {"status": "saved"}
-    finally:
-        db.close()
-
-
-def _generate_feedback_with_llm(chat_transcript: str, section_title: str) -> dict:
-    """Use LLM to analyze a section's chat and produce feedback."""
-    system_prompt = (
-        "You are an educational analyst. Given a tutoring conversation between a student and tutor about "
-        f'"{section_title}", analyze the student\'s understanding.\n\n'
-        "Return a JSON object with exactly these keys:\n"
-        '- "strengths": list of 1-3 things the student understood well\n'
-        '- "weaknesses": list of 1-3 concepts the student struggled with or got wrong\n'
-        '- "tips": list of 1-3 specific study tips to improve\n\n'
-        "Be concise (1 sentence each). Focus on substance, not politeness.\n"
-        "Return ONLY valid JSON, no markdown fences."
-    )
-    try:
-        gemini_key = os.getenv("GEMINI_API_KEY", "")
-        if gemini_key:
-            from google import genai
-            client = genai.Client(api_key=gemini_key)
-            response = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=chat_transcript[:30000],
-                config={
-                    "system_instruction": system_prompt,
-                    "max_output_tokens": 1024,
-                    "temperature": 0.2,
-                },
-            )
-            text = ""
-            if response.candidates and response.candidates[0].content:
-                for part in (response.candidates[0].content.parts or []):
-                    if hasattr(part, "text") and part.text:
-                        text += part.text
-            if text:
-                cleaned = text.strip().strip("`").strip()
-                if cleaned.startswith("json"):
-                    cleaned = cleaned[4:].strip()
-                return json.loads(cleaned)
-    except Exception as e:
-        print(f"[feedback] LLM error: {e}")
-
-    return {"strengths": ["Completed the section"], "weaknesses": [], "tips": ["Review the material again before exams"]}
-
-
-def _stream_review(feedback_context: str, section_titles: list, folder_name: str):
-    """Stream a cumulative review using Gemini."""
-    system_prompt = (
-        "You are Pedro, a friendly Socratic tutor. The student wants to review what they've learned.\n"
-        f"Course: {folder_name}\n"
-        f"Sections covered: {', '.join(section_titles)}\n\n"
-        "Based on the feedback below, create a comprehensive but conversational review:\n"
-        "1. Briefly recap the key concepts from each section\n"
-        "2. Highlight areas the student was strong in\n"
-        "3. Focus extra attention on areas they struggled with\n"
-        "4. Ask 2-3 quick review questions to test their understanding\n\n"
-        "Keep it encouraging, concise, and focused on what matters most."
-    )
-    user_text = f"Here is the feedback from each section:\n{feedback_context}\n\nPlease give me a review."
-
-    gemini_key = os.getenv("GEMINI_API_KEY", "")
-    if gemini_key:
-        from google import genai
-        client = genai.Client(api_key=gemini_key)
-        for chunk in client.models.generate_content_stream(
-            model="gemini-2.0-flash",
-            contents=user_text,
-            config={
-                "system_instruction": system_prompt,
-                "max_output_tokens": 4096,
-                "temperature": 0.7,
-            },
-        ):
-            if chunk.text:
-                yield chunk.text
-    else:
-        from openai import OpenAI
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
-        stream = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_text},
-            ],
-            max_tokens=4096,
-            temperature=0.7,
-            stream=True,
-        )
-        for chunk in stream:
-            delta = chunk.choices[0].delta
-            if delta and delta.content:
-                yield delta.content
-
-
 @app.post("/api/notebooks/save")
 def save_notebook(notebook: dict, user: User = Depends(get_current_user)):
     """Save a generated notebook to the user's account."""
@@ -2069,7 +1739,6 @@ class ChatSendRequest(BaseModel):
     context_type: str = "global"  # "notebook", "global", "session"
     context_id: Optional[str] = None
     notebook_ids: Optional[list[str]] = None
-    section_index: Optional[int] = None
 
 
 @app.post("/api/chat/send")
@@ -2128,7 +1797,6 @@ def chat_stream(req: ChatSendRequest, user: User = Depends(get_current_user)):
                 context_type=req.context_type,
                 context_id=req.context_id,
                 notebook_ids=req.notebook_ids,
-                section_index=req.section_index,
             ):
                 if token is not None:
                     yield f"data: {json.dumps({'token': token})}\n\n"
