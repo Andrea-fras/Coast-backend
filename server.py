@@ -1138,36 +1138,44 @@ async def upload_folder_source(
         page_count = 0
         source_type = ext.lstrip(".")
 
-        if ext == ".pptx":
-            from extractor import extract_content_from_pptx
-            pages = extract_content_from_pptx(str(tmp_path))
-            page_count = len(pages)
-            raw_text = "\n\n".join(p.get("text", "") for p in pages if p.get("text"))
-        elif ext == ".pdf":
-            pages = None
-            try:
-                from extractor import extract_content_from_pdf
-                pages = extract_content_from_pdf(str(tmp_path))
-            except Exception:
-                import traceback; traceback.print_exc()
-            if not pages:
+        import asyncio
+
+        def _extract_sync():
+            """Run heavy extraction off the event loop."""
+            if ext == ".pptx":
+                from extractor import extract_content_from_pptx
+                return extract_content_from_pptx(str(tmp_path))
+            elif ext == ".pdf":
+                try:
+                    from extractor import extract_content_from_pdf
+                    result = extract_content_from_pdf(str(tmp_path))
+                    if result:
+                        return result
+                except Exception:
+                    import traceback; traceback.print_exc()
                 try:
                     import pdfplumber
+                    pages = []
                     with pdfplumber.open(str(tmp_path)) as pdf:
-                        pages = []
                         for i, pg in enumerate(pdf.pages):
                             txt = pg.extract_text() or ""
                             pages.append({"slide_number": i + 1, "text": txt, "images": []})
+                    return pages if pages else None
                 except Exception:
                     import traceback; traceback.print_exc()
-            if pages:
-                page_count = len(pages)
-                raw_text = "\n\n".join(p.get("text", "") for p in pages if p.get("text"))
-            else:
-                return JSONResponse(status_code=400, content={"detail": "Could not extract text from PDF"},
-                                    headers=_cors_headers)
-        else:
+                return None
+            return None
+
+        pages = await asyncio.to_thread(_extract_sync)
+
+        if ext not in (".pdf", ".pptx"):
             return JSONResponse(status_code=400, content={"detail": "Image files must be uploaded via the full notebook pipeline"},
+                                headers=_cors_headers)
+        if pages:
+            page_count = len(pages)
+            raw_text = "\n\n".join(p.get("text", "") for p in pages if p.get("text"))
+        else:
+            return JSONResponse(status_code=400, content={"detail": "Could not extract text from this file"},
                                 headers=_cors_headers)
 
         if not raw_text.strip():
