@@ -1140,33 +1140,30 @@ async def upload_folder_source(
 
         import asyncio
 
-        def _extract_sync():
-            """Run heavy extraction off the event loop."""
+        def _extract_text_only():
+            """Lightweight text extraction — no image loading to save memory."""
             if ext == ".pptx":
-                from extractor import extract_content_from_pptx
-                return extract_content_from_pptx(str(tmp_path))
+                from pptx import Presentation as PptxPres
+                prs = PptxPres(str(tmp_path))
+                pages = []
+                for i, slide in enumerate(prs.slides):
+                    texts = []
+                    for shape in slide.shapes:
+                        if shape.has_text_frame:
+                            texts.append(shape.text_frame.text)
+                    pages.append({"slide_number": i + 1, "text": "\n".join(texts), "images": []})
+                return pages
             elif ext == ".pdf":
-                try:
-                    from extractor import extract_content_from_pdf
-                    result = extract_content_from_pdf(str(tmp_path))
-                    if result:
-                        return result
-                except Exception:
-                    import traceback; traceback.print_exc()
-                try:
-                    import pdfplumber
-                    pages = []
-                    with pdfplumber.open(str(tmp_path)) as pdf:
-                        for i, pg in enumerate(pdf.pages):
-                            txt = pg.extract_text() or ""
-                            pages.append({"slide_number": i + 1, "text": txt, "images": []})
-                    return pages if pages else None
-                except Exception:
-                    import traceback; traceback.print_exc()
-                return None
+                import pdfplumber
+                pages = []
+                with pdfplumber.open(str(tmp_path)) as pdf:
+                    for i, pg in enumerate(pdf.pages):
+                        txt = pg.extract_text() or ""
+                        pages.append({"slide_number": i + 1, "text": txt, "images": []})
+                return pages if pages else None
             return None
 
-        pages = await asyncio.to_thread(_extract_sync)
+        pages = await asyncio.to_thread(_extract_text_only)
 
         if ext not in (".pdf", ".pptx"):
             return JSONResponse(status_code=400, content={"detail": "Image files must be uploaded via the full notebook pipeline"},
