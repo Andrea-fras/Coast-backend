@@ -2384,7 +2384,7 @@ def admin_analytics(user: User = Depends(get_current_user)):
     if user.email != ADMIN_EMAIL:
         raise HTTPException(403, "Admin access only")
 
-    from sqlalchemy import func, cast, Date
+    from sqlalchemy import func
     from datetime import timedelta
     from database import CourseOutline
 
@@ -2392,6 +2392,7 @@ def admin_analytics(user: User = Depends(get_current_user)):
     try:
         now = datetime.now(timezone.utc)
         thirty_days_ago = now - timedelta(days=30)
+        cutoff_str = thirty_days_ago.strftime("%Y-%m-%d")
 
         total_users = db.query(User).count()
         total_messages = db.query(ChatMessage).count()
@@ -2427,29 +2428,25 @@ def admin_analytics(user: User = Depends(get_current_user)):
         else:
             avg_sections = 0.0
 
+        day_col = func.substr(User.created_at, 1, 10)
         signups_raw = (
-            db.query(
-                cast(User.created_at, Date).label("day"),
-                func.count(User.id).label("cnt"),
-            )
-            .filter(User.created_at >= thirty_days_ago)
-            .group_by(cast(User.created_at, Date))
-            .order_by(cast(User.created_at, Date))
+            db.query(day_col.label("day"), func.count(User.id).label("cnt"))
+            .filter(func.substr(User.created_at, 1, 10) >= cutoff_str)
+            .group_by(day_col)
+            .order_by(day_col)
             .all()
         )
-        signups_per_day = [{"date": str(r.day), "count": r.cnt} for r in signups_raw]
+        signups_per_day = [{"date": r.day, "count": r.cnt} for r in signups_raw]
 
+        msg_day_col = func.substr(ChatMessage.created_at, 1, 10)
         messages_raw = (
-            db.query(
-                cast(ChatMessage.created_at, Date).label("day"),
-                func.count(ChatMessage.id).label("cnt"),
-            )
-            .filter(ChatMessage.created_at >= thirty_days_ago)
-            .group_by(cast(ChatMessage.created_at, Date))
-            .order_by(cast(ChatMessage.created_at, Date))
+            db.query(msg_day_col.label("day"), func.count(ChatMessage.id).label("cnt"))
+            .filter(func.substr(ChatMessage.created_at, 1, 10) >= cutoff_str)
+            .group_by(msg_day_col)
+            .order_by(msg_day_col)
             .all()
         )
-        messages_per_day = [{"date": str(r.day), "count": r.cnt} for r in messages_raw]
+        messages_per_day = [{"date": r.day, "count": r.cnt} for r in messages_raw]
 
         total_feedback = db.query(UserFeedback).count()
 
