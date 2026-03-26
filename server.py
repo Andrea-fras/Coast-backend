@@ -22,6 +22,7 @@ load_dotenv()
 
 from auth import create_access_token, decode_access_token, hash_password, verify_password
 from database import (
+    ActivityEvent,
     ChatMessage,
     FolderSource,
     LessonNotes,
@@ -2374,6 +2375,37 @@ def export_cohort(user: User = Depends(get_current_user)):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# ACTIVITY TRACKING
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class ActivityRequest(BaseModel):
+    feature: str
+    duration_ms: int = 0
+    action: str = "session"
+
+
+@app.post("/api/activity")
+def log_activity(body: ActivityRequest, user: User = Depends(get_current_user)):
+    """Log a feature usage event (time spent on a feature session)."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    db = SessionLocal()
+    try:
+        ev = ActivityEvent(
+            user_id=user.id,
+            feature=body.feature,
+            action=body.action,
+            duration_ms=max(body.duration_ms, 0),
+            event_date=today,
+        )
+        db.add(ev)
+        db.commit()
+        return {"ok": True}
+    finally:
+        db.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # ANALYTICS
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -2450,6 +2482,86 @@ def admin_analytics(user: User = Depends(get_current_user)):
 
         total_feedback = db.query(UserFeedback).count()
 
+        # ── Time on platform ──
+        total_duration_ms = (
+            db.query(func.coalesce(func.sum(ActivityEvent.duration_ms), 0)).scalar() or 0
+        )
+        total_hours = round(total_duration_ms / 3_600_000, 1)
+        avg_hours_per_user = round(total_hours / max(total_users, 1), 2)
+
+        feature_time_raw = (
+            db.query(ActivityEvent.feature, func.sum(ActivityEvent.duration_ms).label("ms"))
+            .group_by(ActivityEvent.feature)
+            .all()
+        )
+        time_per_feature = {r.feature: round((r.ms or 0) / 3_600_000, 2) for r in feature_time_raw}
+
+        # ── DAU / WAU / MAU ──
+        today_str = now.strftime("%Y-%m-%d")
+        seven_days_ago_str = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+
+        dau = (
+            db.query(ActivityEvent.user_id)
+            .filter(ActivityEvent.event_date == today_str)
+            .distinct()
+            .count()
+        )
+        wau = (
+            db.query(ActivityEvent.user_id)
+            .filter(ActivityEvent.event_date >= seven_days_ago_str)
+            .distinct()
+            .count()
+        )
+        mau = (
+            db.query(ActivityEvent.user_id)
+            .filter(ActivityEvent.event_date >= cutoff_str)
+            .distinct()
+            .count()
+        )
+
+        dau_trend_raw = (
+            db.query(
+                ActivityEvent.event_date.label("day"),
+                func.count(func.distinct(ActivityEvent.user_id)).label("cnt"),
+            )
+            .filter(ActivityEvent.event_date >= cutoff_str)
+            .group_by(ActivityEvent.event_date)
+            .order_by(ActivityEvent.event_date)
+            .all()
+        )
+        dau_trend = [{"date": r.day, "count": r.cnt} for r in dau_trend_raw]
+
+        # ── Retention ──
+        all_users = db.query(User.id, func.substr(User.created_at, 1, 10).label("signup")).all()
+        user_activity_dates = {}
+        activity_rows = (
+            db.query(ActivityEvent.user_id, ActivityEvent.event_date)
+            .distinct()
+            .all()
+        )
+        for uid, ed in activity_rows:
+            user_activity_dates.setdefault(uid, set()).add(ed)
+
+        retention = {"day_1": 0.0, "day_7": 0.0, "day_30": 0.0}
+        if all_users:
+            for offset_days, key in [(1, "day_1"), (7, "day_7"), (30, "day_30")]:
+                eligible = 0
+                returned = 0
+                for uid, signup in all_users:
+                    if not signup:
+                        continue
+                    try:
+                        signup_dt = datetime.strptime(signup, "%Y-%m-%d")
+                    except (ValueError, TypeError):
+                        continue
+                    target = (signup_dt + timedelta(days=offset_days)).strftime("%Y-%m-%d")
+                    if target > today_str:
+                        continue
+                    eligible += 1
+                    if uid in user_activity_dates and target in user_activity_dates[uid]:
+                        returned += 1
+                retention[key] = round(returned / max(eligible, 1) * 100, 1)
+
         return {
             "headline": {
                 "total_users": total_users,
@@ -2471,6 +2583,18 @@ def admin_analytics(user: User = Depends(get_current_user)):
                 "signups_per_day": signups_per_day,
                 "messages_per_day": messages_per_day,
             },
+            "time": {
+                "total_hours": total_hours,
+                "avg_hours_per_user": avg_hours_per_user,
+                "per_feature": time_per_feature,
+            },
+            "active_users": {
+                "dau": dau,
+                "wau": wau,
+                "mau": mau,
+                "dau_trend": dau_trend,
+            },
+            "retention": retention,
         }
     finally:
         db.close()

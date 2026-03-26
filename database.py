@@ -271,6 +271,19 @@ class UserFeedback(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class ActivityEvent(Base):
+    """Lightweight event log — one row per feature session (open-to-close)."""
+    __tablename__ = "activity_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    feature = Column(String(50), nullable=False)
+    action = Column(String(30), default="session")
+    duration_ms = Column(Integer, default=0)
+    event_date = Column(String(10), nullable=False, index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class CourseOutline(Base):
     """Structured lesson outline generated from folder sources."""
     __tablename__ = "course_outlines"
