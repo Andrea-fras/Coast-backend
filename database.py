@@ -259,6 +259,18 @@ class LessonNotes(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class UserFeedback(Base):
+    """User-submitted feedback (bugs, suggestions) for the platform."""
+    __tablename__ = "user_feedback"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    category = Column(String(50), default="other")
+    message = Column(Text, nullable=False)
+    page = Column(String(100), default="")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class CourseOutline(Base):
     """Structured lesson outline generated from folder sources."""
     __tablename__ = "course_outlines"

@@ -35,6 +35,7 @@ from database import (
     StudyFolder,
     TutorMemo,
     User,
+    UserFeedback,
     init_db,
     load_papers_from_json,
 )
@@ -2235,6 +2236,25 @@ def admin_overview(user: User = Depends(get_current_user)):
                 SavedNotebook.user_id == u.id, SavedNotebook.is_premade == False
             ).count()
 
+            # Folders / lessons / sections
+            from database import CourseOutline
+            folder_count = db.query(StudyFolder).filter(StudyFolder.user_id == u.id).count()
+            user_outlines = db.query(CourseOutline).filter(CourseOutline.user_id == u.id).all()
+            lessons_started = len(user_outlines)
+            sections_done = sum(o.current_section for o in user_outlines)
+
+            last_msg = (
+                db.query(ChatMessage)
+                .filter(ChatMessage.user_id == u.id)
+                .order_by(ChatMessage.created_at.desc())
+                .first()
+            )
+            last_active = (
+                last_msg.created_at.isoformat()
+                if last_msg and last_msg.created_at
+                else (u.created_at.isoformat() if u.created_at else None)
+            )
+
             result.append({
                 "id": u.id,
                 "name": u.name,
@@ -2251,6 +2271,10 @@ def admin_overview(user: User = Depends(get_current_user)):
                 "memo_updated_at": memo.updated_at.isoformat() if memo and memo.updated_at else None,
                 "chat_messages": msg_count,
                 "notebooks_generated": nb_count,
+                "folders_created": folder_count,
+                "lessons_started": lessons_started,
+                "sections_completed": sections_done,
+                "last_active": last_active,
             })
 
         return {"users": result, "total_users": len(result)}
@@ -2341,6 +2365,176 @@ def export_cohort(user: User = Depends(get_current_user)):
             "exported_at": datetime.now(timezone.utc).isoformat(),
             "total_students": len(export),
             "students": export,
+        }
+    finally:
+        db.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ANALYTICS
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@app.get("/api/admin/analytics")
+def admin_analytics(user: User = Depends(get_current_user)):
+    """Platform-wide aggregate stats + growth data for the pitch deck."""
+    if user.email != ADMIN_EMAIL:
+        raise HTTPException(403, "Admin access only")
+
+    from sqlalchemy import func, cast, Date
+    from datetime import timedelta
+    from database import CourseOutline
+
+    db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        thirty_days_ago = now - timedelta(days=30)
+
+        total_users = db.query(User).count()
+        total_messages = db.query(ChatMessage).count()
+        total_notebooks = db.query(SavedNotebook).filter(SavedNotebook.is_premade == False).count()
+        total_folders = db.query(StudyFolder).count()
+        total_lessons_started = db.query(CourseOutline).count()
+        total_sections_completed = (
+            db.query(func.coalesce(func.sum(CourseOutline.current_section), 0)).scalar() or 0
+        )
+
+        avg_messages_per_user = round(total_messages / max(total_users, 1), 1)
+        avg_notebooks_per_user = round(total_notebooks / max(total_users, 1), 1)
+
+        users_with_lesson = db.query(CourseOutline.user_id).distinct().count()
+        pct_started_lesson = round(users_with_lesson / max(total_users, 1) * 100, 1)
+
+        users_completed = (
+            db.query(CourseOutline.user_id)
+            .filter(CourseOutline.current_section >= CourseOutline.total_sections)
+            .filter(CourseOutline.total_sections > 0)
+            .distinct()
+            .count()
+        )
+        pct_completed_lesson = round(users_completed / max(total_users, 1) * 100, 1)
+
+        lessons_with_sections = (
+            db.query(CourseOutline).filter(CourseOutline.total_sections > 0).all()
+        )
+        if lessons_with_sections:
+            avg_sections = round(
+                sum(o.current_section for o in lessons_with_sections) / len(lessons_with_sections), 1
+            )
+        else:
+            avg_sections = 0.0
+
+        signups_raw = (
+            db.query(
+                cast(User.created_at, Date).label("day"),
+                func.count(User.id).label("cnt"),
+            )
+            .filter(User.created_at >= thirty_days_ago)
+            .group_by(cast(User.created_at, Date))
+            .order_by(cast(User.created_at, Date))
+            .all()
+        )
+        signups_per_day = [{"date": str(r.day), "count": r.cnt} for r in signups_raw]
+
+        messages_raw = (
+            db.query(
+                cast(ChatMessage.created_at, Date).label("day"),
+                func.count(ChatMessage.id).label("cnt"),
+            )
+            .filter(ChatMessage.created_at >= thirty_days_ago)
+            .group_by(cast(ChatMessage.created_at, Date))
+            .order_by(cast(ChatMessage.created_at, Date))
+            .all()
+        )
+        messages_per_day = [{"date": str(r.day), "count": r.cnt} for r in messages_raw]
+
+        total_feedback = db.query(UserFeedback).count()
+
+        return {
+            "headline": {
+                "total_users": total_users,
+                "total_messages": total_messages,
+                "total_notebooks": total_notebooks,
+                "total_folders": total_folders,
+                "total_lessons_started": total_lessons_started,
+                "total_sections_completed": int(total_sections_completed),
+                "total_feedback": total_feedback,
+            },
+            "engagement": {
+                "avg_messages_per_user": avg_messages_per_user,
+                "avg_notebooks_per_user": avg_notebooks_per_user,
+                "pct_started_lesson": pct_started_lesson,
+                "pct_completed_lesson": pct_completed_lesson,
+                "avg_sections_per_lesson": avg_sections,
+            },
+            "growth": {
+                "signups_per_day": signups_per_day,
+                "messages_per_day": messages_per_day,
+            },
+        }
+    finally:
+        db.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# FEEDBACK
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class FeedbackRequest(BaseModel):
+    category: str = "other"
+    message: str
+    page: str = ""
+
+
+@app.post("/api/feedback")
+def submit_feedback(body: FeedbackRequest, user: User = Depends(get_current_user)):
+    """Any authenticated user can submit feedback."""
+    if not body.message.strip():
+        raise HTTPException(400, "Message cannot be empty")
+
+    db = SessionLocal()
+    try:
+        fb = UserFeedback(
+            user_id=user.id,
+            category=body.category,
+            message=body.message.strip(),
+            page=body.page,
+        )
+        db.add(fb)
+        db.commit()
+        return {"ok": True, "id": fb.id}
+    finally:
+        db.close()
+
+
+@app.get("/api/admin/feedback")
+def admin_feedback(user: User = Depends(get_current_user)):
+    """Admin-only: return all user feedback with user info."""
+    if user.email != ADMIN_EMAIL:
+        raise HTTPException(403, "Admin access only")
+
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(UserFeedback, User)
+            .join(User, UserFeedback.user_id == User.id)
+            .order_by(UserFeedback.created_at.desc())
+            .all()
+        )
+        return {
+            "feedback": [
+                {
+                    "id": fb.id,
+                    "user_name": u.name,
+                    "user_email": u.email,
+                    "category": fb.category,
+                    "message": fb.message,
+                    "page": fb.page,
+                    "created_at": fb.created_at.isoformat() if fb.created_at else None,
+                }
+                for fb, u in rows
+            ]
         }
     finally:
         db.close()
