@@ -2496,51 +2496,40 @@ def admin_analytics(user: User = Depends(get_current_user)):
         )
         time_per_feature = {r.feature: round((r.ms or 0) / 3_600_000, 2) for r in feature_time_raw}
 
-        # ── DAU / WAU / MAU ──
+        # ── Build unified user-activity-date map from all sources ──
         today_str = now.strftime("%Y-%m-%d")
         seven_days_ago_str = (now - timedelta(days=7)).strftime("%Y-%m-%d")
 
-        dau = (
-            db.query(ActivityEvent.user_id)
-            .filter(ActivityEvent.event_date == today_str)
-            .distinct()
-            .count()
-        )
-        wau = (
-            db.query(ActivityEvent.user_id)
-            .filter(ActivityEvent.event_date >= seven_days_ago_str)
-            .distinct()
-            .count()
-        )
-        mau = (
-            db.query(ActivityEvent.user_id)
-            .filter(ActivityEvent.event_date >= cutoff_str)
-            .distinct()
-            .count()
-        )
+        user_activity_dates: dict[int, set[str]] = {}
 
-        dau_trend_raw = (
-            db.query(
-                ActivityEvent.event_date.label("day"),
-                func.count(func.distinct(ActivityEvent.user_id)).label("cnt"),
-            )
-            .filter(ActivityEvent.event_date >= cutoff_str)
-            .group_by(ActivityEvent.event_date)
-            .order_by(ActivityEvent.event_date)
-            .all()
+        for uid, ed in db.query(ActivityEvent.user_id, ActivityEvent.event_date).distinct().all():
+            user_activity_dates.setdefault(uid, set()).add(ed)
+
+        chat_day = func.substr(ChatMessage.created_at, 1, 10)
+        for uid, ed in db.query(ChatMessage.user_id, chat_day.label("d")).distinct().all():
+            if ed:
+                user_activity_dates.setdefault(uid, set()).add(ed)
+
+        # ── DAU / WAU / MAU ──
+        dau_set = {uid for uid, dates in user_activity_dates.items() if today_str in dates}
+        wau_set = {uid for uid, dates in user_activity_dates.items() if any(d >= seven_days_ago_str for d in dates)}
+        mau_set = {uid for uid, dates in user_activity_dates.items() if any(d >= cutoff_str for d in dates)}
+        dau = len(dau_set)
+        wau = len(wau_set)
+        mau = len(mau_set)
+
+        all_active_dates: dict[str, set[int]] = {}
+        for uid, dates in user_activity_dates.items():
+            for d in dates:
+                if d >= cutoff_str:
+                    all_active_dates.setdefault(d, set()).add(uid)
+        dau_trend = sorted(
+            [{"date": d, "count": len(uids)} for d, uids in all_active_dates.items()],
+            key=lambda x: x["date"],
         )
-        dau_trend = [{"date": r.day, "count": r.cnt} for r in dau_trend_raw]
 
         # ── Retention ──
         all_users = db.query(User.id, func.substr(User.created_at, 1, 10).label("signup")).all()
-        user_activity_dates = {}
-        activity_rows = (
-            db.query(ActivityEvent.user_id, ActivityEvent.event_date)
-            .distinct()
-            .all()
-        )
-        for uid, ed in activity_rows:
-            user_activity_dates.setdefault(uid, set()).add(ed)
 
         retention = {"day_1": 0.0, "day_7": 0.0, "day_30": 0.0}
         if all_users:
