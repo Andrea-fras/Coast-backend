@@ -161,6 +161,9 @@ RATE_LIMIT_CHAT_MESSAGES = 500      # max Pedro messages per user per week
 RATE_LIMIT_NOTEBOOKS = 20           # max notebook uploads per user
 RATE_LIMIT_WINDOW_DAYS = 7          # rolling window for chat limit
 
+_live_users: dict[int, dict] = {}
+HEARTBEAT_TIMEOUT = 60
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # STARTUP
@@ -2538,6 +2541,49 @@ def admin_feedback(user: User = Depends(get_current_user)):
         }
     finally:
         db.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# LIVE PRESENCE
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@app.post("/api/heartbeat")
+def heartbeat(user: User = Depends(get_current_user)):
+    """Called every ~30s by each active browser tab."""
+    _live_users[user.id] = {
+        "name": user.name,
+        "email": user.email,
+        "last_seen": datetime.now(timezone.utc),
+    }
+    return {"ok": True}
+
+
+@app.get("/api/admin/live-users")
+def admin_live_users(user: User = Depends(get_current_user)):
+    """Return currently active users (heartbeat within last 60s). Admin only."""
+    if user.email != ADMIN_EMAIL:
+        raise HTTPException(403, "Admin access only")
+
+    now = datetime.now(timezone.utc)
+    active = []
+    stale_ids = []
+    for uid, info in _live_users.items():
+        age = (now - info["last_seen"]).total_seconds()
+        if age <= HEARTBEAT_TIMEOUT:
+            active.append({
+                "user_id": uid,
+                "name": info["name"],
+                "email": info["email"],
+                "seconds_ago": int(age),
+            })
+        else:
+            stale_ids.append(uid)
+
+    for uid in stale_ids:
+        del _live_users[uid]
+
+    return {"count": len(active), "users": active}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
