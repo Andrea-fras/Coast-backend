@@ -1105,6 +1105,19 @@ def rename_folder(folder_name: str, req: RenameFolderRequest, user: User = Depen
         db.query(SavedNotebook).filter(
             SavedNotebook.user_id == user.id, SavedNotebook.folder == folder_name
         ).update({SavedNotebook.folder: new_name})
+        db.query(FolderSource).filter(
+            FolderSource.user_id == user.id, FolderSource.folder_name == folder_name
+        ).update({FolderSource.folder_name: new_name})
+        db.query(SourceImage).filter(
+            SourceImage.user_id == user.id, SourceImage.folder_name == folder_name
+        ).update({SourceImage.folder_name: new_name})
+        db.query(LessonNotes).filter(
+            LessonNotes.user_id == user.id, LessonNotes.folder_name == folder_name
+        ).update({LessonNotes.folder_name: new_name})
+        from database import CourseOutline
+        db.query(CourseOutline).filter(
+            CourseOutline.user_id == user.id, CourseOutline.folder_name == folder_name
+        ).update({CourseOutline.folder_name: new_name})
         db.commit()
         return {"status": "renamed", "old_name": folder_name, "new_name": new_name}
     finally:
