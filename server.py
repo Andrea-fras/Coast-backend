@@ -1076,6 +1076,41 @@ def create_folder(req: CreateFolderRequest, user: User = Depends(get_current_use
         db.close()
 
 
+class RenameFolderRequest(BaseModel):
+    new_name: str
+
+
+@app.put("/api/notebooks/folders/{folder_name}/rename")
+def rename_folder(folder_name: str, req: RenameFolderRequest, user: User = Depends(get_current_user)):
+    """Rename a folder and update all notebooks that reference it."""
+    new_name = req.new_name.strip()
+    if not new_name:
+        raise HTTPException(400, "Name cannot be empty")
+
+    db = SessionLocal()
+    try:
+        folder = db.query(StudyFolder).filter(
+            StudyFolder.user_id == user.id, StudyFolder.name == folder_name
+        ).first()
+        if not folder:
+            raise HTTPException(404, "Folder not found")
+
+        existing = db.query(StudyFolder).filter(
+            StudyFolder.user_id == user.id, StudyFolder.name == new_name
+        ).first()
+        if existing:
+            raise HTTPException(409, "A folder with that name already exists")
+
+        folder.name = new_name
+        db.query(SavedNotebook).filter(
+            SavedNotebook.user_id == user.id, SavedNotebook.folder == folder_name
+        ).update({SavedNotebook.folder: new_name})
+        db.commit()
+        return {"status": "renamed", "old_name": folder_name, "new_name": new_name}
+    finally:
+        db.close()
+
+
 @app.delete("/api/notebooks/folders/{folder_name}")
 def delete_folder(folder_name: str, user: User = Depends(get_current_user)):
     """Delete a folder and move its notebooks back to root."""
