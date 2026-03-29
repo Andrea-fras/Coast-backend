@@ -212,7 +212,11 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> User:
     return user
 
 
-ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "andreaf.fraschetti@gmail.com")
+ADMIN_EMAILS = {
+    "andreaf.fraschetti@gmail.com",
+    "rio.mauss@gmail.com",
+}
+
 
 
 def _get_user_usage(user_id: int):
@@ -222,7 +226,7 @@ def _get_user_usage(user_id: int):
     db = SessionLocal()
     try:
         admin = db.query(User).filter(User.id == user_id).first()
-        if admin and admin.email == ADMIN_EMAIL:
+        if admin and admin.email in ADMIN_EMAILS:
             return {
                 "chat_messages_used": 0,
                 "chat_messages_limit": 999999,
@@ -2243,7 +2247,7 @@ async def generate_notes(
 @app.get("/api/admin/overview")
 def admin_overview(user: User = Depends(get_current_user)):
     """Return all users with stats, skill profiles, and tutor memos. Admin only."""
-    if user.email != ADMIN_EMAIL:
+    if user.email not in ADMIN_EMAILS:
         raise HTTPException(403, "Admin access only")
 
     from datetime import timedelta
@@ -2337,7 +2341,7 @@ def admin_overview(user: User = Depends(get_current_user)):
 @app.get("/api/admin/export-cohort")
 def export_cohort(user: User = Depends(get_current_user)):
     """Full data export for the current cohort — quiz answers, chat logs, skill profiles."""
-    if user.email != ADMIN_EMAIL:
+    if user.email not in ADMIN_EMAILS:
         raise HTTPException(403, "Admin access only")
 
     db = SessionLocal()
@@ -2346,7 +2350,7 @@ def export_cohort(user: User = Depends(get_current_user)):
         export = []
 
         for u in users:
-            if u.email == ADMIN_EMAIL:
+            if u.email in ADMIN_EMAILS:
                 continue
 
             sessions = db.query(QuizSession).filter(QuizSession.user_id == u.id).all()
@@ -2461,7 +2465,7 @@ def log_activity(body: ActivityRequest, user: User = Depends(get_current_user)):
 @app.get("/api/admin/analytics")
 def admin_analytics(user: User = Depends(get_current_user)):
     """Platform-wide aggregate stats + growth data for the pitch deck."""
-    if user.email != ADMIN_EMAIL:
+    if user.email not in ADMIN_EMAILS:
         raise HTTPException(403, "Admin access only")
 
     from sqlalchemy import func
@@ -2672,7 +2676,7 @@ def submit_feedback(body: FeedbackRequest, user: User = Depends(get_current_user
 @app.get("/api/admin/feedback")
 def admin_feedback(user: User = Depends(get_current_user)):
     """Admin-only: return all user feedback with user info."""
-    if user.email != ADMIN_EMAIL:
+    if user.email not in ADMIN_EMAILS:
         raise HTTPException(403, "Admin access only")
 
     db = SessionLocal()
@@ -2720,7 +2724,7 @@ def heartbeat(user: User = Depends(get_current_user)):
 @app.get("/api/admin/live-users")
 def admin_live_users(user: User = Depends(get_current_user)):
     """Return currently active users (heartbeat within last 60s). Admin only."""
-    if user.email != ADMIN_EMAIL:
+    if user.email not in ADMIN_EMAILS:
         raise HTTPException(403, "Admin access only")
 
     now = datetime.now(timezone.utc)
