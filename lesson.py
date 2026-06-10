@@ -4,15 +4,25 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import traceback
+from collections import defaultdict
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from database import CourseOutline, FolderSource, SavedNotebook, SessionLocal, SourceImage
-import rag
+from database import (
+    ChatMessage,
+    CourseOutline,
+    FolderSource,
+    SavedNotebook,
+    SectionRewardClaim,
+    SectionVerification,
+    SessionLocal,
+    SourceImage,
+)
 
 
 def generate_outline(user_id: int, folder_name: str, source_user_id: int | None = None, structure: dict | None = None) -> dict:
@@ -47,45 +57,109 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
             return {"error": "No sources in this folder yet."}
 
         total_sources = len(notebooks) + len(raw_sources)
+        total_pages = sum(getattr(s, "page_count", 0) or 0 for s in raw_sources)
         total_budget = 80_000
-        per_source_budget = max(400, total_budget // max(total_sources, 1))
 
-        source_summaries = []
-        for nb in notebooks:
-            data = json.loads(nb.notebook_json)
-            title = data.get("title", "Untitled")
-            sections = data.get("sections") or []
-            sec_info = []
-            for s in sections[:16]:
-                sec_title = s.get("title", "")
-                content_preview = (s.get("content", "") or "")[:min(300, per_source_budget // 8)]
-                sec_info.append(f"  - {sec_title}: {content_preview}")
-            source_summaries.append(f'Source: "{title}"\nSections:\n' + "\n".join(sec_info))
-
-        for src in raw_sources:
-            text = src.raw_text or ""
-            if len(text) <= per_source_budget:
-                preview = text
-            else:
-                chunk = per_source_budget // 3
-                mid = len(text) // 2
-                preview = (
-                    text[:chunk]
-                    + "\n[...]\n"
-                    + text[mid - chunk // 2 : mid + chunk // 2]
-                    + "\n[...]\n"
-                    + text[-chunk:]
+        # Prefer Content OMA structured index when available.
+        sources_text = ""
+        outline_via_oma = False
+        oma_required = False
+        try:
+            import oma_provider
+            source_meta = [
+                {
+                    "source_id": s.source_id,
+                    "title": s.title,
+                    "page_count": s.page_count,
+                    "filename": s.filename or f"{s.source_id}.pdf",
+                }
+                for s in raw_sources
+            ]
+            pdf_sources = [
+                {
+                    "path": s.file_path,
+                    "source_id": s.source_id,
+                    "filename": s.filename or f"{s.source_id}.pdf",
+                    "page_count": s.page_count or 0,
+                }
+                for s in raw_sources
+                if getattr(s, "file_path", None) and str(s.file_path).lower().endswith(".pdf")
+            ]
+            oma_required = oma_provider.is_oma_enabled() and bool(pdf_sources)
+            if oma_required:
+                ready = oma_provider.ensure_oma_ready_for_outline(
+                    src_uid, folder_name,
+                    expected_pages=total_pages,
+                    pdf_sources=pdf_sources,
                 )
-            source_summaries.append(
-                f'Source: "{src.title}" (raw document, {src.page_count} pages)\n'
-                f'Content:\n{preview}'
+                if not ready:
+                    return {
+                        "error": (
+                            "Content OMA is still indexing your uploads. "
+                            "Please wait and try Generate Lesson again."
+                        ),
+                    }
+            oma_index = oma_provider.build_outline_context(
+                src_uid, folder_name,
+                source_meta=source_meta,
+                max_chars=total_budget,
             )
+            if oma_index:
+                sources_text = oma_index
+                outline_via_oma = True
+            elif oma_required:
+                return {
+                    "error": (
+                        "Content OMA could not build a course index from your uploads. "
+                        "Try re-uploading or wait a bit longer."
+                    ),
+                }
+        except Exception:
+            traceback.print_exc()
+            if oma_required:
+                return {"error": "Content OMA failed while preparing the lesson outline."}
 
-        sources_text = "\n\n".join(source_summaries)
-        if len(sources_text) > total_budget:
-            sources_text = sources_text[:total_budget] + "\n...[truncated]"
+        if not sources_text:
+            per_source_budget = max(400, total_budget // max(total_sources, 1))
+            source_summaries = []
+            for nb in notebooks:
+                data = json.loads(nb.notebook_json)
+                title = data.get("title", "Untitled")
+                sections = data.get("sections") or []
+                sec_info = []
+                for s in sections[:16]:
+                    sec_title = s.get("title", "")
+                    content_preview = (s.get("content", "") or "")[:min(300, per_source_budget // 8)]
+                    sec_info.append(f"  - {sec_title}: {content_preview}")
+                source_summaries.append(f'Source: "{title}"\nSections:\n' + "\n".join(sec_info))
 
-        max_sections = min(25, max(4, total_sources // 2 + 3))
+            for src in raw_sources:
+                text = src.raw_text or ""
+                if len(text) <= per_source_budget:
+                    preview = text
+                else:
+                    chunk = per_source_budget // 3
+                    mid = len(text) // 2
+                    preview = (
+                        text[:chunk]
+                        + "\n[...]\n"
+                        + text[mid - chunk // 2 : mid + chunk // 2]
+                        + "\n[...]\n"
+                        + text[-chunk:]
+                    )
+                source_summaries.append(
+                    f'Source: "{src.title}" (raw document, {src.page_count} pages)\n'
+                    f'Content:\n{preview}'
+                )
+
+            sources_text = "\n\n".join(source_summaries)
+            if len(sources_text) > total_budget:
+                sources_text = sources_text[:total_budget] + "\n...[truncated]"
+
+        if outline_via_oma and total_pages:
+            max_sections = min(40, max(6, total_pages // 8))
+        else:
+            max_sections = min(25, max(4, total_sources // 2 + 3))
 
         structure_block = ""
         if structure:
@@ -109,12 +183,26 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
                 + pedagogy_block
             )
 
+        oma_rules = ""
+        if outline_via_oma:
+            oma_rules = (
+                "\n\nThe source materials below are a Content OMA structured index: every page "
+                "with section titles, content types (definition, example, exercise, etc.), "
+                "and a concept map with prerequisites. Use this to:\n"
+                "- Create one section per major topic within each source; split any source "
+                "with 10+ pages into 2–3 sections aligned to its page groupings\n"
+                "- Order sections so prerequisites in the concept map come first\n"
+                "- Set key_topics from the concepts listed for each page group\n"
+                "- Put exact source titles (in quotes in the index) in source_notebooks\n"
+            )
+
         system = (
             "You are a course designer. Given the student's source materials, create a structured "
             "course outline that covers ALL the key topics across ALL sources in a logical learning sequence.\n\n"
             "CRITICAL: You MUST include content from EVERY source listed. Do NOT skip any sources — "
             "even those listed last. The student uploaded all of them and expects the course to cover "
             "all their material.\n"
+            + oma_rules
             + structure_block +
             "\n\nRules:\n"
             f"- Create 4-{max_sections} sections depending on the amount of material\n"
@@ -130,7 +218,11 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
             '"key_topics": ["...", "..."], "source_notebooks": ["..."], "estimated_minutes": 20}]'
         )
 
-        context = f"Folder: {folder_name}\nNumber of sources: {total_sources}\n\nSource materials:\n{sources_text}"
+        material_label = "Content OMA course index" if outline_via_oma else "Source materials"
+        context = (
+            f"Folder: {folder_name}\nNumber of sources: {total_sources}\n"
+            f"Total pages: {total_pages or 'unknown'}\n\n{material_label}:\n{sources_text}"
+        )
 
         outline_sections = _call_llm_for_outline(system, context)
         if not outline_sections:
@@ -168,6 +260,11 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
             "total_sections": len(outline_sections),
             "current_section": 0,
             "estimated_minutes": total_minutes,
+            "outline_source": "oma" if outline_via_oma else "raw",
+            "outline_note": (
+                None if outline_via_oma
+                else "OMA index not ready — used raw text. Try regenerating in a minute."
+            ),
         }
 
     except Exception:
@@ -249,8 +346,355 @@ def _parse_json_array(text: str) -> list[dict] | None:
     return None
 
 
-def get_lesson_state(user_id: int, folder_name: str) -> dict:
-    """Get current lesson state for a folder."""
+# Auto-generated lesson openers — not evidence the student started working.
+_SECTION_OPENER = re.compile(
+    r"^(i'?m ready to learn about|i'?d like to reach 100% mastery)\b",
+    re.I,
+)
+
+# Student saying "next" does not pass verification — only real answers do.
+_SKIP_OR_ADVANCE = re.compile(
+    r"^(next|skip|continue|move on|go on|done|finished|let'?s move|proceed)[\s!.?]*$",
+    re.I,
+)
+_READY_ACK = re.compile(
+    r"^(yes|yeah|yep|yup|ready|ok|okay|sure|let'?s go|i'?m ready|next section)[\s!.?]*$",
+    re.I,
+)
+
+
+def _verification_row(db, user_id: int, folder_name: str, section_index: int) -> SectionVerification:
+    row = (
+        db.query(SectionVerification)
+        .filter(
+            SectionVerification.user_id == user_id,
+            SectionVerification.folder_name == folder_name,
+            SectionVerification.section_index == section_index,
+        )
+        .first()
+    )
+    if not row:
+        row = SectionVerification(
+            user_id=user_id,
+            folder_name=folder_name,
+            section_index=section_index,
+            is_active=False,
+        )
+        db.add(row)
+    return row
+
+
+def is_section_verified(user_id: int, folder_name: str, section_index: int) -> bool:
+    db = SessionLocal()
+    try:
+        row = (
+            db.query(SectionVerification)
+            .filter(
+                SectionVerification.user_id == user_id,
+                SectionVerification.folder_name == folder_name,
+                SectionVerification.section_index == section_index,
+                SectionVerification.is_active.is_(True),
+            )
+            .first()
+        )
+        return row is not None
+    finally:
+        db.close()
+
+
+def _section_reward_claimed(user_id: int, folder_name: str, section_index: int) -> bool:
+    db = SessionLocal()
+    try:
+        row = (
+            db.query(SectionRewardClaim)
+            .filter(
+                SectionRewardClaim.user_id == user_id,
+                SectionRewardClaim.folder_name == folder_name,
+                SectionRewardClaim.section_index == section_index,
+            )
+            .first()
+        )
+        return row is not None
+    finally:
+        db.close()
+
+
+def _pedro_marked_section_complete(user_id: int, folder_name: str, section_index: int) -> bool:
+    db = SessionLocal()
+    try:
+        row = (
+            db.query(ChatMessage)
+            .filter(
+                ChatMessage.user_id == user_id,
+                ChatMessage.context_type == "lesson",
+                ChatMessage.context_id == folder_name,
+                ChatMessage.section_index == section_index,
+                ChatMessage.role == "pedro",
+                ChatMessage.content.contains("[SECTION_COMPLETE]"),
+            )
+            .first()
+        )
+        return row is not None
+    finally:
+        db.close()
+
+
+def can_advance_from_section(user_id: int, folder_name: str, section_index: int) -> bool:
+    """Section is advanceable once Pedro verified, reward was claimed, or [SECTION_COMPLETE] was emitted."""
+    if is_section_verified(user_id, folder_name, section_index):
+        return True
+    if _section_reward_claimed(user_id, folder_name, section_index):
+        return True
+    return _pedro_marked_section_complete(user_id, folder_name, section_index)
+
+
+def mark_section_verified(user_id: int, folder_name: str, section_index: int) -> None:
+    db = SessionLocal()
+    try:
+        row = _verification_row(db, user_id, folder_name, section_index)
+        row.is_active = True
+        row.verified_at = datetime.now(timezone.utc)
+        row.updated_at = datetime.now(timezone.utc)
+        db.commit()
+    finally:
+        db.close()
+
+
+def invalidate_section_verification(user_id: int, folder_name: str, section_index: int) -> None:
+    db = SessionLocal()
+    try:
+        row = (
+            db.query(SectionVerification)
+            .filter(
+                SectionVerification.user_id == user_id,
+                SectionVerification.folder_name == folder_name,
+                SectionVerification.section_index == section_index,
+            )
+            .first()
+        )
+        if row and row.is_active:
+            row.is_active = False
+            row.updated_at = datetime.now(timezone.utc)
+            db.commit()
+    finally:
+        db.close()
+
+
+def clear_section_verification(user_id: int, folder_name: str, section_index: int) -> None:
+    db = SessionLocal()
+    try:
+        row = (
+            db.query(SectionVerification)
+            .filter(
+                SectionVerification.user_id == user_id,
+                SectionVerification.folder_name == folder_name,
+                SectionVerification.section_index == section_index,
+            )
+            .first()
+        )
+        if row:
+            db.delete(row)
+            db.commit()
+    finally:
+        db.close()
+
+
+def should_invalidate_verification(message: str) -> bool:
+    """No longer revoke verification on follow-up questions — only advance clears it."""
+    return False
+
+
+def handle_pre_lesson_message(
+    user_id: int,
+    folder_name: str,
+    section_index: int | None,
+    message: str,
+) -> None:
+    """Previously revoked verification on follow-ups; verification now persists until advance."""
+    return
+
+
+def get_verification_prompt_block(
+    user_id: int,
+    folder_name: str,
+    section_index: int,
+    message: str | None = None,
+) -> str:
+    verified = is_section_verified(user_id, folder_name, section_index)
+    block = (
+        "\n--- SECTION VERIFICATION GATE (mandatory) ---\n"
+        "The student CANNOT advance to the next section until YOU verify readiness.\n"
+        "- You MUST run a practice/verification round (step 8) before considering the section done.\n"
+        "- Present verification questions ONE AT A TIME. Grade each answer with [ANSWER_WRONG] or "
+        "[ANSWER_CORRECT] at the end of your message.\n"
+        "- Do NOT emit [SECTION_COMPLETE] until EVERY required verification question has been "
+        "answered correctly. Partial progress is not enough.\n"
+        "- If the student says 'next', 'skip', 'continue', or similar WITHOUT answering, explain "
+        "they must complete the remaining verification questions first. Do NOT emit [SECTION_COMPLETE].\n"
+        "- If the student asks a side question during verification: answer it fully, then return "
+        "to any verification questions they have NOT yet answered correctly. Never drop pending "
+        "verification questions — track them mentally and re-ask until passed.\n"
+        "- [SECTION_COMPLETE] is the ONLY signal that unlocks the Next Section button. The map "
+        "reflects concepts you verified with [ANSWER_CORRECT] — never skip verification.\n"
+    )
+    if verified:
+        block += (
+            "STATUS: Section is currently VERIFIED — student may use Next Section. "
+            "Answer any follow-up questions fully; verification stays active until they advance.\n"
+        )
+    else:
+        block += "STATUS: Section is NOT verified — continue teaching and verification until all pass.\n"
+    if message and _SKIP_OR_ADVANCE.match(message.strip()):
+        block += (
+            "The student just tried to skip without answering. Remind them verification is "
+            "required and continue with the next unanswered verification question.\n"
+        )
+    block += "--- END VERIFICATION GATE ---\n"
+    return block
+
+
+def _sections_started(user_id: int, folder_name: str, current_section: int) -> set[int]:
+    """Sections the student actually engaged with (not just auto-openers)."""
+    started: set[int] = set()
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(ChatMessage.section_index, ChatMessage.content)
+            .filter(
+                ChatMessage.user_id == user_id,
+                ChatMessage.context_type.in_(("lesson", "folder")),
+                ChatMessage.context_id == folder_name,
+                ChatMessage.role == "user",
+                ChatMessage.section_index.isnot(None),
+            )
+            .all()
+        )
+        for idx, content in rows:
+            if idx is None:
+                continue
+            text = (content or "").strip()
+            if text and not _SECTION_OPENER.match(text):
+                started.add(int(idx))
+    finally:
+        db.close()
+    # Sections the student finished and advanced past.
+    for i in range(max(0, current_section)):
+        started.add(i)
+    return started
+
+
+def _group_episodes_by_section(student_orch, course_ns: str, sections: list) -> dict[int, list]:
+    """Episodes grouped by lesson section (ground truth for section-scoped mastery)."""
+    by_sec: dict[int, list] = defaultdict(list)
+    title_to_idx = {
+        (s.get("title") or "").strip().lower(): i
+        for i, s in enumerate(sections)
+    }
+    for it in student_orch.episodes.all(course_ns):
+        ss = it.store_specific or {}
+        idx = ss.get("section_index")
+        if idx is None:
+            st = (ss.get("section_title") or "").strip().lower()
+            if st in title_to_idx:
+                idx = title_to_idx[st]
+        if idx is not None:
+            by_sec[int(idx)].append(it)
+    return by_sec
+
+
+def _build_chat_section_index(user_id: int, folder_name: str) -> dict[str, int]:
+    """Map student message text → section index (for legacy episode backfill)."""
+    index: dict[str, int] = {}
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(ChatMessage.section_index, ChatMessage.content)
+            .filter(
+                ChatMessage.user_id == user_id,
+                ChatMessage.context_type.in_(("lesson", "folder")),
+                ChatMessage.context_id == folder_name,
+                ChatMessage.role == "user",
+                ChatMessage.section_index.isnot(None),
+            )
+            .all()
+        )
+        for idx, content in rows:
+            if idx is None:
+                continue
+            text = (content or "").strip()
+            if not text or _SECTION_OPENER.match(text):
+                continue
+            index[text[:200]] = int(idx)
+    finally:
+        db.close()
+    return index
+
+
+def _episodes_for_section(
+    section_index: int,
+    episodes_by_section: dict[int, list],
+    all_episodes: list,
+    chat_index: dict[str, int],
+) -> list:
+    """Episodes for one section — tagged directly or matched via chat text."""
+    eps = list(episodes_by_section.get(section_index, []))
+    seen = {id(ep) for ep in eps}
+    for ep in all_episodes:
+        if id(ep) in seen:
+            continue
+        ss = ep.store_specific or {}
+        if ss.get("section_index") is not None:
+            continue
+        um = (ss.get("user_message") or "").strip()[:200]
+        if chat_index.get(um) == section_index:
+            eps.append(ep)
+            seen.add(id(ep))
+    return eps
+
+
+def _section_mastery_pct(episodes: list, mastery_by_id: dict[str, float]) -> int:
+    """Mastery % from concepts touched in THIS section only."""
+    concept_ids: set[str] = set()
+    for ep in episodes:
+        for cid in (ep.store_specific or {}).get("concept_ids") or []:
+            if cid:
+                concept_ids.add(cid)
+
+    scores = [mastery_by_id[cid] for cid in concept_ids if cid in mastery_by_id]
+    if scores:
+        return round(sum(scores) / len(scores) * 100)
+
+    outcomes: list[float] = []
+    for ep in episodes:
+        o = (ep.store_specific or {}).get("outcome")
+        if o == "success":
+            outcomes.append(1.0)
+        elif o == "struggle":
+            outcomes.append(0.0)
+    if outcomes:
+        return round(sum(outcomes) / len(outcomes) * 100)
+    return 0
+
+
+def _section_is_finished(section_index: int, current_section: int, episodes: list) -> bool:
+    """A section counts as finished once the student advances past it or completes it."""
+    if section_index < current_section:
+        return True
+    for ep in episodes:
+        ss = ep.store_specific or {}
+        if ss.get("episode_type") == "section_completed" and ss.get("section_index") == section_index:
+            return True
+    return False
+
+
+def get_section_concept_refs(
+    user_id: int,
+    folder_name: str,
+    section_index: int,
+    source_user_id: int | None = None,
+) -> list[dict]:
+    """Concept refs for a lesson section (for OMA mastery updates)."""
+    src_uid = source_user_id if source_user_id is not None else user_id
     db = SessionLocal()
     try:
         outline = (
@@ -259,17 +703,199 @@ def get_lesson_state(user_id: int, folder_name: str) -> dict:
             .first()
         )
         if not outline:
-            return {"has_outline": False}
+            return []
+        sections = json.loads(outline.outline_json)
+        if section_index < 0 or section_index >= len(sections):
+            return []
+
+        import oma_provider
+        from coast_content_oma.stores import make_namespace
+
+        sec = sections[section_index]
+        content_ns = make_namespace(src_uid, folder_name)
+        content_orch = oma_provider._content_orchestrator()
+        matched = _resolve_section_concepts(
+            content_orch,
+            content_ns,
+            sec.get("key_topics") or [],
+            sec.get("title") or "",
+        )
+        refs: list[dict] = []
+        seen: set[str] = set()
+        for cid, c in matched.items():
+            if cid in seen:
+                continue
+            seen.add(cid)
+            name = (c.store_specific or {}).get("name") or cid
+            refs.append({"concept_id": cid, "concept_name": name})
+        return refs
+    finally:
+        db.close()
+
+
+def get_section_mastery_list(
+    user_id: int,
+    folder_name: str,
+    sections: list,
+    current_section: int,
+    source_user_id: int | None = None,
+) -> list[dict]:
+    """Per-section mastery — only sections the student started; scores from
+    concepts/episodes tagged to that section (no cross-section bleed)."""
+    try:
+        import oma_provider
+        from coast_content_oma.student.stores import course_namespace
+
+        if not oma_provider.is_student_enabled():
+            return [_empty_section_progress(i, current_section) for i in range(len(sections))]
+
+        course_ns = course_namespace(user_id, folder_name)
+        student_orch = oma_provider._student_orchestrator()
+        started = _sections_started(user_id, folder_name, current_section)
+        episodes_by_section = _group_episodes_by_section(student_orch, course_ns, sections)
+        all_episodes = student_orch.episodes.all(course_ns)
+        chat_index = _build_chat_section_index(user_id, folder_name)
+
+        mastery_by_id: dict[str, float] = {}
+        for it in student_orch.mastery.all(course_ns):
+            ss = it.store_specific or {}
+            cid = ss.get("concept_id")
+            if cid:
+                mastery_by_id[cid] = float(ss.get("mastery_score", 0))
+
+        out = []
+        for i in range(len(sections)):
+            if i not in started:
+                out.append({
+                    "index": i,
+                    "mastery_pct": None,
+                    "attempted": False,
+                    "mastered": False,
+                })
+                continue
+
+            sec_eps = _episodes_for_section(i, episodes_by_section, all_episodes, chat_index)
+            pct = _section_mastery_pct(sec_eps, mastery_by_id)
+            out.append({
+                "index": i,
+                "mastery_pct": pct,
+                "attempted": True,
+                "mastered": pct >= 100,
+            })
+        return out
+    except Exception:
+        traceback.print_exc()
+        return [_empty_section_progress(i, current_section) for i in range(len(sections))]
+
+
+def _empty_section_progress(index: int, current_section: int) -> dict:
+    return {
+        "index": index,
+        "mastery_pct": None,
+        "attempted": False,
+        "mastered": False,
+    }
+
+
+def get_lesson_state(user_id: int, folder_name: str, source_user_id: int | None = None) -> dict:
+    """Get current lesson state for a folder."""
+    db = SessionLocal()
+    try:
+        content_ready = True
+        shared_content_ready = True
+        is_curated = False
+        try:
+            from curated_config import (
+                CURATED_FOLDER_NAMES,
+                ensure_curated_outline,
+                is_curated_content_ready,
+            )
+            is_curated = folder_name in CURATED_FOLDER_NAMES
+            if is_curated:
+                shared_content_ready = is_curated_content_ready(folder_name)
+                content_ready = shared_content_ready
+        except Exception:
+            pass
+
+        outline = (
+            db.query(CourseOutline)
+            .filter(CourseOutline.user_id == user_id, CourseOutline.folder_name == folder_name)
+            .first()
+        )
+
+        # Auto-enroll premade lessons when shared content is already built.
+        if is_curated and shared_content_ready and not outline:
+            ensure_curated_outline(user_id, folder_name)
+            outline = (
+                db.query(CourseOutline)
+                .filter(CourseOutline.user_id == user_id, CourseOutline.folder_name == folder_name)
+                .first()
+            )
+
+        if not outline:
+            return {
+                "has_outline": False,
+                "content_ready": content_ready,
+                "shared_content_ready": shared_content_ready,
+            }
 
         sections = json.loads(outline.outline_json)
+        src_uid = source_user_id if source_user_id is not None else user_id
+        section_progress = get_section_mastery_list(
+            user_id, folder_name, sections, outline.current_section, source_user_id=src_uid,
+        )
+
         return {
             "has_outline": True,
+            "content_ready": content_ready,
+            "shared_content_ready": shared_content_ready,
             "sections": sections,
             "total_sections": outline.total_sections,
             "current_section": outline.current_section,
             "estimated_minutes": outline.estimated_minutes,
             "progress_percent": round((outline.current_section / max(outline.total_sections, 1)) * 100),
             "is_complete": outline.current_section >= outline.total_sections,
+            "section_progress": section_progress,
+            "section_verified": can_advance_from_section(
+                user_id, folder_name, int(outline.current_section),
+            ) if outline.current_section < len(sections) else False,
+        }
+    finally:
+        db.close()
+
+
+def get_authoritative_progress(user_id: int, folder_name: str) -> dict | None:
+    """Ground-truth lesson progress from CourseOutline — not inferred from chat."""
+    db = SessionLocal()
+    try:
+        outline = (
+            db.query(CourseOutline)
+            .filter(CourseOutline.user_id == user_id, CourseOutline.folder_name == folder_name)
+            .first()
+        )
+        if not outline:
+            return None
+        sections = json.loads(outline.outline_json)
+        cs = int(outline.current_section)
+        completed = []
+        for i in range(min(cs, len(sections))):
+            sec = sections[i]
+            completed.append({
+                "index": i,
+                "title": sec.get("title") or f"Section {i + 1}",
+                "key_topics": sec.get("key_topics") or [],
+            })
+        current = sections[cs] if cs < len(sections) else None
+        all_topics: list[str] = []
+        for c in completed:
+            all_topics.extend(c.get("key_topics") or [])
+        return {
+            "current_section": cs,
+            "total_sections": outline.total_sections,
+            "is_complete": cs >= outline.total_sections,
+            "completed_sections": completed,
+            "topics_covered": list(dict.fromkeys(all_topics)),
+            "current_section_title": (current or {}).get("title") if current else None,
         }
     finally:
         db.close()
@@ -287,18 +913,87 @@ def advance_section(user_id: int, folder_name: str) -> dict:
         if not outline:
             return {"error": "No outline found"}
 
-        if outline.current_section < outline.total_sections:
-            outline.current_section += 1
-            outline.updated_at = datetime.now(timezone.utc)
-            db.commit()
+        idx = int(outline.current_section)
+        if idx < outline.total_sections and not can_advance_from_section(user_id, folder_name, idx):
+            return {
+                "error": "Pedro must verify this section before you can continue. "
+                "Complete all practice questions first.",
+            }
 
         sections = json.loads(outline.outline_json)
+        finished_title = ""
+        if outline.current_section < outline.total_sections:
+            finished_idx = int(outline.current_section)
+            if finished_idx < len(sections):
+                sec = sections[finished_idx]
+                finished_title = sec.get("title") or f"Section {finished_idx + 1}"
+                try:
+                    import oma_provider
+                    if oma_provider.is_student_enabled():
+                        oma_provider.record_section_completed_authoritative(
+                            user_id,
+                            folder_name,
+                            section_index=finished_idx,
+                            section_title=finished_title,
+                        )
+                except Exception:
+                    traceback.print_exc()
+
+            outline.current_section += 1
+            outline.updated_at = datetime.now(timezone.utc)
+            clear_section_verification(user_id, folder_name, finished_idx)
+            db.commit()
+
+        is_complete = outline.current_section >= outline.total_sections
+
         return {
             "current_section": outline.current_section,
             "total_sections": outline.total_sections,
-            "is_complete": outline.current_section >= outline.total_sections,
+            "is_complete": is_complete,
             "next_section": sections[outline.current_section] if outline.current_section < len(sections) else None,
         }
+    finally:
+        db.close()
+
+
+def claim_section_reward(
+    user_id: int,
+    folder_name: str,
+    section_index: int | None = None,
+) -> dict:
+    """XP + map reward when Pedro emits [SECTION_COMPLETE] (before Next Section)."""
+    db = SessionLocal()
+    try:
+        outline = (
+            db.query(CourseOutline)
+            .filter(CourseOutline.user_id == user_id, CourseOutline.folder_name == folder_name)
+            .first()
+        )
+        if not outline:
+            return {"error": "No outline found"}
+
+        sections = json.loads(outline.outline_json or "[]")
+        idx = int(outline.current_section if section_index is None else section_index)
+        if idx < 0 or idx >= len(sections):
+            return {"error": "Invalid section index"}
+
+        if not can_advance_from_section(user_id, folder_name, idx):
+            return {"error": "Section not verified by Pedro yet"}
+
+        sec = sections[idx]
+        title = sec.get("title") or f"Section {idx + 1}"
+        mins = max(int(sec.get("estimated_minutes") or 20), 25)
+        lesson_complete = (idx + 1) >= outline.total_sections
+
+        import map_world
+        return map_world.claim_section_reward(
+            user_id,
+            folder_name,
+            idx,
+            section_title=title,
+            lesson_complete=lesson_complete,
+            section_minutes=mins,
+        )
     finally:
         db.close()
 
@@ -502,11 +1197,44 @@ def _fallback_source_context(
         db.close()
 
 
-def build_lesson_prompt(user_id: int, folder_name: str, source_user_id: int | None = None, structure: dict | None = None) -> str | None:
+def _fetch_section_material(
+    user_id: int,
+    folder_name: str,
+    query: str,
+    max_chars: int = 22000,
+) -> tuple[str, bool]:
+    """Retrieve course material for a lesson section.
+
+    Returns (context_text, used_oma). Tries Content OMA first, then flat RAG.
+    """
+    try:
+        import oma_provider
+        block, source, _ = oma_provider.resolve_folder_content(
+            user_id, folder_name, query,
+            context_type="lesson",
+            max_chars=max_chars,
+            max_content=12,
+            max_images=3,
+        )
+        return block, source == "OMA"
+    except Exception:
+        traceback.print_exc()
+        return "", False
+
+
+def build_lesson_prompt(
+    user_id: int,
+    folder_name: str,
+    source_user_id: int | None = None,
+    structure: dict | None = None,
+    student_message: str | None = None,
+) -> str | None:
     """Build a specialized system prompt for the current lesson section.
     
     source_user_id: if set, read sources/RAG from this user (for curated/shared folders).
     structure: optional dict with pedagogy hints for curated lessons.
+    student_message: when set, also retrieve Content OMA material targeted at the
+        student's current question (skipped for automatic section-openers).
     """
     src_uid = source_user_id if source_user_id is not None else user_id
     db = SessionLocal()
@@ -532,12 +1260,59 @@ def build_lesson_prompt(user_id: int, folder_name: str, source_user_id: int | No
 
         query_parts = [section_title] + key_topics + objectives
         query = " ".join(query_parts)
-        rag_context = rag.build_folder_context(src_uid, folder_name, query, max_chars=24000)
+        material_context, used_oma = _fetch_section_material(
+            src_uid, folder_name, query, max_chars=22000,
+        )
 
-        if not rag_context:
-            rag_context = _fallback_source_context(
+        # For follow-up questions in lesson chat, pull query-specific excerpts too.
+        if student_message:
+            try:
+                import oma_provider
+                if (
+                    oma_provider.is_oma_enabled()
+                    and not oma_provider._is_lesson_intro(student_message)
+                ):
+                    extra, q_concept_ids = oma_provider.get_folder_context(
+                        src_uid, folder_name, student_message,
+                        max_chars=8000,
+                        max_content=8,
+                        max_images=2,
+                    )
+                    if extra and extra not in material_context:
+                        material_context += (
+                            "\n\n--- ADDITIONAL MATERIAL FOR THIS QUESTION "
+                            "(retrieved via Content OMA) ---\n"
+                            + extra
+                        )
+                        used_oma = True
+                        oma_provider.log_content_source(
+                            "OMA",
+                            context_type="lesson-question",
+                            folder=folder_name,
+                            user_id=src_uid,
+                            chars=len(extra),
+                            detail=f"{len(q_concept_ids)} concepts",
+                        )
+            except Exception:
+                traceback.print_exc()
+
+        if not material_context:
+            material_context = _fallback_source_context(
                 src_uid, folder_name, section_title, key_topics, source_nbs, max_chars=24000
             )
+            if material_context:
+                try:
+                    import oma_provider
+                    oma_provider.log_content_source(
+                        "FALLBACK",
+                        context_type="lesson",
+                        folder=folder_name,
+                        user_id=src_uid,
+                        chars=len(material_context),
+                        detail="title-matched raw text",
+                    )
+                except Exception:
+                    pass
 
         completed = [s.get("title", "") for s in sections[:current_idx]]
         upcoming = [s.get("title", "") for s in sections[current_idx + 1:]]
@@ -555,6 +1330,11 @@ def build_lesson_prompt(user_id: int, folder_name: str, source_user_id: int | No
             f"CURRENT SECTION: {section_title}\n"
             f"Learning objectives: {', '.join(objectives)}\n"
             f"Key topics to cover: {', '.join(key_topics)}\n"
+        )
+        prompt += get_verification_prompt_block(
+            user_id, folder_name, current_idx, student_message,
+        )
+        prompt += (
             f"Source materials: {', '.join(source_nbs)}\n\n"
         )
 
@@ -565,15 +1345,30 @@ def build_lesson_prompt(user_id: int, folder_name: str, source_user_id: int | No
 
         prompt += (
             "\nTEACHING APPROACH:\n"
-            "Assume the student is a COMPLETE BEGINNER with ZERO prior knowledge of this topic. "
-            "They have NOT read the lecture notes or slides beforehand. Your job is to teach them "
-            "everything from scratch so they fully understand every concept and can solve any exercise "
-            "from the source material by the end of this section.\n\n"
+            "Adapt your starting point to the STUDENT PROFILE block (which appears earlier in this "
+            "system prompt). The profile records this student's prior interactions with this course's "
+            "concepts.\n"
+            "- If the profile is empty or shows no prior coverage of the concepts in this section, "
+            "assume the student is a COMPLETE BEGINNER and teach this section from scratch.\n"
+            "- If the profile shows the student has already mastered the concepts in this section "
+            "(mastery scores at or near 1.00, listed under 'Confident in'), treat this as a REVIEW: "
+            "briefly recap each key idea in 1–2 sentences, then move directly to harder practice "
+            "problems and exam-style questions. Do NOT re-teach material they've already mastered.\n"
+            "- If the profile shows the student is BORDERLINE on some concepts (mid mastery) and "
+            "WEAK on others ('Struggling with'), focus your teaching on the weak and borderline "
+            "concepts. Skim the mastered ones with a quick 'as you already know, ...' framing.\n"
+            "- The STUDENT PROFILE is your source of truth for what the student already knows in "
+            "this course. Trust it over any other signal.\n"
+            "- NEVER tell the student they said something was 'tricky', 'hard', or 'confusing' "
+            "unless the profile's Open questions or Unresolved fields explicitly say so. "
+            "Mastery scores alone do not mean the student complained — 'Has struggled with' "
+            "means you corrected them on a quiz, not that they self-reported difficulty.\n\n"
 
             "INSTRUCTIONS:\n"
             "1. You MUST teach from the source material provided below. Do NOT say you don't have it — it is included below.\n"
-            "2. START with the basics: define every term, explain every concept from the ground up. "
-            "Never assume the student already knows something — if a concept is needed, explain it first.\n"
+            "2. For concepts NOT yet mastered (per STUDENT PROFILE): define every term, explain "
+            "from the ground up, never assume prior knowledge. For concepts the profile shows as "
+            "mastered: reference them briefly and confirm with a quick check-question.\n"
             "3. Build knowledge step by step: foundations first, then build up to more complex ideas. "
             "Use clear, direct explanations with concrete examples. Only use analogies when a concept is truly abstract "
             "and hard to grasp without one — most of the time, a detailed explanation with a worked example is more helpful.\n"
@@ -605,12 +1400,22 @@ def build_lesson_prompt(user_id: int, folder_name: str, source_user_id: int | No
             "   d) If NO exercises exist in the source material for these topics, create 2-3 practice problems yourself that "
             "test the key concepts. Make them progressively harder.\n"
             "   e) If the student gets a problem wrong, explain what went wrong, identify the concept they're weak on, "
-            "and tell them clearly: 'You should review [specific topic] more — this is an area to focus on.'\n"
-            "   f) Only after the student has attempted the practice problems should you consider the section complete.\n"
+            "and tell them clearly: 'You should review [specific topic] more — this is an area to focus on.' "
+            "Then include the exact tag [ANSWER_WRONG] at the very end of your message (after your explanation). "
+            "This logs a practice mistake for review — it does NOT mean the student is struggling; "
+            "you will re-teach and verify understanding.\n"
+            "   f) When the student answers a practice problem correctly, include [ANSWER_CORRECT] at the end "
+            "of that message.\n"
+            "   g) Only use [ANSWER_WRONG] / [ANSWER_CORRECT] when grading a student answer attempt — never during "
+            "teaching, explanations, or when the student has not submitted an answer.\n"
+            "   h) Only after the student has attempted the practice problems should you consider the section complete.\n"
             "9. When the student has completed the practice round successfully, congratulate them, summarize what they learned, "
             "note any weak areas they should revisit, and ask if they're ready for the next section.\n"
             "10. NEVER claim you don't have access to the student's uploaded documents. The relevant content is provided below.\n"
-            "11. When you believe the student has understood the section AND completed the practice round, include the exact phrase "
+            "11. Emit [SECTION_COMPLETE] ONLY when ALL verification questions in this section were answered correctly "
+            "(each graded with [ANSWER_CORRECT]). Never because the student said 'next', 'skip', or 'continue'. "
+            "If they ask a follow-up question after passing some checks, teach them, then re-ask any they missed.\n"
+            "12. When you believe the student has understood the section AND completed the practice round, include the exact phrase "
             '"[SECTION_COMPLETE]" at the end of your message (the frontend uses this to show a Next Section button).\n\n'
         )
 
@@ -621,10 +1426,15 @@ def build_lesson_prompt(user_id: int, folder_name: str, source_user_id: int | No
                 + "\n--- END METHODOLOGY ---\n\n"
             )
 
-        if rag_context:
+        if material_context:
+            source_label = (
+                "Content OMA — structured retrieval from the student's uploaded documents"
+                if used_oma
+                else "from the student's uploaded documents"
+            )
             prompt += (
-                "--- SOURCE MATERIAL FOR THIS SECTION (from the student's uploaded documents) ---\n"
-                + rag_context
+                f"--- SOURCE MATERIAL FOR THIS SECTION ({source_label}) ---\n"
+                + material_context
                 + "\n--- END SOURCE MATERIAL ---\n"
             )
         else:
@@ -634,9 +1444,295 @@ def build_lesson_prompt(user_id: int, folder_name: str, source_user_id: int | No
                 "their specific uploaded materials.\n"
             )
 
-        image_block = _find_relevant_images(src_uid, folder_name, section_title, key_topics, source_nbs)
-        if image_block:
-            prompt += image_block
+        # OMA blocks already include relevant diagrams with URLs; only fall back
+        # to legacy SourceImage lookup when flat RAG was used.
+        if not used_oma:
+            image_block = _find_relevant_images(src_uid, folder_name, section_title, key_topics, source_nbs)
+            if image_block:
+                prompt += image_block
+
+        return prompt
+    except Exception:
+        traceback.print_exc()
+        return None
+    finally:
+        db.close()
+
+
+def get_section_constellation(
+    user_id: int,
+    folder_name: str,
+    section_index: int,
+    source_user_id: int | None = None,
+) -> dict:
+    """Build per-section mastery constellation from outline key_topics + Content OMA."""
+    src_uid = source_user_id if source_user_id is not None else user_id
+    db = SessionLocal()
+    try:
+        outline = (
+            db.query(CourseOutline)
+            .filter(CourseOutline.user_id == user_id, CourseOutline.folder_name == folder_name)
+            .first()
+        )
+        if not outline:
+            return {"error": "No lesson outline for this folder."}
+
+        sections = json.loads(outline.outline_json)
+        if section_index < 0 or section_index >= len(sections):
+            return {"error": "Invalid section index."}
+
+        section = sections[section_index]
+        key_topics = section.get("key_topics") or []
+        section_title = section.get("title") or f"Section {section_index + 1}"
+
+        import oma_provider
+        from coast_content_oma.stores import make_namespace
+        from coast_content_oma.student.mastery_tier import compute_mastery_tier, edge_link_state
+        from coast_content_oma.student.stores import course_namespace
+
+        content_ns = make_namespace(src_uid, folder_name)
+        course_ns = course_namespace(user_id, folder_name)
+        content_orch = oma_provider._content_orchestrator()
+        student_orch = oma_provider._student_orchestrator()
+
+        concept_map = _resolve_section_concepts(
+            content_orch, content_ns, key_topics, section_title,
+        )
+
+        mastery_by_id = {}
+        for it in student_orch.mastery.all(course_ns):
+            ss = it.store_specific or {}
+            cid = ss.get("concept_id")
+            if cid:
+                mastery_by_id[cid] = ss
+
+        nodes = []
+        tier_counts = {"red": 0, "orange": 0, "yellow": 0, "green": 0}
+
+        for cid, concept in concept_map.items():
+            ss = mastery_by_id.get(cid)
+            tier = compute_mastery_tier(ss)
+            tier_counts[tier] = tier_counts.get(tier, 0) + 1
+            css = concept.store_specific or {}
+            nodes.append({
+                "id": cid,
+                "name": css.get("name") or concept.content[:80] or cid,
+                "tier": tier,
+                "score": round(float(ss.get("mastery_score", 0)), 2) if ss else 0,
+                "attempted": ss is not None,
+                "successes": ss.get("successes", 0) if ss else 0,
+                "struggles": ss.get("struggles", 0) if ss else 0,
+                "definition": (concept.content or "")[:400],
+                "focus_opener": _concept_focus_opener(
+                    css.get("name") or cid, tier, ss,
+                ),
+            })
+
+        node_ids = {n["id"] for n in nodes}
+        edges = []
+        seen = set()
+        for cid in node_ids:
+            concept = concept_map.get(cid)
+            if not concept:
+                continue
+            pre_ids = (concept.store_specific or {}).get("prerequisite_concept_ids") or []
+            for pid in pre_ids:
+                if pid not in node_ids:
+                    continue
+                key = (pid, cid)
+                if key in seen:
+                    continue
+                seen.add(key)
+                prereq_tier = next((n["tier"] for n in nodes if n["id"] == pid), "red")
+                edges.append({
+                    "source": pid,
+                    "target": cid,
+                    "type": "prerequisite",
+                    "link_state": edge_link_state(prereq_tier),
+                })
+
+        all_green = bool(nodes) and all(n["tier"] == "green" for n in nodes)
+
+        return {
+            "folder": folder_name,
+            "section_index": section_index,
+            "section_title": section_title,
+            "key_topics": key_topics,
+            "nodes": nodes,
+            "edges": edges,
+            "stats": {
+                **tier_counts,
+                "total": len(nodes),
+                "all_green": all_green,
+            },
+        }
+    except Exception:
+        traceback.print_exc()
+        return {"error": "Failed to build constellation."}
+    finally:
+        db.close()
+
+
+def _resolve_section_concepts(content_orch, namespace: str, key_topics: list, section_title: str) -> dict:
+    """Map outline key_topics to Content OMA concept items (+ direct prereqs)."""
+    matched: dict = {}
+
+    def add(c):
+        if c and c.namespace == namespace and c.id not in matched:
+            matched[c.id] = c
+
+    search_terms = [t.strip() for t in (key_topics or []) if t and str(t).strip()]
+    if section_title:
+        search_terms.append(section_title.strip())
+
+    for topic in search_terms:
+        found = content_orch.concept.find_by_name(namespace, topic)
+        if found:
+            add(found)
+            continue
+        for cand in content_orch.concept.find_candidates(namespace, topic, max_results=2):
+            add(cand)
+
+    if len(matched) < 3 and search_terms:
+        query = " ".join(search_terms[:6])
+        try:
+            result = content_orch.retrieve(namespace, query, max_content=4, max_images=0)
+            for cand in result.concept_candidates:
+                add(cand)
+        except Exception:
+            pass
+
+    # Include direct prerequisites so dependency links render.
+    extra: dict = {}
+    for cid, concept in list(matched.items()):
+        pre_ids = (concept.store_specific or {}).get("prerequisite_concept_ids") or []
+        for pid in pre_ids:
+            if pid not in matched:
+                p = content_orch.concept.get(pid)
+                if p and p.namespace == namespace:
+                    extra[pid] = p
+    matched.update(extra)
+
+    if not matched:
+        for c in content_orch.concept.all_concepts(namespace)[:8]:
+            add(c)
+
+    return matched
+
+
+def _concept_focus_opener(name: str, tier: str, ss: dict | None) -> str:
+    if tier == "red" and not ss:
+        return f"Let's work on {name} — we'll build this up step by step."
+    if tier == "red":
+        return f"Last time {name} was tricky — let's pin down exactly where the confusion is."
+    if tier == "orange":
+        return f"Your understanding of {name} is getting there — let's sharpen it with a few targeted questions."
+    if tier == "yellow":
+        return f"You know {name} — let's test it on a fresh problem to make it stick."
+    return f"Quick review of {name} — you're in good shape here."
+
+
+def build_concept_focus_prompt(
+    user_id: int,
+    folder_name: str,
+    concept_id: str,
+    section_index: int,
+    source_user_id: int | None = None,
+    student_message: str | None = None,
+) -> str | None:
+    """Focused Pedro session for a single concept from the mastery map."""
+    src_uid = source_user_id if source_user_id is not None else user_id
+    db = SessionLocal()
+    try:
+        outline = (
+            db.query(CourseOutline)
+            .filter(CourseOutline.user_id == user_id, CourseOutline.folder_name == folder_name)
+            .first()
+        )
+        if not outline:
+            return None
+
+        sections = json.loads(outline.outline_json)
+        if section_index < 0 or section_index >= len(sections):
+            return None
+
+        section = sections[section_index]
+        section_title = section.get("title", "")
+
+        import oma_provider
+        from coast_content_oma.stores import make_namespace
+        from coast_content_oma.student.mastery_tier import compute_mastery_tier
+        from coast_content_oma.student.stores import course_namespace
+
+        content_ns = make_namespace(src_uid, folder_name)
+        course_ns = course_namespace(user_id, folder_name)
+        content_orch = oma_provider._content_orchestrator()
+        student_orch = oma_provider._student_orchestrator()
+
+        concept = content_orch.concept.get(concept_id)
+        if not concept or concept.namespace != content_ns:
+            return None
+
+        css = concept.store_specific or {}
+        name = css.get("name") or concept_id
+        definition = (concept.content or "")[:2000]
+
+        mastery = student_orch.mastery.for_concept(course_ns, concept_id)
+        ss = mastery.store_specific if mastery else None
+        tier = compute_mastery_tier(ss)
+        opener = _concept_focus_opener(name, tier, ss)
+
+        material_context, _ = _fetch_section_material(
+            src_uid, folder_name, name, max_chars=8000,
+        )
+        if student_message and oma_provider.is_oma_enabled():
+            extra, _ = oma_provider.get_folder_context(
+                src_uid, folder_name, student_message,
+                max_chars=4000, max_content=4, max_images=1,
+            )
+            if extra:
+                material_context = (material_context or "") + "\n\n" + extra
+
+        profile_block = oma_provider.get_student_profile_block(
+            user_id, folder_name, current_concept_ids=[concept_id],
+        )
+
+        pre_names = []
+        for pid in (css.get("prerequisite_concept_ids") or [])[:4]:
+            p = content_orch.concept.get(pid)
+            if p:
+                pre_names.append((p.store_specific or {}).get("name") or pid)
+
+        prompt = (
+            f"\n--- CONCEPT FOCUS MODE ---\n"
+            f"The student tapped the \"{name}\" node on their section mastery map.\n"
+            f"Section: {section_title} (section {section_index + 1})\n"
+            f"Mastery tier: {tier.upper()}\n\n"
+            f"OPENING TONE: Start with something like: \"{opener}\"\n\n"
+            f"RULES:\n"
+            f"- Teach ONLY \"{name}\" — do not drift to other section topics.\n"
+            f"- Use Socratic dialogue; ask before telling when tier is orange/red.\n"
+            f"- For yellow tier: give a novel application problem without hints first.\n"
+            f"- Keep responses concise (2–4 short paragraphs max).\n"
+            f"- Do NOT emit [SECTION_COMPLETE] — this is concept practice, not a full section.\n"
+            f"- When grading a practice answer: [ANSWER_WRONG] if wrong, [ANSWER_CORRECT] if right "
+            f"(at the end of the message, after your explanation).\n"
+        )
+
+        if pre_names:
+            prompt += f"- Prerequisites they should have: {', '.join(pre_names)}\n"
+
+        if profile_block:
+            prompt += f"\n{profile_block}\n"
+
+        prompt += (
+            f"\nCONCEPT DEFINITION:\n{definition}\n"
+        )
+
+        if material_context:
+            prompt += (
+                f"\n--- SOURCE MATERIAL ---\n{material_context}\n--- END ---\n"
+            )
 
         return prompt
     except Exception:

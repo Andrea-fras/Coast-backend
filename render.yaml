@@ -8,7 +8,7 @@ services:
     disk:
       name: coast-data
       mountPath: /data
-      sizeGB: 1
+      sizeGB: 10
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.6"
@@ -16,6 +16,28 @@ services:
         value: "/data/coast.db"
       - key: CHROMA_PATH
         value: "/data/chroma"
+      # ── OMA (content + student memory) — MUST live on the persistent disk ──
+      - key: RAG_PROVIDER
+        value: "oma"
+      - key: STUDENT_OMA_ENABLED
+        value: "true"
+      - key: OMA_DB_PATH
+        value: "/data/oma_data/oma.db"
+      - key: OMA_IMAGE_DIR
+        value: "/data/oma_data/images"
+      - key: OMA_DESCRIBE_IMAGES
+        value: "true"
+      - key: OMA_OPENAI_MODEL
+        value: "gpt-4o-mini"
+      - key: OMA_OPENAI_VISION_MODEL
+        value: "gpt-4o-mini"
+      - key: GENERATED_DIR
+        value: "/data/generated"
+      # User-uploaded PDFs + extracted source images — must survive redeploys
+      - key: FOLDER_UPLOADS_DIR
+        value: "/data/folder_uploads"
+      - key: PEDRO_PROVIDER
+        value: "gemini"
       - key: FRONTEND_URL
         sync: false
       - key: OPENAI_API_KEY

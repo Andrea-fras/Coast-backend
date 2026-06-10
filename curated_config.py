@@ -2,18 +2,26 @@
 
 from __future__ import annotations
 
+import json
 import os
 import uuid
 import traceback
 from pathlib import Path
 
-CURATED_FOLDER_NAMES = {"Quantitative Methods 1", "Data Structures & Algorithms"}
+CURATED_FOLDER_NAMES = {
+    "Quantitative Methods 1",
+    "Data Structures & Algorithms",
+    "Prismatic System",
+    "Science of Cooking",
+}
 CURATED_CONTENT_DIR = Path(__file__).parent / "curated_content"
 CURATED_USER_ID = 0
 
 FOLDER_TO_COURSE: dict[str, str] = {
     "Quantitative Methods 1": "QM1",
     "Data Structures & Algorithms": "DSA",
+    "Prismatic System": "PRISMATIC",
+    "Science of Cooking": "SOC",
 }
 
 _COURSE_KEYWORDS: dict[str, list[str]] = {
@@ -34,6 +42,146 @@ def get_course_for_folder(folder_name: str) -> str | None:
         if any(kw in name_lower for kw in keywords):
             return course
     return None
+
+# Premade lessons ship with a fixed outline — no generate step for the student.
+CURATED_STATIC_OUTLINES: dict[str, list[dict]] = {
+    "Prismatic System": [
+        {
+            "title": "The Elements",
+            "learning_objectives": [
+                "Identify the three element types in the Prismatic System",
+                "Apply the correct value rule for each element type",
+                "Recognize how element types constrain later operations",
+            ],
+            "key_topics": [
+                "prismatic elements",
+                "element types",
+                "value rules",
+                "symbolic foundations",
+            ],
+            "source_notebooks": ["prismatic L1 elements"],
+            "estimated_minutes": 25,
+        },
+        {
+            "title": "The Binding Operation (⊕)",
+            "learning_objectives": [
+                "Apply the binding operation to pairs of elements",
+                "Use the six binding rules that depend on type and order",
+                "Predict binding results before computing them",
+            ],
+            "key_topics": [
+                "binding operation",
+                "type rules",
+                "order rules",
+                "binary composition",
+            ],
+            "source_notebooks": ["prismatic L2 binding"],
+            "estimated_minutes": 30,
+        },
+        {
+            "title": "The Folding Operation (∆)",
+            "learning_objectives": [
+                "Transform binding results using the folding operation",
+                "Apply the three conditional folding rules correctly",
+                "Produce a positive numeric result from any binding outcome",
+            ],
+            "key_topics": [
+                "folding operation",
+                "conditional rules",
+                "positive transformation",
+                "binding results",
+            ],
+            "source_notebooks": ["prismatic L3 folding"],
+            "estimated_minutes": 25,
+        },
+        {
+            "title": "Chains",
+            "learning_objectives": [
+                "Execute multi-step Prismatic sequences from start to finish",
+                "Combine element, binding, and folding rules in long problems",
+                "Debug chain errors by locating the first violated rule",
+            ],
+            "key_topics": [
+                "multi-step chains",
+                "rule integration",
+                "sequential reasoning",
+                "full system mastery",
+            ],
+            "source_notebooks": ["prismatic L4 chains"],
+            "estimated_minutes": 35,
+        },
+    ],
+    "Science of Cooking": [
+        {
+            "title": "The Maillard Reaction",
+            "learning_objectives": [
+                "Explain non-enzymatic browning and flavor synthesis at high heat",
+                "Describe the amino acid–reducing sugar pathway to melanoidins",
+                "Diagnose common searing and caramelization failures using chemistry",
+            ],
+            "key_topics": [
+                "Maillard reaction",
+                "thermal transformation",
+                "melanoidins",
+                "kinetic chemistry",
+                "browning",
+            ],
+            "source_notebooks": ["science of cooking lecture 1 maillard"],
+            "estimated_minutes": 30,
+        },
+        {
+            "title": "Emulsification & Interfacial Science",
+            "learning_objectives": [
+                "Explain why oil and water phase-separate and how emulsifiers stabilize mixtures",
+                "Distinguish oil-in-water vs water-in-oil emulsions in common kitchen products",
+                "Troubleshoot broken emulsions using interfacial science concepts",
+            ],
+            "key_topics": [
+                "emulsification",
+                "surfactants",
+                "interfacial tension",
+                "mayonnaise",
+                "hollandaise",
+            ],
+            "source_notebooks": ["science of cooking lecture 2 emulsification"],
+            "estimated_minutes": 30,
+        },
+        {
+            "title": "The Gluten Network",
+            "learning_objectives": [
+                "Describe how gliadin and glutenin form a viscoelastic protein network",
+                "Relate kneading and hydration to polymer cross-linking in dough",
+                "Predict texture outcomes when flour protein content is mismatched to a recipe",
+            ],
+            "key_topics": [
+                "gluten network",
+                "gliadin",
+                "glutenin",
+                "polymer physics",
+                "dough elasticity",
+            ],
+            "source_notebooks": ["science of cooking lecture 3 gluten"],
+            "estimated_minutes": 30,
+        },
+        {
+            "title": "Thermodynamics of Leavening",
+            "learning_objectives": [
+                "Explain how yeast fermentation and gas laws drive bread volume expansion",
+                "Describe nucleation, cavitation, and gas retention in rising dough",
+                "Diagnose dense or collapsed loaves using leavening thermodynamics",
+            ],
+            "key_topics": [
+                "leavening",
+                "fermentation",
+                "gas laws",
+                "Charles's law",
+                "bread rising",
+            ],
+            "source_notebooks": ["science of cooking lecture 4 leavening"],
+            "estimated_minutes": 35,
+        },
+    ],
+}
 
 CURATED_LESSON_STRUCTURES = {
     "Quantitative Methods 1": {
@@ -98,6 +246,73 @@ CURATED_LESSON_STRUCTURES = {
             },
         ],
     },
+    "Prismatic System": {
+        "description": (
+            "Four-layer formal system: Elements → Binding (⊕) → Folding (∆) → Chains. "
+            "Each lecture introduces rules that depend on all prior layers."
+        ),
+        "pedagogy": (
+            "Teach in strict layer order. Use concrete worked examples before abstract rules. "
+            "After each rule, give a short practice item. Chains should only appear after "
+            "Layers 1–3 are solid — they are the capstone integration test."
+        ),
+        "parts": [
+            {
+                "name": "Layer 1 — Elements",
+                "description": "Three element types and their value rules",
+                "source_patterns": ["L1", "elements"],
+            },
+            {
+                "name": "Layer 2 — Binding",
+                "description": "The binding operation and six type/order rules",
+                "source_patterns": ["L2", "binding"],
+            },
+            {
+                "name": "Layer 3 — Folding",
+                "description": "The folding operation and conditional transformation rules",
+                "source_patterns": ["L3", "folding"],
+            },
+            {
+                "name": "Layer 4 — Chains",
+                "description": "Multi-step sequences combining every prior rule",
+                "source_patterns": ["L4", "chains"],
+            },
+        ],
+    },
+    "Science of Cooking": {
+        "description": (
+            "Four lectures on culinary chemistry and soft-matter physics: "
+            "Maillard browning → emulsification → gluten networks → bread leavening."
+        ),
+        "pedagogy": (
+            "Connect every abstract concept to a concrete kitchen scenario. "
+            "Use the interactive diagnostics at the end of each lecture as practice prompts. "
+            "When explaining mechanisms, name the molecules and forces involved, then "
+            "ask the student to diagnose a real cooking failure."
+        ),
+        "parts": [
+            {
+                "name": "Lecture 1 — Maillard Reaction",
+                "description": "Non-enzymatic browning, flavor synthesis, thermal kinetics",
+                "source_patterns": ["lecture 1", "maillard", "browning", "caramel"],
+            },
+            {
+                "name": "Lecture 2 — Emulsification",
+                "description": "Interfacial science, surfactants, stable vs unstable emulsions",
+                "source_patterns": ["lecture 2", "emulsif", "mayonnaise", "hollandaise"],
+            },
+            {
+                "name": "Lecture 3 — Gluten Network",
+                "description": "Gliadin, glutenin, viscoelasticity, flour protein content",
+                "source_patterns": ["lecture 3", "gluten", "gliadin", "glutenin", "dough"],
+            },
+            {
+                "name": "Lecture 4 — Leavening",
+                "description": "Fermentation, gas laws, nucleation, bread rising thermodynamics",
+                "source_patterns": ["lecture 4", "leaven", "ferment", "bread rises", "yeast"],
+            },
+        ],
+    },
 }
 
 
@@ -109,6 +324,195 @@ def curated_source_uid(folder_name: str) -> int | None:
 def get_lesson_structure(folder_name: str) -> dict | None:
     """Return the custom structure hints for a curated lesson, or None."""
     return CURATED_LESSON_STRUCTURES.get(folder_name)
+
+
+def get_static_outline(folder_name: str) -> list[dict] | None:
+    """Return a premade outline that skips generation, or None."""
+    outline = CURATED_STATIC_OUTLINES.get(folder_name)
+    return list(outline) if outline else None
+
+
+def ensure_curated_outline(user_id: int, folder_name: str) -> bool:
+    """Seed a static outline for premade lessons. Returns True if outline exists."""
+    sections = get_static_outline(folder_name)
+    if not sections:
+        return False
+
+    from datetime import datetime, timezone
+    from database import SessionLocal, CourseOutline
+
+    db = SessionLocal()
+    try:
+        existing = (
+            db.query(CourseOutline)
+            .filter(CourseOutline.user_id == user_id, CourseOutline.folder_name == folder_name)
+            .first()
+        )
+        if existing:
+            return True
+
+        total_minutes = sum(int(s.get("estimated_minutes") or 20) for s in sections)
+        db.add(CourseOutline(
+            user_id=user_id,
+            folder_name=folder_name,
+            outline_json=json.dumps(sections),
+            total_sections=len(sections),
+            current_section=0,
+            estimated_minutes=total_minutes,
+        ))
+        db.commit()
+        return True
+    finally:
+        db.close()
+
+
+def _curated_pdf_sources(folder_name: str) -> list[dict]:
+    from database import SessionLocal, FolderSource
+
+    db = SessionLocal()
+    try:
+        rows = db.query(FolderSource).filter(
+            FolderSource.user_id == CURATED_USER_ID,
+            FolderSource.folder_name == folder_name,
+        ).all()
+        out: list[dict] = []
+        for s in rows:
+            path = s.file_path
+            if not path or not str(path).lower().endswith(".pdf"):
+                continue
+            if not Path(path).is_file():
+                continue
+            out.append({
+                "path": path,
+                "filename": s.filename or Path(path).name,
+                "page_count": int(s.page_count or 0),
+                "source_id": s.source_id,
+            })
+        return out
+    finally:
+        db.close()
+
+
+def ensure_curated_oma(folder_name: str) -> bool:
+    """Index curated PDFs into Content OMA (shared namespace user_id=0)."""
+    import oma_provider
+
+    if not oma_provider.is_oma_enabled():
+        return True
+
+    pdf_sources = _curated_pdf_sources(folder_name)
+    if not pdf_sources:
+        return False
+
+    return oma_provider.ensure_oma_ready_for_outline(
+        CURATED_USER_ID,
+        folder_name,
+        pdf_sources=pdf_sources,
+    )
+
+
+def bootstrap_curated_content(folder_name: str, *, force: bool = False) -> dict:
+    """Build shared RAG + Content OMA once for a premade course (all users reuse it)."""
+    import oma_provider
+
+    if folder_name not in CURATED_FOLDER_NAMES:
+        return {"error": "Not a premade lesson folder."}
+
+    if not force and is_curated_content_ready(folder_name):
+        pdf_sources = _curated_pdf_sources(folder_name)
+        return {
+            "ok": True,
+            "folder": folder_name,
+            "skipped": True,
+            "content_ready": True,
+            "sources": len(pdf_sources),
+        }
+
+    pdf_sources = _curated_pdf_sources(folder_name)
+    if not pdf_sources:
+        return {"error": f"No PDF sources found for {folder_name}."}
+
+    rag_result: dict = {}
+    try:
+        import rag
+        rag_result = rag.embed_all_in_folder(CURATED_USER_ID, folder_name) or {}
+    except Exception:
+        traceback.print_exc()
+
+    oma_ready = ensure_curated_oma(folder_name)
+    content_ready = oma_ready if oma_provider.is_oma_enabled() else True
+
+    return {
+        "ok": content_ready,
+        "folder": folder_name,
+        "skipped": False,
+        "content_ready": content_ready,
+        "oma_ready": oma_ready,
+        "notebooks_embedded": rag_result.get("notebooks_embedded", 0),
+        "total_chunks": rag_result.get("total_chunks", 0),
+        "sources": len(pdf_sources),
+    }
+
+
+def bootstrap_all_curated_content(*, force: bool = False) -> dict[str, dict]:
+    """Build shared content for every premade course. Run once on server startup."""
+    ingest_curated_sources()
+    results: dict[str, dict] = {}
+    for folder_name in sorted(CURATED_FOLDER_NAMES):
+        try:
+            results[folder_name] = bootstrap_curated_content(folder_name, force=force)
+            status = "ready" if results[folder_name].get("content_ready") else "pending"
+            print(f"  [curated] bootstrap {folder_name}: {status}")
+        except Exception:
+            traceback.print_exc()
+            results[folder_name] = {"error": "bootstrap failed"}
+    return results
+
+
+def prepare_curated_lesson(user_id: int, folder_name: str) -> dict:
+    """Enroll a student in a premade lesson — instant when shared content is pre-built."""
+    if folder_name not in CURATED_FOLDER_NAMES:
+        return {"error": "Not a premade lesson folder."}
+
+    shared_ready = is_curated_content_ready(folder_name)
+    if not shared_ready:
+        return {
+            "error": "Premade course material is still being prepared. Try again in a minute.",
+            "content_ready": False,
+            "shared_content_ready": False,
+            "has_outline": False,
+        }
+
+    outline_ready = ensure_curated_outline(user_id, folder_name)
+    if not outline_ready:
+        return {"error": "Could not create lesson outline."}
+
+    return {
+        "ok": True,
+        "has_outline": True,
+        "content_ready": True,
+        "shared_content_ready": True,
+        "oma_ready": True,
+        "instant": True,
+    }
+
+
+def is_curated_content_ready(folder_name: str) -> bool:
+    """Read-only check — true when RAG sources exist and Content OMA is indexed."""
+    pdf_sources = _curated_pdf_sources(folder_name)
+    if not pdf_sources:
+        return False
+    try:
+        import oma_provider
+        if not oma_provider.is_oma_enabled():
+            return True
+        from coast_content_oma.stores import make_namespace
+        ns = make_namespace(CURATED_USER_ID, folder_name)
+        orch = oma_provider._content_orchestrator()
+        target = sum(max(1, int(s.get("page_count") or 0)) for s in pdf_sources)
+        return orch.content.count(ns) >= target
+    except Exception:
+        return False
 
 
 def ingest_curated_sources():
@@ -175,6 +579,17 @@ def ingest_curated_sources():
                     except Exception:
                         traceback.print_exc()
 
+                    if ext == ".pdf":
+                        try:
+                            import oma_provider
+                            if oma_provider.is_oma_enabled():
+                                oma_provider.ingest_pdf_async(
+                                    CURATED_USER_ID, folder_name, file_path,
+                                )
+                                print(f"  [curated] OMA ingest queued: {file_path.name}")
+                        except Exception:
+                            traceback.print_exc()
+
                     try:
                         from image_extractor import extract_and_store_images
                         extract_and_store_images(
@@ -190,6 +605,37 @@ def ingest_curated_sources():
         db.close()
 
     _extract_images_for_existing_sources()
+    _ensure_oma_for_existing_sources()
+
+
+def _ensure_oma_for_existing_sources():
+    """Queue Content OMA ingest for curated PDFs not yet indexed."""
+    import oma_provider
+
+    if not oma_provider.is_oma_enabled():
+        return
+
+    for folder_name in CURATED_FOLDER_NAMES:
+        pdf_sources = _curated_pdf_sources(folder_name)
+        if not pdf_sources:
+            continue
+        try:
+            ready = oma_provider.ensure_oma_ready_for_outline(
+                CURATED_USER_ID,
+                folder_name,
+                pdf_sources=pdf_sources,
+                wait_sec=0,
+            )
+            if not ready:
+                for src in pdf_sources:
+                    path = src.get("path")
+                    if path and Path(path).is_file():
+                        oma_provider.ingest_pdf_async(
+                            CURATED_USER_ID, folder_name, path,
+                        )
+                print(f"  [curated] OMA background ingest queued for {folder_name}")
+        except Exception:
+            traceback.print_exc()
 
 
 def _extract_images_for_existing_sources():

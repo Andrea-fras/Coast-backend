@@ -299,6 +299,67 @@ class CourseOutline(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class UserMapState(Base):
+    """Player position on the exploration map."""
+    __tablename__ = "user_map_state"
+
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    pos_x = Column(Integer, default=32)
+    pos_y = Column(Integer, default=32)
+    full_unlock = Column(Boolean, default=False)
+    total_xp = Column(Integer, default=0)
+    bonus_unlock_points = Column(Integer, default=0)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class SectionVerification(Base):
+    """Pedro verified the student passed all section practice questions."""
+    __tablename__ = "section_verifications"
+
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    folder_name = Column(String(100), primary_key=True)
+    section_index = Column(Integer, primary_key=True)
+    verified_at = Column(DateTime, nullable=True)
+    is_active = Column(Boolean, default=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class SectionRewardClaim(Base):
+    """Idempotent XP/map reward when Pedro marks a section complete."""
+    __tablename__ = "section_reward_claims"
+
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    folder_name = Column(String(100), primary_key=True)
+    section_index = Column(Integer, primary_key=True)
+    xp_gained = Column(Integer, default=0)
+    map_bonus_added = Column(Integer, default=0)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class MapTileProvenance(Base):
+    """Which lesson section unlocked each map tile."""
+    __tablename__ = "map_tile_provenance"
+
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    x = Column(Integer, primary_key=True)
+    y = Column(Integer, primary_key=True)
+    folder_name = Column(String(100), nullable=False)
+    section_index = Column(Integer, nullable=False)
+    section_title = Column(String(255), default="")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class TreasureChestOpen(Base):
+    """One-time treasure chest claim per user."""
+    __tablename__ = "treasure_chest_opens"
+
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    chest_id = Column(String(32), primary_key=True)
+    xp_gained = Column(Integer, default=0)
+    correct_count = Column(Integer, default=0)
+    opened_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 def _run_migrations():
     """Add columns that may be missing from existing tables."""
     from sqlalchemy import inspect, text
@@ -326,6 +387,17 @@ def _run_migrations():
         if "onboarding_completed" not in cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE users ADD COLUMN onboarding_completed BOOLEAN DEFAULT 0"))
+    if "user_map_state" in insp.get_table_names():
+        cols = [c["name"] for c in insp.get_columns("user_map_state")]
+        if "full_unlock" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE user_map_state ADD COLUMN full_unlock BOOLEAN DEFAULT 0"))
+        if "total_xp" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE user_map_state ADD COLUMN total_xp INTEGER DEFAULT 0"))
+        if "bonus_unlock_points" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE user_map_state ADD COLUMN bonus_unlock_points INTEGER DEFAULT 0"))
 
 
 def init_db():

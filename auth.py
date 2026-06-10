@@ -8,7 +8,12 @@ from datetime import datetime, timedelta, timezone
 import bcrypt
 import jwt
 
-SECRET_KEY = os.getenv("JWT_SECRET", "coast-pilot-secret-change-in-production")
+SECRET_KEY = os.getenv("JWT_SECRET", "")
+if not SECRET_KEY:
+    if os.getenv("RENDER"):
+        # Never run production with a guessable signing key.
+        raise RuntimeError("JWT_SECRET env var must be set in production")
+    SECRET_KEY = "coast-local-dev-secret"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 72
 

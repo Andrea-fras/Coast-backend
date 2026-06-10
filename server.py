@@ -141,10 +141,10 @@ async def global_exception_handler(request: StarletteRequest, exc: Exception):
         headers=_cors_headers,
     )
 
-GENERATED_DIR = Path(__file__).parent / "generated"
-GENERATED_DIR.mkdir(exist_ok=True)
-
 _PERSISTENT_DISK = Path("/data")
+_default_generated = str(_PERSISTENT_DISK / "generated") if _PERSISTENT_DISK.is_dir() else str(Path(__file__).parent / "generated")
+GENERATED_DIR = Path(os.environ.get("GENERATED_DIR", _default_generated))
+GENERATED_DIR.mkdir(parents=True, exist_ok=True)
 _default_uploads = str(_PERSISTENT_DISK / "folder_uploads") if _PERSISTENT_DISK.is_dir() else str(Path(__file__).parent / "folder_uploads")
 FOLDER_UPLOADS_DIR = Path(os.environ.get("FOLDER_UPLOADS_DIR", _default_uploads))
 FOLDER_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -171,6 +171,15 @@ HEARTBEAT_TIMEOUT = 60
 # ═══════════════════════════════════════════════════════════════════════════
 
 @app.on_event("startup")
+async def _raise_threadpool_cap():
+    # Sync endpoints (incl. streaming chat) each hold one threadpool slot
+    # for their full duration. Default cap is 40 — raise it so ~100
+    # concurrent users don't queue behind long LLM responses.
+    import anyio.to_thread
+    anyio.to_thread.current_default_thread_limiter().total_tokens = 120
+
+
+@app.on_event("startup")
 def on_startup():
     init_db()
     if PAPERS_DIR.exists():
@@ -182,8 +191,10 @@ def on_startup():
     import threading
     def _bg_curated():
         try:
-            from curated_config import ingest_curated_sources
-            ingest_curated_sources()
+            from curated_config import bootstrap_all_curated_content
+            print("  [curated] Building shared Content OMA for premade courses (one-time)…")
+            bootstrap_all_curated_content()
+            print("  [curated] Premade course bootstrap complete.")
         except Exception:
             import traceback; traceback.print_exc()
     threading.Thread(target=_bg_curated, daemon=True).start()
@@ -216,6 +227,12 @@ ADMIN_EMAILS = {
     "andreaf.fraschetti@gmail.com",
     "rio.mauss@gmail.com",
 }
+
+
+def _require_curated_write_access(folder_name: str, user: User) -> None:
+    """Premade (curated) folders are shared — only admins may modify them."""
+    if _curated_uid(folder_name) is not None and user.email not in ADMIN_EMAILS:
+        raise HTTPException(403, "Premade course content is read-only.")
 
 
 
@@ -1157,6 +1174,10 @@ def delete_folder(folder_name: str, user: User = Depends(get_current_user)):
 def embed_folder(folder_name: str, user: User = Depends(get_current_user)):
     """Embed all notebooks in a folder into ChromaDB."""
     try:
+        # Curated folders are pre-embedded at bootstrap; skip instead of letting
+        # any user trigger an expensive shared re-embed.
+        if _curated_uid(folder_name) is not None and user.email not in ADMIN_EMAILS:
+            return {"notebooks_embedded": 0, "total_chunks": 0, "skipped": "curated"}
         embed_uid = _curated_uid(folder_name) if _curated_uid(folder_name) is not None else user.id
         result = rag.embed_all_in_folder(embed_uid, folder_name)
         return result
@@ -1183,6 +1204,8 @@ async def upload_folder_source(
     db.close()
     if not user:
         raise HTTPException(401, "User not found")
+
+    _require_curated_write_access(folder_name, user)
 
     if not file.filename:
         raise HTTPException(400, "No filename provided")
@@ -1280,8 +1303,19 @@ async def upload_folder_source(
             from image_extractor import extract_and_store_images
             extract_and_store_images(stored_path, ext, source_id, user.id, folder_name, SOURCE_IMAGES_DIR)
 
+        def _bg_oma_ingest():
+            try:
+                import oma_provider
+                if oma_provider.is_oma_enabled() and ext == ".pdf":
+                    print(f"[BG] OMA ingest starting for {file.filename}")
+                    oma_provider.ingest_pdf_into_oma(user.id, folder_name, stored_path)
+            except Exception:
+                import traceback
+                traceback.print_exc()
+
         threading.Thread(target=_bg_embed, daemon=True).start()
         threading.Thread(target=_bg_images, daemon=True).start()
+        threading.Thread(target=_bg_oma_ingest, daemon=True).start()
 
         return {
             "source_id": source_id,
@@ -1304,6 +1338,7 @@ async def upload_folder_source(
 @app.delete("/api/folders/{folder_name}/sources/{source_id}")
 def delete_folder_source(folder_name: str, source_id: str, user: User = Depends(get_current_user)):
     """Delete a raw source from a folder."""
+    _require_curated_write_access(folder_name, user)
     owner_id = _curated_uid(folder_name) if _curated_uid(folder_name) is not None else user.id
     db = SessionLocal()
     file_path = None
@@ -1317,6 +1352,15 @@ def delete_folder_source(folder_name: str, source_id: str, user: User = Depends(
             raise HTTPException(404, "Source not found")
         file_path = fs.file_path
         db.delete(fs)
+        # Cascade: remove extracted image rows for this source.
+        try:
+            from database import SourceImage
+            db.query(SourceImage).filter(
+                SourceImage.user_id == owner_id,
+                SourceImage.source_id == source_id,
+            ).delete()
+        except Exception:
+            pass
         db.commit()
     finally:
         db.close()
@@ -1411,8 +1455,10 @@ def serve_source_image(image_id: int):
 
 
 @app.get("/api/debug/images")
-def debug_images():
+def debug_images(user: User = Depends(get_current_user)):
     """Debug endpoint: show image status and curated source file_paths."""
+    if user.email not in ADMIN_EMAILS:
+        raise HTTPException(403, "Admin only")
     db = SessionLocal()
     try:
         all_imgs = db.query(SourceImage).all()
@@ -1502,10 +1548,14 @@ async def generate_notebook_from_source(
         raise HTTPException(401, "Invalid token")
     db = SessionLocal()
     user = db.query(User).filter(User.id == int(payload["sub"])).first()
-    fs = db.query(FolderSource).filter(
-        FolderSource.source_id == source_id,
-        FolderSource.folder_name == folder_name,
-    ).first() if user else None
+    fs = None
+    if user:
+        owner_id = _curated_uid(folder_name) if _curated_uid(folder_name) is not None else user.id
+        fs = db.query(FolderSource).filter(
+            FolderSource.user_id == owner_id,
+            FolderSource.source_id == source_id,
+            FolderSource.folder_name == folder_name,
+        ).first()
     db.close()
     if not user:
         raise HTTPException(401, "User not found")
@@ -1711,16 +1761,113 @@ def generate_outline(folder_name: str, user: User = Depends(get_current_user)):
     return result
 
 
+@app.post("/api/folders/{folder_name}/prepare-curated")
+def prepare_curated_lesson(folder_name: str, user: User = Depends(get_current_user)):
+    """Index premade lesson sources (Content OMA + RAG) and seed the static outline."""
+    from curated_config import prepare_curated_lesson as _prepare
+    if _curated_uid(folder_name) is None:
+        raise HTTPException(400, "Not a premade lesson folder.")
+    result = _prepare(user.id, folder_name)
+    if result.get("error"):
+        raise HTTPException(400, result["error"])
+    return result
+
+
+@app.get("/api/folders/{folder_name}/lesson/sections/{section_index}/constellation")
+def get_section_constellation(
+    folder_name: str,
+    section_index: int,
+    user: User = Depends(get_current_user),
+):
+    """Per-section mastery constellation for the lesson map."""
+    src_uid = _curated_uid(folder_name) if _curated_uid(folder_name) is not None else user.id
+    result = lesson.get_section_constellation(
+        user.id, folder_name, section_index, source_user_id=src_uid,
+    )
+    if result.get("error"):
+        raise HTTPException(400, result["error"])
+    return result
+
+
 @app.get("/api/folders/{folder_name}/lesson")
 def get_lesson_state(folder_name: str, user: User = Depends(get_current_user)):
     """Get current lesson state — outline, progress, current section."""
-    return lesson.get_lesson_state(user.id, folder_name)
+    src_uid = _curated_uid(folder_name) if _curated_uid(folder_name) is not None else user.id
+    return lesson.get_lesson_state(user.id, folder_name, source_user_id=src_uid)
+
+
+@app.get("/api/map")
+def get_world_map(user: User = Depends(get_current_user)):
+    """Exploration map with fog of war."""
+    import map_world
+    return map_world.get_map_state(user.id)
+
+
+class MapMoveRequest(BaseModel):
+    dx: int = 0
+    dy: int = 0
+
+
+@app.post("/api/map/move")
+def move_on_map(req: MapMoveRequest, user: User = Depends(get_current_user)):
+    import map_world
+    return map_world.move_player(user.id, req.dx, req.dy)
+
+
+class MapTeleportRequest(BaseModel):
+    x: int
+    y: int
+
+
+@app.post("/api/map/teleport")
+def teleport_on_map(req: MapTeleportRequest, user: User = Depends(get_current_user)):
+    import map_world
+    return map_world.teleport_player(user.id, req.x, req.y)
+
+
+@app.get("/api/map/treasures/{chest_id}/quiz")
+def treasure_quiz(chest_id: str, user: User = Depends(get_current_user)):
+    import treasure
+    result = treasure.build_quiz(user.id, chest_id)
+    if result.get("error") and result.get("error") not in ("already_opened",):
+        code = 400 if result.get("error") != "not_enough_topics" else 422
+        raise HTTPException(code, result.get("message") or result["error"])
+    return result
+
+
+@app.post("/api/map/treasures/{chest_id}/complete")
+def treasure_complete(chest_id: str, body: dict, user: User = Depends(get_current_user)):
+    import treasure
+    answer = body.get("answer") or ""
+    result = treasure.complete_treasure(user.id, chest_id, answer)
+    if result.get("error") == "already_opened":
+        raise HTTPException(409, "Treasure chest already opened")
+    if result.get("error"):
+        raise HTTPException(400, result["error"])
+    return result
 
 
 @app.post("/api/folders/{folder_name}/lesson/advance")
 def advance_lesson(folder_name: str, user: User = Depends(get_current_user)):
     """Advance to the next lesson section."""
     result = lesson.advance_section(user.id, folder_name)
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    return result
+
+
+@app.post("/api/folders/{folder_name}/lesson/section-reward")
+def claim_section_reward_endpoint(
+    folder_name: str,
+    user: User = Depends(get_current_user),
+    body: dict | None = None,
+):
+    """Grant XP + map expansion when Pedro marks a section complete."""
+    body = body or {}
+    section_index = body.get("section_index")
+    if section_index is not None:
+        section_index = int(section_index)
+    result = lesson.claim_section_reward(user.id, folder_name, section_index=section_index)
     if "error" in result:
         raise HTTPException(400, result["error"])
     return result
@@ -1862,6 +2009,7 @@ class ChatSendRequest(BaseModel):
     context_id: Optional[str] = None
     notebook_ids: Optional[list[str]] = None
     section_index: Optional[int] = None
+    concept_id: Optional[str] = None
 
 
 @app.post("/api/chat/send")
@@ -1888,6 +2036,8 @@ def chat_send(req: ChatSendRequest, user: User = Depends(get_current_user)):
             context_type=req.context_type,
             context_id=req.context_id,
             notebook_ids=req.notebook_ids,
+            section_index=req.section_index,
+            concept_id=req.concept_id,
         )
         result["usage"] = _get_user_usage(user.id)
         return result
@@ -1921,6 +2071,7 @@ def chat_stream(req: ChatSendRequest, user: User = Depends(get_current_user)):
                 context_id=req.context_id,
                 notebook_ids=req.notebook_ids,
                 section_index=req.section_index,
+                concept_id=req.concept_id,
             ):
                 if token is not None:
                     yield f"data: {json.dumps({'token': token})}\n\n"
@@ -1943,9 +2094,14 @@ def chat_history(conversation_id: str, user: User = Depends(get_current_user)):
 
 
 @app.get("/api/chat/conversations")
-def chat_conversations(user: User = Depends(get_current_user)):
-    """List all of a user's conversations with Pedro."""
-    return tutor.get_conversations(user.id)
+def chat_conversations(
+    context_type: Optional[str] = None,
+    user: User = Depends(get_current_user),
+):
+    """List a user's Pedro conversations, optionally filtered by context_type."""
+    if context_type and context_type not in ("notebook", "global", "session", "folder", "lesson"):
+        raise HTTPException(400, "Invalid context_type")
+    return tutor.get_conversations(user.id, context_type=context_type)
 
 
 class AddNoteRequest(BaseModel):
@@ -2787,14 +2943,209 @@ def _get_paper_paths(course: str | None = None) -> list[Path]:
     return paper_files
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# OMA DEBUG ENDPOINTS  (only useful for local testing)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/oma/status")
+def oma_status(user: User = Depends(get_current_user)):
+    """Quick sanity check — is OMA enabled, what db, etc."""
+    if user.email not in ADMIN_EMAILS:
+        raise HTTPException(403, "Admin only")
+    import oma_provider
+    return {
+        "rag_provider": oma_provider.RAG_PROVIDER,
+        "oma_enabled": oma_provider.is_oma_enabled(),
+        "student_oma_enabled": oma_provider.is_student_enabled(),
+        "db_path": str(oma_provider.OMA_DB_PATH),
+        "image_dir": str(oma_provider.OMA_IMAGE_DIR),
+    }
+
+
+@app.get("/api/oma/images/{item_id}")
+def serve_oma_image(item_id: str):
+    """Serve a Content OMA extracted image by its store item id."""
+    import oma_provider
+    if not oma_provider.is_oma_enabled():
+        raise HTTPException(404, "OMA not enabled")
+    path = oma_provider.get_oma_image_path(item_id)
+    if not path:
+        raise HTTPException(404, "Image not found")
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        path=str(path),
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@app.get("/api/oma/folder/{folder_name}/stats")
+def oma_folder_stats(folder_name: str, user: User = Depends(get_current_user)):
+    """How many concepts / chunks / images does OMA have for this folder?"""
+    import oma_provider
+    if not oma_provider.is_oma_enabled():
+        return {"error": "OMA not enabled"}
+    from coast_content_oma.stores import make_namespace
+    src_uid = _curated_uid(folder_name) if _curated_uid(folder_name) is not None else user.id
+    ns = make_namespace(src_uid, folder_name)
+    orch = oma_provider._content_orchestrator()
+    return {
+        "namespace": ns,
+        "concepts": orch.concept.stats(ns),
+        "content": orch.content.stats(ns),
+        "images": orch.images.stats(ns),
+    }
+
+
+@app.get("/api/oma/folder/{folder_name}/preview")
+def oma_folder_preview(folder_name: str, q: str, user: User = Depends(get_current_user)):
+    """Preview what OMA would inject into Pedro's prompt for query q."""
+    import oma_provider
+    src_uid = _curated_uid(folder_name) if _curated_uid(folder_name) is not None else user.id
+    block, concept_ids = oma_provider.get_folder_context(src_uid, folder_name, q)
+    return {"concept_ids": concept_ids, "prompt_block": block}
+
+
+@app.get("/api/oma/folder/{folder_name}/compare")
+def oma_folder_compare(folder_name: str, q: str, user: User = Depends(get_current_user)):
+    """Side-by-side: Content OMA vs flat RAG for the same query.
+
+    Use this to A/B what Pedro would see under each retrieval method.
+    Lesson chat uses OMA when RAG_PROVIDER=oma and OMA returns a block.
+    """
+    import time
+    import oma_provider
+    import rag
+    from curated_config import curated_source_uid
+
+    src_uid = curated_source_uid(folder_name)
+    effective_uid = src_uid if src_uid is not None else user.id
+
+    t0 = time.time()
+    oma_block, concept_ids = oma_provider.get_folder_context(
+        effective_uid, folder_name, q,
+        max_chars=14000, max_content=12, max_images=6,
+    )
+    oma_ms = round((time.time() - t0) * 1000)
+
+    t0 = time.time()
+    rag_block = rag.build_folder_context(effective_uid, folder_name, q, max_chars=14000)
+    rag_ms = round((time.time() - t0) * 1000)
+
+    if oma_provider.is_oma_enabled() and oma_block:
+        lesson_uses = "content_oma"
+    elif rag_block:
+        lesson_uses = "flat_rag"
+    else:
+        lesson_uses = "fallback_raw_text"
+
+    return {
+        "rag_provider": oma_provider.RAG_PROVIDER,
+        "lesson_would_use": lesson_uses,
+        "query": q,
+        "content_oma": {
+            "chars": len(oma_block),
+            "ms": oma_ms,
+            "concept_count": len(concept_ids),
+            "concept_ids": concept_ids,
+            "prompt_block": oma_block,
+        },
+        "flat_rag": {
+            "chars": len(rag_block),
+            "ms": rag_ms,
+            "prompt_block": rag_block,
+        },
+    }
+
+
+@app.post("/api/oma/folder/{folder_name}/ingest-all")
+def oma_folder_reingest(folder_name: str, user: User = Depends(get_current_user)):
+    """Re-ingest every PDF source already uploaded to this folder into
+    Content OMA. Useful when:
+      - You enabled RAG_PROVIDER=oma after sources were uploaded
+      - The original upload-time OMA ingest failed (rate limits, etc.)
+    Returns immediately; ingestion runs in a background thread."""
+    import oma_provider
+    if not oma_provider.is_oma_enabled():
+        return {"error": "OMA not enabled"}
+
+    db = SessionLocal()
+    try:
+        sources = (
+            db.query(FolderSource)
+            .filter(
+                FolderSource.user_id == user.id,
+                FolderSource.folder_name == folder_name,
+            )
+            .all()
+        )
+        queued = []
+        for s in sources:
+            stored = FOLDER_UPLOADS_DIR / f"{s.source_id}{Path(s.filename).suffix.lower()}"
+            if stored.exists() and stored.suffix.lower() == ".pdf":
+                oma_provider.ingest_pdf_async(user.id, folder_name, stored)
+                queued.append(s.source_id)
+        return {"queued": queued, "count": len(queued)}
+    finally:
+        db.close()
+
+
+@app.get("/api/oma/student/{folder_name}/profile")
+def oma_student_profile(folder_name: str, user: User = Depends(get_current_user)):
+    """Inspect the student's current cognitive profile for this folder."""
+    import oma_provider
+    if not oma_provider.is_student_enabled():
+        return {"error": "Student OMA not enabled"}
+    orch = oma_provider._student_orchestrator()
+    profile = orch.build_profile(user.id, folder_name)
+    return {
+        "profile": profile,
+        "prompt_block": orch.to_prompt_block(profile),
+    }
+
+
+@app.get("/api/oma/student/{folder_name}/analysis")
+def oma_student_analysis(folder_name: str, user: User = Depends(get_current_user)):
+    """Student Analysis screen — profile + concept mind map for a course folder."""
+    import oma_provider
+    result = oma_provider.build_student_analysis(user.id, folder_name)
+    if result.get("error"):
+        raise HTTPException(400, result["error"])
+    return result
+
+
+@app.get("/api/oma/student/summary")
+def oma_student_summary(user: User = Depends(get_current_user)):
+    """Cross-course learning summary for the dashboard."""
+    import oma_provider
+    return oma_provider.build_student_global_summary(user.id)
+
+
+@app.get("/api/oma/student/mindmap")
+def oma_student_mindmap(user: User = Depends(get_current_user)):
+    """Global knowledge graph — all courses aggregated (Obsidian-style)."""
+    import oma_provider
+    result = oma_provider.build_student_global_mindmap(user.id)
+    if result.get("error") and not result.get("graph", {}).get("nodes"):
+        raise HTTPException(400, result["error"])
+    return result
+
+
 if __name__ == "__main__":
     import uvicorn
 
     print("=" * 50)
-    print("  Coast API Server")
+    print("  Coast API Server  (local OMA build)")
     print("=" * 50)
     print(f"  Papers dir:  {PAPERS_DIR}")
     print(f"  Generated:   {GENERATED_DIR}")
     print(f"  Database:    {Path(__file__).parent / 'coast.db'}")
+    try:
+        import oma_provider
+        print(f"  RAG provider: {oma_provider.RAG_PROVIDER}")
+        print(f"  Student OMA:  {oma_provider.is_student_enabled()}")
+        print(f"  OMA db:       {oma_provider.OMA_DB_PATH}")
+    except Exception as _e:
+        print(f"  OMA provider not available: {_e}")
     print("=" * 50)
     uvicorn.run(app, host="0.0.0.0", port=8000)

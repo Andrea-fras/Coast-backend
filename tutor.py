@@ -409,6 +409,7 @@ def build_system_prompt(
     skill_profile: Optional[dict] = None,
     session_context: Optional[str] = None,
     explicit_notebook_ref: bool = False,
+    student_profile_block: Optional[str] = None,
 ) -> str:
     """Construct the full system prompt with all available context."""
     parts = [PEDRO_IDENTITY]
@@ -468,6 +469,11 @@ def build_system_prompt(
     # Tutor memo
     if tutor_memo:
         parts.append(f"\nYour notes about this student from past sessions:\n{tutor_memo}")
+
+    # Student OMA — personalized cognitive profile (additive, only present
+    # when oma_provider has data for this student in this course).
+    if student_profile_block:
+        parts.append("\n" + student_profile_block)
 
     # Context-specific content
     if context_type == "notebook" and notebook_content:
@@ -643,6 +649,8 @@ def send_message(
     context_type: str,
     context_id: Optional[str] = None,
     notebook_ids: Optional[list[str]] = None,
+    section_index: Optional[int] = None,
+    concept_id: Optional[str] = None,
 ) -> dict:
     """Process a student message and return Pedro's response.
 
@@ -666,6 +674,9 @@ def send_message(
         skill_row = db.query(SkillProfile).filter(SkillProfile.user_id == user_id).first()
         skill_data = json.loads(skill_row.profile_json) if skill_row else {}
 
+        import oma_provider
+        retrieval_capture = oma_provider.reset_content_retrieval_log()
+
         # Load context-specific content
         notebook_content = None
         session_context = None
@@ -676,23 +687,31 @@ def send_message(
                 import lesson as lesson_mod
                 from curated_config import curated_source_uid as _curated_uid, get_lesson_structure
                 src_uid = _curated_uid(context_id)
-                notebook_content = lesson_mod.build_lesson_prompt(
-                    user_id, context_id,
-                    source_user_id=src_uid if src_uid is not None else None,
-                    structure=get_lesson_structure(context_id),
-                )
+                if concept_id is not None and section_index is not None:
+                    notebook_content = lesson_mod.build_concept_focus_prompt(
+                        user_id, context_id, concept_id, section_index,
+                        source_user_id=src_uid if src_uid is not None else None,
+                        student_message=message,
+                    )
+                else:
+                    notebook_content = lesson_mod.build_lesson_prompt(
+                        user_id, context_id,
+                        source_user_id=src_uid if src_uid is not None else None,
+                        structure=get_lesson_structure(context_id),
+                        student_message=message,
+                    )
             except Exception:
                 import traceback as tb
                 tb.print_exc()
                 notebook_content = None
         elif context_type == "folder" and context_id:
             try:
-                import rag
+                import oma_provider
                 from curated_config import curated_source_uid as _curated_uid
                 rag_uid = _curated_uid(context_id)
-                notebook_content = rag.build_folder_context(
-                    rag_uid if rag_uid is not None else user_id,
-                    context_id, message,
+                effective_uid = rag_uid if rag_uid is not None else user_id
+                notebook_content, _, _ = oma_provider.resolve_folder_content(
+                    effective_uid, context_id, message, context_type="folder",
                 )
             except Exception:
                 import traceback as tb
@@ -731,10 +750,14 @@ def send_message(
             explicit_notebook_ref=explicit_notebook_ref,
         )
 
-        # Load conversation history
+        # Load conversation history (scoped to this user so one user can't
+        # read another's thread by guessing a conversation_id)
         history = (
             db.query(ChatMessage)
-            .filter(ChatMessage.conversation_id == conversation_id)
+            .filter(
+                ChatMessage.conversation_id == conversation_id,
+                ChatMessage.user_id == user_id,
+            )
             .order_by(ChatMessage.created_at.asc())
             .all()
         )
@@ -771,13 +794,13 @@ def send_message(
 
         if not reply:
             if CHAT_PROVIDER == "gemini":
-                reply = _call_gemini(messages, max_tokens=500, temperature=0.7)
+                reply = _call_gemini(messages, max_tokens=4096, temperature=0.7)
             else:
                 client, model = _get_client(CHAT_PROVIDER)
                 response = client.chat.completions.create(
                     model=model,
                     messages=messages,
-                    max_tokens=500,
+                    max_tokens=4096,
                     temperature=0.7,
                 )
                 reply = response.choices[0].message.content.strip()
@@ -826,6 +849,7 @@ def send_message(
             "reply": reply,
             "conversation_id": conversation_id,
             "message_id": pedro_msg.id,
+            "content_retrieval": oma_provider.summarize_content_retrieval(reply, retrieval_capture),
         }
     finally:
         db.close()
@@ -839,6 +863,7 @@ def send_message_stream(
     context_id: Optional[str] = None,
     notebook_ids: Optional[list[str]] = None,
     section_index: Optional[int] = None,
+    concept_id: Optional[str] = None,
 ):
     """Streaming version of send_message. Yields (token, None) for each chunk,
     then (None, result_dict) for the final metadata."""
@@ -856,35 +881,57 @@ def send_message_stream(
         skill_row = db.query(SkillProfile).filter(SkillProfile.user_id == user_id).first()
         skill_data = json.loads(skill_row.profile_json) if skill_row else {}
 
+        import oma_provider
+        retrieval_capture = oma_provider.reset_content_retrieval_log()
+
         notebook_content = None
         session_context = None
         explicit_notebook_ref = False
+        lesson_section_idx = section_index
 
         if context_type == "lesson" and context_id:
             try:
                 import lesson as lesson_mod
+                if lesson_section_idx is None:
+                    prog = lesson_mod.get_authoritative_progress(user_id, context_id)
+                    if prog and not prog.get("is_complete"):
+                        lesson_section_idx = int(prog["current_section"])
+                lesson_mod.handle_pre_lesson_message(
+                    user_id, context_id, lesson_section_idx, message,
+                )
                 from curated_config import curated_source_uid as _curated_uid, get_lesson_structure
                 src_uid = _curated_uid(context_id)
-                notebook_content = lesson_mod.build_lesson_prompt(
-                    user_id, context_id,
-                    source_user_id=src_uid if src_uid is not None else None,
-                    structure=get_lesson_structure(context_id),
-                )
+                if concept_id is not None and lesson_section_idx is not None:
+                    notebook_content = lesson_mod.build_concept_focus_prompt(
+                        user_id, context_id, concept_id, lesson_section_idx,
+                        source_user_id=src_uid if src_uid is not None else None,
+                        student_message=message,
+                    )
+                else:
+                    notebook_content = lesson_mod.build_lesson_prompt(
+                        user_id, context_id,
+                        source_user_id=src_uid if src_uid is not None else None,
+                        structure=get_lesson_structure(context_id),
+                        student_message=message,
+                    )
             except Exception:
                 import traceback as tb
                 tb.print_exc()
         elif context_type == "folder" and context_id:
             try:
-                import rag
+                import oma_provider
                 from curated_config import curated_source_uid as _curated_uid
                 rag_uid = _curated_uid(context_id)
-                notebook_content = rag.build_folder_context(
-                    rag_uid if rag_uid is not None else user_id,
-                    context_id, message,
+                effective_uid = rag_uid if rag_uid is not None else user_id
+                notebook_content, _src, oma_concept_ids_for_episode = (
+                    oma_provider.resolve_folder_content(
+                        effective_uid, context_id, message, context_type="folder",
+                    )
                 )
             except Exception:
                 import traceback as tb
                 tb.print_exc()
+                oma_concept_ids_for_episode = []
         elif context_type == "notebook" and context_id:
             notebook_content = _load_notebook_text(context_id, user_id)
         elif context_type == "session" and context_id:
@@ -907,6 +954,26 @@ def send_message_stream(
                 if snippets:
                     notebook_content = snippets
 
+        # Student OMA — personalized profile block for Pedro.
+        # Lesson/folder: per-course profile. Global: cross-course summary.
+        student_profile_block = None
+        try:
+            import oma_provider
+            if oma_provider.is_student_enabled():
+                if context_type in ("folder", "lesson") and context_id:
+                    student_profile_block = oma_provider.get_student_profile_block(
+                        user_id, context_id,
+                        current_concept_ids=(
+                            [concept_id] if concept_id
+                            else locals().get("oma_concept_ids_for_episode") or None
+                        ),
+                    )
+                elif context_type == "global":
+                    student_profile_block = oma_provider.get_global_student_profile_block(user_id)
+        except Exception:
+            import traceback as tb
+            tb.print_exc()
+
         system_prompt = build_system_prompt(
             user=user,
             context_type=context_type,
@@ -915,11 +982,15 @@ def send_message_stream(
             skill_profile=skill_data,
             session_context=session_context,
             explicit_notebook_ref=explicit_notebook_ref,
+            student_profile_block=student_profile_block,
         )
 
         history = (
             db.query(ChatMessage)
-            .filter(ChatMessage.conversation_id == conversation_id)
+            .filter(
+                ChatMessage.conversation_id == conversation_id,
+                ChatMessage.user_id == user_id,
+            )
             .order_by(ChatMessage.created_at.asc())
             .all()
         )
@@ -968,28 +1039,64 @@ def send_message_stream(
                 elif m["role"] == "assistant":
                     parts.append({"role": "model", "parts": [{"text": m["content"]}]})
 
-            config = {"temperature": 0.7, "max_output_tokens": 4096}
+            config = {"temperature": 0.7, "max_output_tokens": 8192}
             if sys_text:
                 config["system_instruction"] = sys_text.strip()
 
-            try:
-                for chunk in client.models.generate_content_stream(
-                    model=model_name, contents=parts, config=config,
-                ):
-                    if chunk.text:
-                        full_reply += chunk.text
-                        yield (chunk.text, None)
-            except Exception as e:
-                print(f"[Gemini Stream] Error: {e}")
-                if not full_reply:
-                    full_reply = "I'm having a brief technical issue. Could you try asking again?"
-                    yield (full_reply, None)
+            # Try Gemini up to 3 times on transient errors (503 overload,
+            # 429 quota, 500 internal). On final failure WITH zero tokens
+            # streamed, fall back to OpenAI so the user never sees the
+            # "brief technical issue" message.
+            gemini_attempts = 0
+            gemini_succeeded = False
+            while gemini_attempts < 3 and not gemini_succeeded:
+                gemini_attempts += 1
+                try:
+                    for chunk in client.models.generate_content_stream(
+                        model=model_name, contents=parts, config=config,
+                    ):
+                        if chunk.text:
+                            full_reply += chunk.text
+                            yield (chunk.text, None)
+                    gemini_succeeded = True
+                except Exception as e:
+                    err = str(e)
+                    transient = any(code in err for code in ("503", "429", "500", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "INTERNAL"))
+                    print(f"[Gemini Stream] Error (attempt {gemini_attempts}/3, transient={transient}): {e}")
+                    if full_reply:
+                        # Already streamed something; don't retry, just stop cleanly.
+                        gemini_succeeded = True
+                        break
+                    if transient and gemini_attempts < 3:
+                        import time as _t
+                        _t.sleep(1.5 * gemini_attempts)
+                        continue
+                    # Out of retries or non-transient — try OpenAI instead.
+                    print(f"[Gemini Stream] Falling back to OpenAI after {gemini_attempts} failed attempts")
+                    try:
+                        oai_client, oai_model = _get_client("openai")
+                        oai_stream = oai_client.chat.completions.create(
+                            model=oai_model, messages=llm_messages,
+                            max_tokens=4096, temperature=0.7, stream=True,
+                        )
+                        for oai_chunk in oai_stream:
+                            delta = oai_chunk.choices[0].delta
+                            if delta and delta.content:
+                                full_reply += delta.content
+                                yield (delta.content, None)
+                        gemini_succeeded = True
+                    except Exception as oai_e:
+                        print(f"[OpenAI Fallback] Error: {oai_e}")
+                        if not full_reply:
+                            full_reply = "I'm having a brief technical issue. Could you try asking again?"
+                            yield (full_reply, None)
+                        gemini_succeeded = True
         elif not viz_done:
             client, model_name = _get_client(CHAT_PROVIDER)
             try:
                 stream = client.chat.completions.create(
                     model=model_name, messages=llm_messages,
-                    max_tokens=500, temperature=0.7, stream=True,
+                    max_tokens=4096, temperature=0.7, stream=True,
                 )
                 for chunk in stream:
                     delta = chunk.choices[0].delta
@@ -1031,10 +1138,47 @@ def send_message_stream(
             db.add(new_memo)
         db.commit()
 
+        # Student OMA — fire-and-forget episode log + mastery update.
+        # Records for both "folder" and "lesson" contexts (lesson uses
+        # curated/uploaded folder content; both belong to the same course).
+        if context_type in ("folder", "lesson") and context_id:
+            try:
+                import oma_provider
+                if oma_provider.is_student_enabled():
+                    oma_provider.record_chat_episode(
+                        user_id=user_id,
+                        folder=context_id,
+                        user_message=message,
+                        assistant_response=full_reply,
+                        section_index=lesson_section_idx if context_type == "lesson" else section_index,
+                        focus_concept_id=concept_id,
+                    )
+            except Exception:
+                import traceback as tb
+                tb.print_exc()
+
+        section_verified = False
+        if context_type == "lesson" and context_id and lesson_section_idx is not None:
+            try:
+                import lesson as lesson_mod
+                import oma_provider
+                if oma_provider.TAG_SECTION_COMPLETE in full_reply:
+                    lesson_mod.mark_section_verified(
+                        user_id, context_id, int(lesson_section_idx),
+                    )
+                section_verified = lesson_mod.can_advance_from_section(
+                    user_id, context_id, int(lesson_section_idx),
+                )
+            except Exception:
+                import traceback as tb
+                tb.print_exc()
+
         yield (None, {
             "reply": full_reply,
             "conversation_id": conversation_id,
             "message_id": pedro_msg.id,
+            "content_retrieval": oma_provider.summarize_content_retrieval(full_reply, retrieval_capture),
+            "section_verified": section_verified,
         })
     finally:
         db.close()
@@ -1223,21 +1367,25 @@ def get_chat_history(conversation_id: str, user_id: int) -> list[dict]:
         db.close()
 
 
-def get_conversations(user_id: int) -> list[dict]:
-    """List all conversations for a user, with last message preview."""
+def get_conversations(user_id: int, context_type: Optional[str] = None) -> list[dict]:
+    """List conversations for a user, with last message preview."""
     db = SessionLocal()
     try:
         # Get distinct conversation IDs with their latest message
         from sqlalchemy import func
 
+        query = db.query(
+            ChatMessage.conversation_id,
+            ChatMessage.context_type,
+            ChatMessage.context_id,
+            func.max(ChatMessage.created_at).label("last_at"),
+        ).filter(ChatMessage.user_id == user_id)
+
+        if context_type:
+            query = query.filter(ChatMessage.context_type == context_type)
+
         convos = (
-            db.query(
-                ChatMessage.conversation_id,
-                ChatMessage.context_type,
-                ChatMessage.context_id,
-                func.max(ChatMessage.created_at).label("last_at"),
-            )
-            .filter(ChatMessage.user_id == user_id)
+            query
             .group_by(ChatMessage.conversation_id)
             .order_by(func.max(ChatMessage.created_at).desc())
             .all()

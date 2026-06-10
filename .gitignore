@@ -37,3 +37,7 @@ folder_uploads/
 
 # Past paper PDFs (admin source files, not needed in repo)
 past_papers/
+
+# Local data stores (rebuilt on server)
+chroma_data/
+oma_data/
