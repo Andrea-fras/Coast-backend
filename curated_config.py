@@ -13,6 +13,9 @@ CURATED_FOLDER_NAMES = {
     "Data Structures & Algorithms",
     "Prismatic System",
     "Science of Cooking",
+    "Memory Palace",
+    "First-Principles Thinking",
+    "The Polya Method",
 }
 CURATED_CONTENT_DIR = Path(__file__).parent / "curated_content"
 CURATED_USER_ID = 0
@@ -22,6 +25,9 @@ FOLDER_TO_COURSE: dict[str, str] = {
     "Data Structures & Algorithms": "DSA",
     "Prismatic System": "PRISMATIC",
     "Science of Cooking": "SOC",
+    "Memory Palace": "MEMORY",
+    "First-Principles Thinking": "FIRSTPRIN",
+    "The Polya Method": "POLYA",
 }
 
 _COURSE_KEYWORDS: dict[str, list[str]] = {
@@ -181,6 +187,233 @@ CURATED_STATIC_OUTLINES: dict[str, list[dict]] = {
             "estimated_minutes": 35,
         },
     ],
+    "Memory Palace": [
+        {
+            "title": "The Origin of the Method",
+            "learning_objectives": [
+                "Retell the Simonides of Ceos story and why it launched the method of loci",
+                "Explain how spatial position became a tool for identifying the dead at Thessaly",
+                "Recognize why place-based recall predates written storage",
+            ],
+            "key_topics": [
+                "Simonides of Ceos",
+                "method of loci",
+                "spatial memory",
+                "banquet hall collapse",
+                "ancient mnemonics",
+            ],
+            "source_notebooks": ["memory palace module 1 simonides"],
+            "estimated_minutes": 20,
+        },
+        {
+            "title": "Your Brain's Spatial Hardware",
+            "learning_objectives": [
+                "Contrast working memory limits with spatial/episodic memory strength",
+                "Describe why the hippocampus excels at places over abstract lists",
+                "Complete the ten-item demonstration using spatial intuition",
+            ],
+            "key_topics": [
+                "hippocampus",
+                "working memory",
+                "spatial vs semantic memory",
+                "ten-item list",
+                "von Restorff effect",
+            ],
+            "source_notebooks": ["memory palace modules 2 3 hippocampus"],
+            "estimated_minutes": 25,
+        },
+        {
+            "title": "Building & Encoding",
+            "learning_objectives": [
+                "Choose a familiar route and five ordered locations for a first palace",
+                "Apply the three encoding rules: absurd, sensory, and multisensory scenes",
+                "Avoid flat literal placements that fail to stick",
+            ],
+            "key_topics": [
+                "memory palace construction",
+                "encoding rules",
+                "absurd imagery",
+                "multisensory scenes",
+                "location path",
+            ],
+            "source_notebooks": ["memory palace modules 4 5 encoding"],
+            "estimated_minutes": 30,
+        },
+        {
+            "title": "Hands-On Practice",
+            "learning_objectives": [
+                "Place the first five list items across five palace locations",
+                "Walk the path mentally and recall items in order",
+                "Scale the palace to ten locations and retrieve all items effortlessly",
+            ],
+            "key_topics": [
+                "palace walkthrough",
+                "ordered recall",
+                "scaling locations",
+                "mental rehearsal",
+                "practice exercise",
+            ],
+            "source_notebooks": ["memory palace modules 6 7 practice"],
+            "estimated_minutes": 30,
+        },
+        {
+            "title": "From Champions to Your Exams",
+            "learning_objectives": [
+                "Explain how memory athletes use palaces at competition scale",
+                "Translate abstract study material (vocabulary, formulas, speeches) into palace images",
+                "Design a personal study workflow using the memory palace craft",
+            ],
+            "key_topics": [
+                "memory champions",
+                "vocabulary mnemonics",
+                "formulas and speeches",
+                "exam preparation",
+                "memory as craft",
+            ],
+            "source_notebooks": ["memory palace modules 8 9 10 study"],
+            "estimated_minutes": 25,
+        },
+    ],
+    "First-Principles Thinking": [
+        {
+            "title": "The Habit of First Principles",
+            "learning_objectives": [
+                "Distinguish reasoning by analogy from reasoning by first principles",
+                "Identify when a problem is being solved with inherited assumptions",
+                "Explain why defaults and conventions can hide weak reasoning",
+            ],
+            "key_topics": [
+                "first principles",
+                "reasoning by analogy",
+                "assumptions",
+                "Aristotle",
+                "fundamental truths",
+            ],
+            "source_notebooks": ["first principles section 1 habit"],
+            "estimated_minutes": 25,
+        },
+        {
+            "title": "Strip Down to Facts",
+            "learning_objectives": [
+                "Separate verified facts from assumptions and guesses",
+                "Question each layer of a problem until only certainties remain",
+                "Document what you know vs what you are inferring",
+            ],
+            "key_topics": [
+                "decomposition",
+                "verified facts",
+                "assumption audit",
+                "unknowns",
+                "problem framing",
+            ],
+            "source_notebooks": ["first principles section 2 facts"],
+            "estimated_minutes": 30,
+        },
+        {
+            "title": "Rebuild From the Ground Up",
+            "learning_objectives": [
+                "Construct a solution only from verified building blocks",
+                "Avoid smuggling in conclusions from analogy or convention",
+                "Compare a first-principles answer to a conventional one",
+            ],
+            "key_topics": [
+                "reconstruction",
+                "building blocks",
+                "logical assembly",
+                "conventional vs fundamental",
+                "synthesis",
+            ],
+            "source_notebooks": ["first principles section 3 rebuild"],
+            "estimated_minutes": 30,
+        },
+        {
+            "title": "First Principles Under Pressure",
+            "learning_objectives": [
+                "Apply the method to exam-style and open-ended study problems",
+                "Recognize when to use first principles vs when analogy is enough",
+                "Build a personal checklist for high-stakes reasoning",
+            ],
+            "key_topics": [
+                "exam problems",
+                "essays",
+                "open-ended reasoning",
+                "checklist",
+                "real applications",
+            ],
+            "source_notebooks": ["first principles section 4 pressure"],
+            "estimated_minutes": 30,
+        },
+    ],
+    "The Polya Method": [
+        {
+            "title": "Understand the Problem",
+            "learning_objectives": [
+                "Restate the problem in your own words before attempting a solution",
+                "Identify the unknown, the data, and the conditions given",
+                "Verify you can explain the goal to someone else",
+            ],
+            "key_topics": [
+                "Polya method",
+                "understand the problem",
+                "unknowns",
+                "problem restatement",
+                "George Polya",
+            ],
+            "source_notebooks": ["polya phase 1 understand"],
+            "estimated_minutes": 25,
+        },
+        {
+            "title": "Devise a Plan",
+            "learning_objectives": [
+                "Connect the problem to related problems and known techniques",
+                "Choose a strategy before executing calculations",
+                "Break a large problem into sub-problems with a clear order",
+            ],
+            "key_topics": [
+                "planning",
+                "strategy selection",
+                "related problems",
+                "sub-problems",
+                "heuristics",
+            ],
+            "source_notebooks": ["polya phase 2 plan"],
+            "estimated_minutes": 30,
+        },
+        {
+            "title": "Carry Out the Plan",
+            "learning_objectives": [
+                "Execute each step deliberately and check work as you go",
+                "Recognize when a plan is failing and pivot early",
+                "Maintain clarity between intermediate results and the final goal",
+            ],
+            "key_topics": [
+                "execution",
+                "step-by-step",
+                "checking work",
+                "pivoting",
+                "intermediate results",
+            ],
+            "source_notebooks": ["polya phase 3 execute"],
+            "estimated_minutes": 30,
+        },
+        {
+            "title": "Look Back",
+            "learning_objectives": [
+                "Verify the answer satisfies the original problem conditions",
+                "Reflect on which methods worked and why",
+                "Generalize the approach for similar future problems",
+            ],
+            "key_topics": [
+                "look back",
+                "verification",
+                "reflection",
+                "generalization",
+                "How to Solve It",
+            ],
+            "source_notebooks": ["polya phase 4 look back"],
+            "estimated_minutes": 25,
+        },
+    ],
 }
 
 CURATED_LESSON_STRUCTURES = {
@@ -310,6 +543,114 @@ CURATED_LESSON_STRUCTURES = {
                 "name": "Lecture 4 — Leavening",
                 "description": "Fermentation, gas laws, nucleation, bread rising thermodynamics",
                 "source_patterns": ["lecture 4", "leaven", "ferment", "bread rises", "yeast"],
+            },
+        ],
+    },
+    "Memory Palace": {
+        "description": (
+            "Single-lecture craft course: ancient origins → brain science → build a palace → "
+            "encode absurd scenes → practice recall → apply to real studying."
+        ),
+        "pedagogy": (
+            "This is a hands-on craft lesson, not a theory overview. Walk the student through "
+            "the ten-item list exercise in real time. Insist on absurd, sensory encoding — "
+            "never accept a word sitting passively on a floor. After each module, have the "
+            "student close their eyes and walk their palace before advancing. Connect Module 9 "
+            "applications directly to the student's own courses and exam material."
+        ),
+        "parts": [
+            {
+                "name": "Module 1 — Simonides",
+                "description": "The banquet collapse and birth of the method of loci",
+                "source_patterns": ["module 1", "simonides", "477 bc", "banquet"],
+            },
+            {
+                "name": "Modules 2–3 — Brain Science",
+                "description": "Ten-item demo, hippocampus, spatial vs semantic memory",
+                "source_patterns": ["module 2", "module 3", "hippocampus", "banana", "working memory"],
+            },
+            {
+                "name": "Modules 4–5 — Build & Encode",
+                "description": "Choose a route, five locations, absurd multisensory encoding rules",
+                "source_patterns": ["module 4", "module 5", "encoding", "childhood", "absurd"],
+            },
+            {
+                "name": "Modules 6–7 — Practice",
+                "description": "Place items, walk the palace, scale to ten locations",
+                "source_patterns": ["module 6", "module 7", "skateboard", "pineapple", "scaling"],
+            },
+            {
+                "name": "Modules 8–10 — Mastery",
+                "description": "Memory champions, real study applications, memory as craft",
+                "source_patterns": ["module 8", "module 9", "module 10", "vocabulary", "champions"],
+            },
+        ],
+    },
+    "First-Principles Thinking": {
+        "description": (
+            "Four-section craft course: name the habit → strip assumptions → rebuild from facts → "
+            "apply under exam and open-ended pressure."
+        ),
+        "pedagogy": (
+            "Treat first principles as a repeatable habit, not a buzzword. After each section, "
+            "force the student to articulate what they know for certain vs what they are assuming. "
+            "Use concrete study problems from the student's own courses when possible. "
+            "Contrast analogy-based shortcuts with rebuilt answers so the difference is felt, not just defined."
+        ),
+        "parts": [
+            {
+                "name": "Section 1 — The Habit",
+                "description": "Analogy vs first principles; when defaults mislead",
+                "source_patterns": ["section 1", "habit", "analogy", "assumptions"],
+            },
+            {
+                "name": "Section 2 — Strip to Facts",
+                "description": "Decompose until only verified facts remain",
+                "source_patterns": ["section 2", "facts", "decomposition", "unknowns"],
+            },
+            {
+                "name": "Section 3 — Rebuild",
+                "description": "Synthesize answers from fundamentals only",
+                "source_patterns": ["section 3", "rebuild", "synthesis", "building blocks"],
+            },
+            {
+                "name": "Section 4 — Under Pressure",
+                "description": "Apply on exams, essays, and open-ended problems",
+                "source_patterns": ["section 4", "pressure", "exam", "checklist"],
+            },
+        ],
+    },
+    "The Polya Method": {
+        "description": (
+            "George Polya's four-phase problem-solving sequence: understand → plan → "
+            "execute → look back."
+        ),
+        "pedagogy": (
+            "Never skip Phase 1. Make the student restate the problem before any calculation. "
+            "In Phase 2, require an explicit plan in words before numbers. During execution, "
+            "pause after each major step for a sanity check. Phase 4 is mandatory: verify the "
+            "answer and name the method so the student can reuse it."
+        ),
+        "parts": [
+            {
+                "name": "Phase 1 — Understand",
+                "description": "Restate, identify unknowns, confirm the goal",
+                "source_patterns": ["phase 1", "understand", "restate", "unknown"],
+            },
+            {
+                "name": "Phase 2 — Plan",
+                "description": "Strategy selection and sub-problem decomposition",
+                "source_patterns": ["phase 2", "plan", "strategy", "related problems"],
+            },
+            {
+                "name": "Phase 3 — Execute",
+                "description": "Step-by-step carry-through with ongoing checks",
+                "source_patterns": ["phase 3", "execute", "carry out", "check"],
+            },
+            {
+                "name": "Phase 4 — Look Back",
+                "description": "Verify, reflect, and generalize the method",
+                "source_patterns": ["phase 4", "look back", "verify", "generalize"],
             },
         ],
     },
