@@ -289,7 +289,7 @@ CURATED_STATIC_OUTLINES: dict[str, list[dict]] = {
                 "Aristotle",
                 "fundamental truths",
             ],
-            "source_notebooks": ["first principles section 1 habit"],
+            "source_notebooks": ["first principles module 1 2 3 habit analogy"],
             "estimated_minutes": 25,
         },
         {
@@ -306,7 +306,7 @@ CURATED_STATIC_OUTLINES: dict[str, list[dict]] = {
                 "unknowns",
                 "problem framing",
             ],
-            "source_notebooks": ["first principles section 2 facts"],
+            "source_notebooks": ["first principles module 4 5 procedure example"],
             "estimated_minutes": 30,
         },
         {
@@ -323,7 +323,7 @@ CURATED_STATIC_OUTLINES: dict[str, list[dict]] = {
                 "conventional vs fundamental",
                 "synthesis",
             ],
-            "source_notebooks": ["first principles section 3 rebuild"],
+            "source_notebooks": ["first principles module 6 7 fails gallery"],
             "estimated_minutes": 30,
         },
         {
@@ -340,7 +340,7 @@ CURATED_STATIC_OUTLINES: dict[str, list[dict]] = {
                 "checklist",
                 "real applications",
             ],
-            "source_notebooks": ["first principles section 4 pressure"],
+            "source_notebooks": ["first principles module 8 9 10 exercise pressure"],
             "estimated_minutes": 30,
         },
     ],
@@ -359,7 +359,7 @@ CURATED_STATIC_OUTLINES: dict[str, list[dict]] = {
                 "problem restatement",
                 "George Polya",
             ],
-            "source_notebooks": ["polya phase 1 understand"],
+            "source_notebooks": ["polya module 1 2 3 understand demonstration"],
             "estimated_minutes": 25,
         },
         {
@@ -376,7 +376,7 @@ CURATED_STATIC_OUTLINES: dict[str, list[dict]] = {
                 "sub-problems",
                 "heuristics",
             ],
-            "source_notebooks": ["polya phase 2 plan"],
+            "source_notebooks": ["polya module 4 5 plan four steps"],
             "estimated_minutes": 30,
         },
         {
@@ -393,7 +393,7 @@ CURATED_STATIC_OUTLINES: dict[str, list[dict]] = {
                 "pivoting",
                 "intermediate results",
             ],
-            "source_notebooks": ["polya phase 3 execute"],
+            "source_notebooks": ["polya module 6 7 execute carry out"],
             "estimated_minutes": 30,
         },
         {
@@ -410,7 +410,7 @@ CURATED_STATIC_OUTLINES: dict[str, list[dict]] = {
                 "generalization",
                 "How to Solve It",
             ],
-            "source_notebooks": ["polya phase 4 look back"],
+            "source_notebooks": ["polya module 8 9 10 look back"],
             "estimated_minutes": 25,
         },
     ],
@@ -588,7 +588,7 @@ CURATED_LESSON_STRUCTURES = {
     },
     "First-Principles Thinking": {
         "description": (
-            "Four-section craft course: name the habit → strip assumptions → rebuild from facts → "
+            "Single-lecture craft course: name the habit → strip assumptions → rebuild from facts → "
             "apply under exam and open-ended pressure."
         ),
         "pedagogy": (
@@ -599,30 +599,30 @@ CURATED_LESSON_STRUCTURES = {
         ),
         "parts": [
             {
-                "name": "Section 1 — The Habit",
-                "description": "Analogy vs first principles; when defaults mislead",
-                "source_patterns": ["section 1", "habit", "analogy", "assumptions"],
+                "name": "Modules 1–3 — The Habit",
+                "description": "Musk battery story, Aristotle's arkhē, analogy vs first principles",
+                "source_patterns": ["module 1", "module 2", "module 3", "2003", "analogy", "two modes"],
             },
             {
-                "name": "Section 2 — Strip to Facts",
-                "description": "Decompose until only verified facts remain",
-                "source_patterns": ["section 2", "facts", "decomposition", "unknowns"],
+                "name": "Modules 4–5 — Strip & Rebuild",
+                "description": "The four-step procedure and a worked example",
+                "source_patterns": ["module 4", "module 5", "procedure", "worked example", "decomposition"],
             },
             {
-                "name": "Section 3 — Rebuild",
-                "description": "Synthesize answers from fundamentals only",
-                "source_patterns": ["section 3", "rebuild", "synthesis", "building blocks"],
+                "name": "Modules 6–7 — Limits & Gallery",
+                "description": "Where the technique fails and a gallery of famous applications",
+                "source_patterns": ["module 6", "module 7", "fails", "gallery", "famous"],
             },
             {
-                "name": "Section 4 — Under Pressure",
-                "description": "Apply on exams, essays, and open-ended problems",
-                "source_patterns": ["section 4", "pressure", "exam", "checklist"],
+                "name": "Modules 8–10 — Practice",
+                "description": "Apply the technique, subtle points, and closing synthesis",
+                "source_patterns": ["module 8", "module 9", "module 10", "exercise", "closing"],
             },
         ],
     },
     "The Polya Method": {
         "description": (
-            "George Polya's four-phase problem-solving sequence: understand → plan → "
+            "Single-lecture craft course: George Polya's four-phase sequence — understand → plan → "
             "execute → look back."
         ),
         "pedagogy": (
@@ -633,24 +633,24 @@ CURATED_LESSON_STRUCTURES = {
         ),
         "parts": [
             {
-                "name": "Phase 1 — Understand",
-                "description": "Restate, identify unknowns, confirm the goal",
-                "source_patterns": ["phase 1", "understand", "restate", "unknown"],
+                "name": "Modules 1–3 — Understand",
+                "description": "Polya at Stanford, the bear problem, why brains skip steps",
+                "source_patterns": ["module 1", "module 2", "module 3", "hungarian", "bear", "demonstration"],
             },
             {
-                "name": "Phase 2 — Plan",
-                "description": "Strategy selection and sub-problem decomposition",
-                "source_patterns": ["phase 2", "plan", "strategy", "related problems"],
+                "name": "Modules 4–5 — Plan",
+                "description": "The four steps and Phase 1 — the slow read",
+                "source_patterns": ["module 4", "module 5", "four steps", "slow read", "devise a plan"],
             },
             {
-                "name": "Phase 3 — Execute",
-                "description": "Step-by-step carry-through with ongoing checks",
-                "source_patterns": ["phase 3", "execute", "carry out", "check"],
+                "name": "Modules 6–7 — Execute",
+                "description": "Carry out the plan step by step with ongoing checks",
+                "source_patterns": ["module 6", "module 7", "carry out", "execute", "step 3"],
             },
             {
-                "name": "Phase 4 — Look Back",
-                "description": "Verify, reflect, and generalize the method",
-                "source_patterns": ["phase 4", "look back", "verify", "generalize"],
+                "name": "Modules 8–10 — Look Back",
+                "description": "Verify, generalize, and apply to non-math problems",
+                "source_patterns": ["module 8", "module 9", "module 10", "look back", "verify", "closing"],
             },
         ],
     },
