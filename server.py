@@ -74,10 +74,12 @@ app.include_router(viz_router)
 _ALLOWED_ORIGINS = [
     "http://localhost:5173", "http://localhost:5174", "http://localhost:3000",
     "https://dist-delta-eight-99.vercel.app",
+    "https://app.coast.academy",
 ]
-_extra_origin = os.getenv("FRONTEND_URL", "")
-if _extra_origin:
-    _ALLOWED_ORIGINS.append(_extra_origin.rstrip("/"))
+for _origin in os.getenv("FRONTEND_URL", "").split(","):
+    _origin = _origin.strip().rstrip("/")
+    if _origin and _origin not in _ALLOWED_ORIGINS:
+        _ALLOWED_ORIGINS.append(_origin)
 
 app.add_middleware(
     CORSMiddleware,
@@ -92,7 +94,10 @@ app.add_middleware(
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import Response as StarletteResponse
 
-_PROD_ORIGIN = "https://dist-delta-eight-99.vercel.app"
+_PROD_ORIGIN = next(
+    (o for o in _ALLOWED_ORIGINS if o.startswith("https://") and "localhost" not in o),
+    "https://app.coast.academy",
+)
 
 @app.options("/{rest:path}")
 async def preflight_catchall(request: StarletteRequest):
