@@ -25,6 +25,11 @@ def _local_dev_auth() -> bool:
     """Skip production-only signup gates when running the local server."""
     return not os.getenv("RENDER")
 
+
+def _email_verification_required() -> bool:
+    from auth_email import email_verification_required
+    return email_verification_required()
+
 from auth import create_access_token, decode_access_token, hash_password, verify_password
 from database import (
     ActivityEvent,
@@ -352,8 +357,7 @@ def auth_config():
     import os
     return {
         "google_client_id": os.environ.get("GOOGLE_CLIENT_ID", "").strip(),
-        "email_verification_enabled": bool(os.environ.get("RESEND_API_KEY", "").strip())
-            or os.environ.get("AUTH_DEV_EXPOSE_CODES", "").lower() in ("1", "true", "yes"),
+        "email_verification_enabled": _email_verification_required(),
     }
 
 
@@ -493,7 +497,7 @@ def register(req: RegisterRequest):
             EmailVerification.email == email,
             EmailVerification.verified == True,
         ).first()
-        if not vrow and not _local_dev_auth():
+        if not vrow and _email_verification_required():
             raise HTTPException(400, "Verify your email before creating an account.")
 
         user = User(
@@ -528,7 +532,7 @@ def login(req: LoginRequest):
             raise HTTPException(401, "This account uses Google sign-in.")
         if not verify_password(req.password, user.password_hash):
             raise HTTPException(401, "Invalid email or password")
-        if not getattr(user, "email_verified", True):
+        if _email_verification_required() and not getattr(user, "email_verified", True):
             raise HTTPException(403, "Please verify your email before signing in.")
 
         return _auth_token_response(user)

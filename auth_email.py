@@ -21,6 +21,11 @@ DISPOSABLE_DOMAINS = {
 EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 
 
+def email_verification_required() -> bool:
+    """When true, signup must complete verify-email before register."""
+    return os.getenv("AUTH_EMAIL_VERIFICATION", "").lower() in ("1", "true", "yes")
+
+
 def normalize_email(email: str) -> str:
     return email.strip().lower()
 
@@ -34,7 +39,7 @@ def validate_email_address(email: str, *, strict: bool | None = None) -> tuple[b
     if domain in DISPOSABLE_DOMAINS:
         return False, "Disposable email addresses aren't allowed. Use your real inbox or Google sign-in."
     if strict is None:
-        strict = bool(os.getenv("RENDER"))
+        strict = email_verification_required()
     if not strict:
         return True, ""
     try:
