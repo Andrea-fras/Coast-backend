@@ -488,6 +488,8 @@ def build_system_prompt(
         )
     elif context_type == "lesson" and notebook_content:
         parts.append(notebook_content)
+    elif context_type == "test_out" and notebook_content:
+        parts.append(notebook_content)
     elif context_type == "folder" and notebook_content:
         parts.append(
             "\n--- FOLDER CONTEXT (retrieved from multiple sources via semantic search) ---\n"
@@ -700,6 +702,20 @@ def send_message(
                         structure=get_lesson_structure(context_id),
                         student_message=message,
                     )
+            except Exception:
+                import traceback as tb
+                tb.print_exc()
+                notebook_content = None
+        elif context_type == "test_out" and context_id and section_index is not None:
+            try:
+                import lesson as lesson_mod
+                from curated_config import curated_source_uid as _curated_uid
+                src_uid = _curated_uid(context_id)
+                notebook_content = lesson_mod.build_test_out_prompt(
+                    user_id, context_id, int(section_index),
+                    source_user_id=src_uid if src_uid is not None else None,
+                    student_message=message,
+                )
             except Exception:
                 import traceback as tb
                 tb.print_exc()
@@ -917,6 +933,19 @@ def send_message_stream(
             except Exception:
                 import traceback as tb
                 tb.print_exc()
+        elif context_type == "test_out" and context_id and section_index is not None:
+            try:
+                import lesson as lesson_mod
+                from curated_config import curated_source_uid as _curated_uid
+                src_uid = _curated_uid(context_id)
+                notebook_content = lesson_mod.build_test_out_prompt(
+                    user_id, context_id, int(section_index),
+                    source_user_id=src_uid if src_uid is not None else None,
+                    student_message=message,
+                )
+            except Exception:
+                import traceback as tb
+                tb.print_exc()
         elif context_type == "folder" and context_id:
             try:
                 import oma_provider
@@ -960,7 +989,7 @@ def send_message_stream(
         try:
             import oma_provider
             if oma_provider.is_student_enabled():
-                if context_type in ("folder", "lesson") and context_id:
+                if context_type in ("folder", "lesson", "test_out") and context_id:
                     student_profile_block = oma_provider.get_student_profile_block(
                         user_id, context_id,
                         current_concept_ids=(
@@ -1158,6 +1187,7 @@ def send_message_stream(
                 tb.print_exc()
 
         section_verified = False
+        test_out_passed = False
         if context_type == "lesson" and context_id and lesson_section_idx is not None:
             try:
                 import lesson as lesson_mod
@@ -1173,12 +1203,21 @@ def send_message_stream(
                 import traceback as tb
                 tb.print_exc()
 
+        if context_type == "test_out" and context_id and section_index is not None:
+            try:
+                import oma_provider
+                test_out_passed = oma_provider.TAG_TEST_OUT_PASSED in full_reply
+            except Exception:
+                import traceback as tb
+                tb.print_exc()
+
         yield (None, {
             "reply": full_reply,
             "conversation_id": conversation_id,
             "message_id": pedro_msg.id,
             "content_retrieval": oma_provider.summarize_content_retrieval(full_reply, retrieval_capture),
             "section_verified": section_verified,
+            "test_out_passed": test_out_passed,
         })
     finally:
         db.close()

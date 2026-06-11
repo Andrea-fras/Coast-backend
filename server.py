@@ -8,7 +8,7 @@ import os
 import shutil
 import tempfile
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -19,6 +19,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 load_dotenv()
+
+
+def _local_dev_auth() -> bool:
+    """Skip production-only signup gates when running the local server."""
+    return not os.getenv("RENDER")
 
 from auth import create_access_token, decode_access_token, hash_password, verify_password
 from database import (
@@ -306,53 +311,229 @@ class LoginRequest(BaseModel):
     password: str
 
 
-@app.post("/api/auth/register")
-def register(req: RegisterRequest):
+class VerifyEmailSendRequest(BaseModel):
+    email: str
+
+
+class VerifyEmailCheckRequest(BaseModel):
+    email: str
+    code: str
+
+
+class GoogleAuthRequest(BaseModel):
+    credential: str
+
+
+def _user_payload(user: User) -> dict:
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "course": user.course,
+        "onboarding_completed": bool(user.onboarding_completed),
+        "email_verified": bool(getattr(user, "email_verified", True)),
+        "auth_provider": "google" if getattr(user, "google_id", None) else "email",
+    }
+
+
+def _auth_token_response(user: User) -> dict:
+    token = create_access_token(user.id, user.email)
+    return {"token": token, "user": _user_payload(user)}
+
+
+@app.get("/api/auth/config")
+def auth_config():
+    """Public auth configuration for the login screen."""
+    import os
+    return {
+        "google_client_id": os.environ.get("GOOGLE_CLIENT_ID", "").strip(),
+        "email_verification_enabled": bool(os.environ.get("RESEND_API_KEY", "").strip())
+            or os.environ.get("AUTH_DEV_EXPOSE_CODES", "").lower() in ("1", "true", "yes"),
+    }
+
+
+@app.post("/api/auth/verify-email/send")
+def send_verify_email(req: VerifyEmailSendRequest):
+    from auth_email import generate_code, normalize_email, send_verification_email, validate_email_address
+    from database import EmailVerification
+
+    email = normalize_email(req.email)
+    ok, err = validate_email_address(email)
+    if not ok:
+        raise HTTPException(400, err)
+
     db = SessionLocal()
     try:
-        existing = db.query(User).filter(User.email == req.email.lower().strip()).first()
+        existing = db.query(User).filter(User.email == email).first()
         if existing:
-            raise HTTPException(400, "Email already registered")
+            raise HTTPException(400, "Email already registered. Sign in instead.")
+
+        code = generate_code()
+        expires = datetime.now(timezone.utc) + timedelta(minutes=15)
+        row = db.query(EmailVerification).filter(EmailVerification.email == email).first()
+        if row:
+            row.code = code
+            row.expires_at = expires
+            row.verified = False
+        else:
+            db.add(EmailVerification(email=email, code=code, expires_at=expires, verified=False))
+        db.commit()
+
+        sent, detail = send_verification_email(email, code)
+        if sent:
+            return {"ok": True, "message": "Verification code sent. Check your inbox."}
+        if detail.startswith("dev_code:"):
+            return {"ok": True, "message": "Dev mode: use the code shown below.", "dev_code": detail.split(":", 1)[1]}
+        raise HTTPException(503, detail)
+    finally:
+        db.close()
+
+
+@app.post("/api/auth/verify-email/check")
+def check_verify_email(req: VerifyEmailCheckRequest):
+    from auth_email import normalize_email
+    from database import EmailVerification
+
+    email = normalize_email(req.email)
+    code = req.code.strip()
+    db = SessionLocal()
+    try:
+        row = db.query(EmailVerification).filter(EmailVerification.email == email).first()
+        if not row or row.code != code:
+            raise HTTPException(400, "Invalid verification code.")
+        exp = row.expires_at
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if exp < datetime.now(timezone.utc):
+            raise HTTPException(400, "Code expired. Request a new one.")
+        row.verified = True
+        db.commit()
+        return {"ok": True, "verified": True}
+    finally:
+        db.close()
+
+
+@app.post("/api/auth/google")
+def google_auth(req: GoogleAuthRequest):
+    import os
+    from google.auth.transport import requests as google_requests
+    from google.oauth2 import id_token
+
+    client_id = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+    if not client_id:
+        raise HTTPException(503, "Google sign-in is not configured.")
+
+    try:
+        idinfo = id_token.verify_oauth2_token(
+            req.credential, google_requests.Request(), client_id,
+        )
+    except Exception:
+        raise HTTPException(401, "Invalid Google sign-in.")
+
+    email = (idinfo.get("email") or "").lower().strip()
+    google_sub = idinfo.get("sub")
+    name = (idinfo.get("name") or email.split("@")[0] or "Student").strip()
+    if not email or not google_sub:
+        raise HTTPException(400, "Google account did not provide an email.")
+    if not idinfo.get("email_verified"):
+        raise HTTPException(400, "Your Google email is not verified.")
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.google_id == google_sub).first()
+        if not user:
+            user = db.query(User).filter(User.email == email).first()
+        if user:
+            if not user.google_id:
+                user.google_id = google_sub
+            user.email_verified = True
+            if name and not user.name:
+                user.name = name
+            db.commit()
+            db.refresh(user)
+            return _auth_token_response(user)
 
         user = User(
-            email=req.email.lower().strip(),
-            name=req.name.strip(),
-            password_hash=hash_password(req.password),
-            course=req.course.strip(),
+            email=email,
+            name=name,
+            password_hash=hash_password(os.urandom(32).hex()),
+            google_id=google_sub,
+            email_verified=True,
         )
         db.add(user)
         db.commit()
         db.refresh(user)
+        return _auth_token_response(user)
+    finally:
+        db.close()
 
-        token = create_access_token(user.id, user.email)
-        return {
-            "token": token,
-            "user": {"id": user.id, "email": user.email, "name": user.name, "course": user.course, "onboarding_completed": False},
-        }
+
+@app.post("/api/auth/register")
+def register(req: RegisterRequest):
+    from auth_email import normalize_email, validate_email_address
+    from database import EmailVerification
+
+    email = normalize_email(req.email)
+    ok, err = validate_email_address(email)
+    if not ok:
+        raise HTTPException(400, err)
+
+    db = SessionLocal()
+    try:
+        existing = db.query(User).filter(User.email == email).first()
+        if existing:
+            raise HTTPException(400, "Email already registered")
+
+        vrow = db.query(EmailVerification).filter(
+            EmailVerification.email == email,
+            EmailVerification.verified == True,
+        ).first()
+        if not vrow and not _local_dev_auth():
+            raise HTTPException(400, "Verify your email before creating an account.")
+
+        user = User(
+            email=email,
+            name=req.name.strip(),
+            password_hash=hash_password(req.password),
+            course=req.course.strip(),
+            email_verified=True,
+        )
+        db.add(user)
+        if vrow:
+            db.delete(vrow)
+        db.commit()
+        db.refresh(user)
+
+        return _auth_token_response(user)
     finally:
         db.close()
 
 
 @app.post("/api/auth/login")
 def login(req: LoginRequest):
+    from auth_email import normalize_email
+
+    email = normalize_email(req.email)
     db = SessionLocal()
     try:
-        user = db.query(User).filter(User.email == req.email.lower().strip()).first()
-        if not user or not verify_password(req.password, user.password_hash):
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
             raise HTTPException(401, "Invalid email or password")
+        if user.google_id:
+            raise HTTPException(401, "This account uses Google sign-in.")
+        if not verify_password(req.password, user.password_hash):
+            raise HTTPException(401, "Invalid email or password")
+        if not getattr(user, "email_verified", True):
+            raise HTTPException(403, "Please verify your email before signing in.")
 
-        token = create_access_token(user.id, user.email)
-        return {
-            "token": token,
-            "user": {"id": user.id, "email": user.email, "name": user.name, "course": user.course, "onboarding_completed": bool(user.onboarding_completed)},
-        }
+        return _auth_token_response(user)
     finally:
         db.close()
 
 
 @app.get("/api/auth/me")
 def get_me(user: User = Depends(get_current_user)):
-    return {"id": user.id, "email": user.email, "name": user.name, "course": user.course, "onboarding_completed": bool(user.onboarding_completed)}
+    return _user_payload(user)
 
 
 class OnboardingRequest(BaseModel):
@@ -1847,6 +2028,23 @@ def treasure_complete(chest_id: str, body: dict, user: User = Depends(get_curren
     return result
 
 
+@app.post("/api/folders/{folder_name}/lesson/test-out")
+def apply_test_out_endpoint(
+    folder_name: str,
+    user: User = Depends(get_current_user),
+    body: dict | None = None,
+):
+    """Jump to a future section after passing a placement test with Pedro."""
+    body = body or {}
+    target = body.get("target_section")
+    if target is None:
+        raise HTTPException(400, "target_section is required")
+    result = lesson.apply_test_out(user.id, folder_name, int(target))
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    return result
+
+
 @app.post("/api/folders/{folder_name}/lesson/advance")
 def advance_lesson(folder_name: str, user: User = Depends(get_current_user)):
     """Advance to the next lesson section."""
@@ -2017,7 +2215,7 @@ def chat_send(req: ChatSendRequest, user: User = Depends(get_current_user)):
     """Send a message to Pedro and get a Socratic response."""
     if not req.message.strip():
         raise HTTPException(400, "Message cannot be empty")
-    if req.context_type not in ("notebook", "global", "session", "folder", "lesson"):
+    if req.context_type not in ("notebook", "global", "session", "folder", "lesson", "test_out"):
         raise HTTPException(400, "Invalid context_type")
 
     usage = _get_user_usage(user.id)
@@ -2054,7 +2252,7 @@ def chat_stream(req: ChatSendRequest, user: User = Depends(get_current_user)):
     """Streaming version of chat/send — returns SSE with token chunks."""
     if not req.message.strip():
         raise HTTPException(400, "Message cannot be empty")
-    if req.context_type not in ("notebook", "global", "session", "folder", "lesson"):
+    if req.context_type not in ("notebook", "global", "session", "folder", "lesson", "test_out"):
         raise HTTPException(400, "Invalid context_type")
 
     usage = _get_user_usage(user.id)
@@ -2099,7 +2297,7 @@ def chat_conversations(
     user: User = Depends(get_current_user),
 ):
     """List a user's Pedro conversations, optionally filtered by context_type."""
-    if context_type and context_type not in ("notebook", "global", "session", "folder", "lesson"):
+    if context_type and context_type not in ("notebook", "global", "session", "folder", "lesson", "test_out"):
         raise HTTPException(400, "Invalid context_type")
     return tutor.get_conversations(user.id, context_type=context_type)
 

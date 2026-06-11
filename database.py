@@ -47,7 +47,9 @@ class User(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     email = Column(String(255), unique=True, nullable=False, index=True)
     name = Column(String(255), nullable=False)
-    password_hash = Column(String(255), nullable=False)
+    password_hash = Column(String(255), nullable=False, default="")
+    google_id = Column(String(255), unique=True, nullable=True, index=True)
+    email_verified = Column(Boolean, default=False)
     course = Column(String(100), default="")  # e.g. "QM1", "Data Science"
     learning_preferences = Column(Text, default="")
     onboarding_completed = Column(Boolean, default=False)
@@ -360,6 +362,17 @@ class TreasureChestOpen(Base):
     opened_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class EmailVerification(Base):
+    """Pending email verification codes for signup."""
+    __tablename__ = "email_verifications"
+
+    email = Column(String(255), primary_key=True)
+    code = Column(String(8), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    verified = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 def _run_migrations():
     """Add columns that may be missing from existing tables."""
     from sqlalchemy import inspect, text
@@ -387,6 +400,13 @@ def _run_migrations():
         if "onboarding_completed" not in cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE users ADD COLUMN onboarding_completed BOOLEAN DEFAULT 0"))
+        if "google_id" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE users ADD COLUMN google_id VARCHAR(255)"))
+        if "email_verified" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE users ADD COLUMN email_verified BOOLEAN DEFAULT 0"))
+                conn.execute(text("UPDATE users SET email_verified = 1 WHERE email_verified IS NULL OR email_verified = 0"))
     if "user_map_state" in insp.get_table_names():
         cols = [c["name"] for c in insp.get_columns("user_map_state")]
         if "full_unlock" not in cols:

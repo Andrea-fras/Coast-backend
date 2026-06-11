@@ -1142,9 +1142,10 @@ def _load_struggling_topics(user_id: int | str, folder: str) -> list[dict]:
 # ── Pedro grading tags (machine-readable, stripped in the UI) ─────────
 
 TAG_SECTION_COMPLETE = "[SECTION_COMPLETE]"
+TAG_TEST_OUT_PASSED = "[TEST_OUT_PASSED]"
 TAG_ANSWER_WRONG = "[ANSWER_WRONG]"
 TAG_ANSWER_CORRECT = "[ANSWER_CORRECT]"
-_PEDRO_TAGS = (TAG_SECTION_COMPLETE, TAG_ANSWER_WRONG, TAG_ANSWER_CORRECT)
+_PEDRO_TAGS = (TAG_SECTION_COMPLETE, TAG_TEST_OUT_PASSED, TAG_ANSWER_WRONG, TAG_ANSWER_CORRECT)
 
 
 def strip_pedro_tags(text: str) -> str:

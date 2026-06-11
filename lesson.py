@@ -1018,6 +1018,142 @@ def reset_lesson(user_id: int, folder_name: str) -> dict:
         db.close()
 
 
+def build_test_out_prompt(
+    user_id: int,
+    folder_name: str,
+    target_section_index: int,
+    source_user_id: int | None = None,
+    student_message: str | None = None,
+) -> str | None:
+    """Socratic placement-test prompt to unlock a future section."""
+    src_uid = source_user_id if source_user_id is not None else user_id
+    db = SessionLocal()
+    try:
+        outline = (
+            db.query(CourseOutline)
+            .filter(CourseOutline.user_id == user_id, CourseOutline.folder_name == folder_name)
+            .first()
+        )
+        if not outline:
+            return None
+
+        sections = json.loads(outline.outline_json)
+        current_idx = int(outline.current_section)
+        target_idx = int(target_section_index)
+
+        if target_idx <= current_idx or target_idx >= len(sections):
+            return None
+
+        target = sections[target_idx]
+        target_title = target.get("title") or f"Section {target_idx + 1}"
+        skipped = sections[current_idx:target_idx]
+
+        prereq_topics: list[str] = []
+        prereq_objectives: list[str] = []
+        for sec in skipped:
+            prereq_topics.extend(sec.get("key_topics") or [])
+            prereq_objectives.extend(sec.get("learning_objectives") or [])
+
+        query_parts = [target_title] + prereq_topics + prereq_objectives
+        query = " ".join(dict.fromkeys(query_parts))
+        material_context, _ = _fetch_section_material(
+            src_uid, folder_name, query, max_chars=16000,
+        )
+
+        skipped_lines = []
+        for i, sec in enumerate(skipped, start=current_idx + 1):
+            title = sec.get("title") or f"Section {i}"
+            topics = ", ".join(sec.get("key_topics") or []) or "(general concepts)"
+            skipped_lines.append(f"  - Section {i}: {title} — topics: {topics}")
+
+        prompt = (
+            "You are Pedro, running a focused PLACEMENT TEST (test-out) session.\n\n"
+            f"The student wants to skip ahead to Section {target_idx + 1}: \"{target_title}\" "
+            f"without completing Sections {current_idx + 1} through {target_idx} in order.\n\n"
+            "SECTIONS THEY ARE SKIPPING:\n"
+            + "\n".join(skipped_lines)
+            + "\n\n"
+            "YOUR JOB:\n"
+            "- Run a tight, Socratic assessment — ONE question at a time.\n"
+            "- Test conceptual mastery of the SKIPPED sections' key topics. Do NOT teach full lectures.\n"
+            "- Ask 4–6 questions spanning different skipped topics. Increase difficulty gradually.\n"
+            "- Keep replies concise (2–4 sentences plus the question).\n"
+            "- Grade each student answer with [ANSWER_CORRECT] or [ANSWER_WRONG] at the end of your message.\n"
+            "- If they struggle, give a brief hint and ask a simpler follow-up on the same topic.\n"
+            "- Emit [TEST_OUT_PASSED] ONLY when the student has answered at least 4 questions correctly "
+            "across at least 3 different topic areas from the skipped sections, demonstrating they already "
+            "know the prerequisite material.\n"
+            "- Do NOT emit [TEST_OUT_PASSED] if they have fewer than 4 [ANSWER_CORRECT] gradings in this session.\n"
+            "- Do NOT emit [SECTION_COMPLETE] — this is a placement test, not a lesson section.\n"
+            "- Start by briefly explaining you'll run a quick placement test, then ask your first question.\n\n"
+        )
+
+        if material_context:
+            prompt += (
+                "--- REFERENCE MATERIAL (for question design only — do not lecture from it) ---\n"
+                + material_context
+                + "\n--- END REFERENCE MATERIAL ---\n"
+            )
+
+        return prompt
+    except Exception:
+        traceback.print_exc()
+        return None
+    finally:
+        db.close()
+
+
+def apply_test_out(user_id: int, folder_name: str, target_section_index: int) -> dict:
+    """Jump the student to target_section after passing a placement test."""
+    db = SessionLocal()
+    try:
+        outline = (
+            db.query(CourseOutline)
+            .filter(CourseOutline.user_id == user_id, CourseOutline.folder_name == folder_name)
+            .first()
+        )
+        if not outline:
+            return {"error": "No outline found"}
+
+        sections = json.loads(outline.outline_json)
+        current_idx = int(outline.current_section)
+        target_idx = int(target_section_index)
+
+        if target_idx <= current_idx:
+            return {"error": "Section already unlocked"}
+        if target_idx >= len(sections):
+            return {"error": "Invalid section index"}
+
+        for i in range(current_idx, target_idx):
+            mark_section_verified(user_id, folder_name, i)
+            sec = sections[i]
+            title = sec.get("title") or f"Section {i + 1}"
+            try:
+                import oma_provider
+                if oma_provider.is_student_enabled():
+                    oma_provider.record_section_completed_authoritative(
+                        user_id,
+                        folder_name,
+                        section_index=i,
+                        section_title=title,
+                    )
+            except Exception:
+                traceback.print_exc()
+
+        outline.current_section = target_idx
+        outline.updated_at = datetime.now(timezone.utc)
+        db.commit()
+
+        return {
+            "current_section": target_idx,
+            "total_sections": outline.total_sections,
+            "is_complete": target_idx >= outline.total_sections,
+            "skipped_sections": list(range(current_idx, target_idx)),
+        }
+    finally:
+        db.close()
+
+
 def _find_relevant_images(
     user_id: int,
     folder_name: str,
