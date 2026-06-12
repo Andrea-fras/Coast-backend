@@ -89,7 +89,8 @@ def _current_capture() -> dict | None:
 # Track background OMA ingests so outline generation can wait for them.
 _ingest_lock = threading.Lock()
 _ingest_active: dict[str, int] = {}
-_ingest_semaphore = threading.Semaphore(2)  # limit parallel PDF ingests (LLM-heavy)
+_ingest_slots = 1 if _ON_RENDER_DISK else 2
+_ingest_semaphore = threading.Semaphore(_ingest_slots)  # limit parallel PDF ingests (LLM-heavy)
 
 
 def _ingest_key(user_id: int | str, folder: str) -> str:
@@ -283,14 +284,22 @@ def _content_ingest_pipeline():
     if _content_pipeline is None:
         from coast_content_oma.ingestion import IngestionPipeline
         orch = _content_orchestrator()
-        # Vision-describe diagrams on ingest for new uploads (skip legacy backfill).
         describe = _env_truthy(os.environ.get("OMA_DESCRIBE_IMAGES", "true"))
+        if _ON_RENDER_DISK:
+            # Vision + parallel page work can OOM a small Render instance.
+            describe = _env_truthy(os.environ.get("OMA_DESCRIBE_IMAGES", "false"))
+        workers = int(os.environ.get("OMA_INGEST_WORKERS", "1" if _ON_RENDER_DISK else "4"))
+        skip_images = _env_truthy(os.environ.get("OMA_SKIP_IMAGES", "false"))
         _content_pipeline = IngestionPipeline(
             orch.concept, orch.content, orch.images, OMA_IMAGE_DIR,
+            max_workers=max(1, workers),
             describe_images=describe,
-            skip_images=False,
+            skip_images=skip_images,
         )
-        logger.info("OMA ingest pipeline: describe_images=%s", describe)
+        logger.info(
+            "OMA ingest pipeline: workers=%d describe_images=%s skip_images=%s",
+            workers, describe, skip_images,
+        )
     return _content_pipeline
 
 
@@ -480,15 +489,21 @@ def ensure_oma_ready_for_outline(
     pdf_sources: list[dict] | None = None,
     wait_sec: float = 600,
     poll_sec: float = 2,
+    allow_sync_ingest: bool | None = None,
 ) -> bool:
     """Block until Content OMA has indexed uploaded PDFs (for OMA-driven outlines).
 
-    Waits for background upload ingests to finish, then sync-ingests any PDFs
-    that are still missing. pdf_sources items: {path, filename, page_count}.
+    Waits for background upload ingests to finish. On Render, never runs heavy
+    sync ingest inside an HTTP request — that OOMs the web worker.
     """
     if not is_oma_enabled():
         return False
     from coast_content_oma.stores import make_namespace
+
+    if allow_sync_ingest is None:
+        allow_sync_ingest = not _ON_RENDER_DISK
+    if _ON_RENDER_DISK:
+        wait_sec = min(wait_sec, float(os.environ.get("OMA_OUTLINE_WAIT_SEC", "180")))
 
     ns = make_namespace(user_id, folder)
     orch = _content_orchestrator()
@@ -500,6 +515,14 @@ def ensure_oma_ready_for_outline(
     else:
         target = 1
     target = max(1, target)
+
+    content_cache: list | None = None
+
+    def _content_items():
+        nonlocal content_cache
+        if content_cache is None:
+            content_cache = orch.content.all(ns)
+        return content_cache
 
     def _source_gap_ok(have: int, need: int) -> bool:
         """PDF page_count includes blank pages; OMA skips blanks during ingest."""
@@ -533,11 +556,40 @@ def ensure_oma_ready_for_outline(
         if not names:
             return 0
         n = 0
-        for it in orch.content.all(ns):
+        for it in _content_items():
             ss = it.store_specific or {}
             if ss.get("source_filename") in names:
                 n += 1
         return n
+
+    def _kickoff_background_ingests() -> int:
+        """Queue async ingest for PDFs still missing — never blocks the web worker."""
+        if not pdf_sources:
+            return 0
+        kicked: set[str] = set()
+        queued = 0
+        for src in pdf_sources:
+            path = src.get("path")
+            need = max(1, int(src.get("page_count") or 0))
+            sid = src.get("source_id") or path or ""
+            if sid in kicked:
+                continue
+            if not path:
+                continue
+            p = Path(path)
+            if not p.is_file():
+                continue
+            if _source_gap_ok(_pages_for_source(src), need):
+                continue
+            kicked.add(sid)
+            ingest_pdf_async(user_id, folder, p)
+            queued += 1
+        if queued:
+            logger.info(
+                "outline: queued background OMA ingest for %d PDF(s) folder=%s",
+                queued, folder,
+            )
+        return queued
 
     def _is_ready() -> bool:
         if _active() > 0:
@@ -558,12 +610,13 @@ def ensure_oma_ready_for_outline(
             return True
         return total_have >= max(1, int(total_need * 0.97))
 
-    # Scale wait time for large folders (439 pages ≈ 23 min max wait).
-    if wait_sec == 600 and target > 80:
+    if wait_sec == 600 and target > 80 and allow_sync_ingest:
         wait_sec = min(2400, 120 + target * 3)
 
     if _is_ready():
         return True
+
+    _kickoff_background_ingests()
 
     # Log why we're waiting when total page count already looks complete.
     if pdf_sources and _count() >= target and _active() == 0:
@@ -585,9 +638,18 @@ def ensure_oma_ready_for_outline(
         if _is_ready():
             logger.info("outline: Content OMA ready folder=%s (%d pages)", folder, _count())
             return True
+        if _active() == 0:
+            _kickoff_background_ingests()
         time.sleep(poll_sec)
 
-    # Sync-ingest only PDFs that are still missing or incomplete.
+    if not allow_sync_ingest:
+        logger.info(
+            "outline: Content OMA not ready after %.0fs (background ingest continues) folder=%s",
+            wait_sec, folder,
+        )
+        return _is_ready()
+
+    # Local dev only — sync ingest (too heavy for Render web workers).
     to_ingest: list[Path] = []
     for src in pdf_sources or []:
         path = src.get("path")
@@ -621,6 +683,46 @@ def ensure_oma_ready_for_outline(
         folder, _count(), target,
     )
     return ready
+
+
+def kickoff_folder_oma_ingest(user_id: int | str, folder: str) -> int:
+    """Queue background OMA ingest for PDFs in this folder that are not indexed yet."""
+    if not is_oma_enabled():
+        return 0
+    pdf_sources = load_folder_pdf_sources(user_id, folder)
+    if not pdf_sources:
+        return 0
+    from coast_content_oma.stores import make_namespace
+
+    ns = make_namespace(user_id, folder)
+    orch = _content_orchestrator()
+    items = orch.content.all(ns)
+    kicked: set[str] = set()
+    queued = 0
+    for src in pdf_sources:
+        path = src.get("path")
+        sid = src.get("source_id") or path or ""
+        if sid in kicked or not path:
+            continue
+        p = Path(path)
+        if not p.is_file():
+            continue
+        names = {src.get("filename") or p.name, p.name}
+        if src.get("source_id"):
+            names.add(f"{src['source_id']}.pdf")
+        have = sum(
+            1 for it in items
+            if (it.store_specific or {}).get("source_filename") in names
+        )
+        need = max(1, int(src.get("page_count") or 0))
+        if have >= need or (need > 1 and have >= need - max(2, int(need * 0.05))):
+            continue
+        kicked.add(sid)
+        ingest_pdf_async(user_id, folder, p)
+        queued += 1
+    if queued:
+        logger.info("kickoff: queued OMA ingest for %d PDF(s) folder=%s", queued, folder)
+    return queued
 
 
 # ── Chat-time: folder context block ──────────────────────────────────

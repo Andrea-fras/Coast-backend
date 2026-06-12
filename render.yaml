@@ -26,7 +26,11 @@ services:
       - key: OMA_IMAGE_DIR
         value: "/data/oma_data/images"
       - key: OMA_DESCRIBE_IMAGES
-        value: "true"
+        value: "false"
+      - key: OMA_INGEST_WORKERS
+        value: "1"
+      - key: OMA_OUTLINE_WAIT_SEC
+        value: "180"
       - key: OMA_OPENAI_MODEL
         value: "gpt-4o-mini"
       - key: OMA_OPENAI_VISION_MODEL

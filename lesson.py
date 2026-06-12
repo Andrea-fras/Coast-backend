@@ -147,8 +147,9 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
                     return {
                         "error": (
                             "Content OMA is still indexing this course's uploads. "
-                            "Please wait and try Generate Lesson again."
+                            "Wait 2–3 minutes, then tap Generate Lesson again."
                         ),
+                        "oma_indexing": True,
                     }
             oma_index = oma_provider.build_outline_context(
                 src_uid, folder_name,

@@ -1514,6 +1514,15 @@ def embed_folder(folder_name: str, user: User = Depends(get_current_user)):
             return {"notebooks_embedded": 0, "total_chunks": 0, "skipped": "curated"}
         embed_uid = _curated_uid(folder_name) if _curated_uid(folder_name) is not None else user.id
         result = rag.embed_all_in_folder(embed_uid, folder_name)
+        try:
+            import oma_provider
+            if oma_provider.is_oma_enabled():
+                queued = oma_provider.kickoff_folder_oma_ingest(embed_uid, folder_name)
+                if queued:
+                    result = {**result, "oma_ingest_queued": queued}
+        except Exception:
+            import traceback
+            traceback.print_exc()
         return result
     except Exception:
         import traceback
