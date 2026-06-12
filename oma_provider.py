@@ -44,11 +44,36 @@ def _env_truthy(v: str | None) -> bool:
     return (v or "").strip().lower() in ("1", "true", "yes", "on")
 
 
-RAG_PROVIDER = (os.environ.get("RAG_PROVIDER") or "flat").strip().lower()
+_RENDER_DATA = Path("/data")
+_ON_RENDER_DISK = bool(os.getenv("RENDER") and _RENDER_DATA.is_dir())
+
+
+def _resolve_rag_provider() -> str:
+    """Use Content OMA on Render production (persistent /data disk).
+
+    render.yaml defines RAG_PROVIDER=oma but many Render services were created
+    before the blueprint — the env var is missing and defaults to flat.
+    """
+    explicit = (os.environ.get("RAG_PROVIDER") or "").strip().lower()
+    if _ON_RENDER_DISK and explicit in ("", "flat"):
+        return "oma"
+    return explicit or "flat"
+
+
+def _resolve_data_path(env_key: str, local_default: str, render_default: str) -> Path:
+    raw = os.environ.get(env_key)
+    if raw:
+        return Path(raw).resolve()
+    if _ON_RENDER_DISK:
+        return Path(render_default).resolve()
+    return Path(local_default).resolve()
+
+
+RAG_PROVIDER = _resolve_rag_provider()
 STUDENT_OMA_ENABLED = _env_truthy(os.environ.get("STUDENT_OMA_ENABLED")) or RAG_PROVIDER in ("oma", "shadow")
 
-OMA_DB_PATH = Path(os.environ.get("OMA_DB_PATH") or "./oma_data/oma.db").resolve()
-OMA_IMAGE_DIR = Path(os.environ.get("OMA_IMAGE_DIR") or "./oma_data/images").resolve()
+OMA_DB_PATH = _resolve_data_path("OMA_DB_PATH", "./oma_data/oma.db", "/data/oma_data/oma.db")
+OMA_IMAGE_DIR = _resolve_data_path("OMA_IMAGE_DIR", "./oma_data/images", "/data/oma_data/images")
 
 # Per-turn retrieval capture. Each chat turn calls reset_content_retrieval_log()
 # which creates a fresh capture dict and points this thread at it. Deep retrieval

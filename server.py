@@ -355,6 +355,16 @@ def on_startup():
             import traceback; traceback.print_exc()
     threading.Thread(target=_bg_oma_backfill, daemon=True).start()
 
+    try:
+        import oma_provider
+        print(
+            f"  [oma] RAG_PROVIDER={oma_provider.RAG_PROVIDER} "
+            f"student_oma={oma_provider.is_student_enabled()} "
+            f"db={oma_provider.OMA_DB_PATH}"
+        )
+    except Exception:
+        import traceback; traceback.print_exc()
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # AUTH DEPENDENCY
@@ -3475,6 +3485,7 @@ def health():
 
     import oma_provider
     oma_db = oma_provider.OMA_DB_PATH
+    on_render = bool(os.getenv("RENDER"))
     payload = {
         "status": "ok",
         "papers": paper_count,
@@ -3483,10 +3494,15 @@ def health():
             "enabled": oma_provider.is_oma_enabled(),
             "student_enabled": oma_provider.is_student_enabled(),
             "rag_provider": oma_provider.RAG_PROVIDER,
+            "db_path": str(oma_db),
             "db_bytes": _path_size_bytes(oma_db),
             "db_exists": oma_db.exists(),
+            "on_render": on_render,
+            "render_disk": Path("/data").is_dir(),
         },
     }
+    if on_render and not oma_provider.is_oma_enabled():
+        payload["oma"]["fix"] = "Set RAG_PROVIDER=oma in Render Environment (or redeploy latest backend)"
     return payload
 
 
