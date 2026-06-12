@@ -344,17 +344,6 @@ def on_startup():
             import traceback; traceback.print_exc()
     threading.Thread(target=_bg_curated, daemon=True).start()
 
-    def _bg_oma_backfill():
-        try:
-            import oma_provider
-            if oma_provider.is_oma_enabled():
-                print("  [oma] Checking for folders with PDFs but no Content OMA index…")
-                result = oma_provider.backfill_all_missing_folders()
-                print(f"  [oma] Backfill queued for {result.get('queued', 0)} folder(s).")
-        except Exception:
-            import traceback; traceback.print_exc()
-    threading.Thread(target=_bg_oma_backfill, daemon=True).start()
-
     try:
         import oma_provider
         print(
@@ -1517,7 +1506,7 @@ def delete_folder(folder_name: str, user: User = Depends(get_current_user)):
 
 @app.post("/api/folders/{folder_name}/embed")
 def embed_folder(folder_name: str, user: User = Depends(get_current_user)):
-    """Embed all notebooks in a folder into ChromaDB and queue Content OMA indexing."""
+    """Embed all notebooks in a folder into ChromaDB."""
     try:
         # Curated folders are pre-embedded at bootstrap; skip instead of letting
         # any user trigger an expensive shared re-embed.
@@ -1525,16 +1514,6 @@ def embed_folder(folder_name: str, user: User = Depends(get_current_user)):
             return {"notebooks_embedded": 0, "total_chunks": 0, "skipped": "curated"}
         embed_uid = _curated_uid(folder_name) if _curated_uid(folder_name) is not None else user.id
         result = rag.embed_all_in_folder(embed_uid, folder_name)
-
-        import oma_provider
-        if oma_provider.is_oma_enabled():
-            queued = oma_provider.queue_folder_oma_backfill(
-                embed_uid,
-                folder_name,
-                reason="embed endpoint",
-            )
-            result = {**result, "oma_backfill_queued": queued}
-
         return result
     except Exception:
         import traceback

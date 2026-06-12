@@ -760,35 +760,6 @@ def resolve_folder_content(
             _set_oma_meta(oma_pages=oma_content_page_count(user_id, folder))
             return block, "OMA", concept_ids
 
-        if _wait_for_oma_if_indexing(user_id, folder):
-            block, concept_ids = get_folder_context(
-                user_id, folder, query,
-                max_chars=max_chars,
-                max_content=max_content,
-                max_images=max_images,
-            )
-            if block:
-                log_content_source(
-                    "OMA",
-                    context_type=context_type,
-                    folder=folder,
-                    user_id=user_id,
-                    chars=len(block),
-                    detail=f"{len(concept_ids)} concepts (after ingest wait)",
-                )
-                _set_oma_meta(oma_pages=oma_content_page_count(user_id, folder))
-                return block, "OMA", concept_ids
-
-        queue_folder_oma_backfill(
-            user_id,
-            folder,
-            reason=f"chat {context_type} retrieval empty",
-        )
-        _set_oma_meta(
-            oma_backfill_queued=True,
-            oma_pages=oma_content_page_count(user_id, folder),
-        )
-
     block = rag.build_folder_context(user_id, folder, query, max_chars=max_chars)
     if block:
         label = "RAG (OMA empty)" if is_oma_enabled() else "RAG"
