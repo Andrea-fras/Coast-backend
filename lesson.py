@@ -135,16 +135,7 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
                 }
                 for s in raw_sources
             ]
-            pdf_sources = [
-                {
-                    "path": s.file_path,
-                    "source_id": s.source_id,
-                    "filename": s.filename or f"{s.source_id}.pdf",
-                    "page_count": s.page_count or 0,
-                }
-                for s in raw_sources
-                if getattr(s, "file_path", None) and str(s.file_path).lower().endswith(".pdf")
-            ]
+            pdf_sources = oma_provider.load_folder_pdf_sources(src_uid, folder_name)
             oma_required = oma_provider.is_oma_enabled() and bool(pdf_sources)
             if oma_required:
                 ready = oma_provider.ensure_oma_ready_for_outline(
@@ -316,12 +307,21 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
 
         db.commit()
 
+        oma_pages = 0
+        try:
+            import oma_provider
+            if oma_provider.is_oma_enabled():
+                oma_pages = oma_provider.oma_content_page_count(src_uid, folder_name)
+        except Exception:
+            pass
+
         return {
             "sections": outline_sections,
             "total_sections": len(outline_sections),
             "current_section": 0,
             "estimated_minutes": total_minutes,
             "outline_source": "oma" if outline_via_oma else "raw",
+            "oma_pages_indexed": oma_pages,
             "outline_note": (
                 None if outline_via_oma
                 else "OMA index not ready — used raw text. Try regenerating in a minute."
