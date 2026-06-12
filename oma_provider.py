@@ -77,7 +77,7 @@ def reset_content_retrieval_log() -> dict:
     Returns the capture dict; pass it back to summarize_content_retrieval()
     so concurrent users never see each other's retrieval metadata.
     """
-    ctx = {"entries": [], "images": []}
+    ctx = {"entries": [], "images": [], "oma_meta": {}}
     _capture_tls.ctx = ctx
     return ctx
 
@@ -201,6 +201,7 @@ def summarize_content_retrieval(assistant_reply: str | None = None, capture: dic
         "entries": list(retrieval_log),
         "images": used,
         "images_offered": len(candidates),
+        **ctx.get("oma_meta", {}),
     }
 
 
@@ -657,6 +658,39 @@ def log_content_source(
     logger.info(" | ".join(parts))
 
 
+def _set_oma_meta(**fields) -> None:
+    ctx = _current_capture()
+    if ctx is not None:
+        ctx.setdefault("oma_meta", {}).update(fields)
+
+
+def _wait_for_oma_if_indexing(
+    user_id: int | str,
+    folder: str,
+    *,
+    max_wait: float = 45.0,
+    poll_sec: float = 2.0,
+) -> bool:
+    """If OMA ingest is running for this folder, wait briefly for pages to appear."""
+    if oma_content_page_count(user_id, folder) > 0:
+        return True
+    key = _ingest_key(user_id, folder)
+    with _ingest_lock:
+        active = _ingest_active.get(key, 0) > 0 or key in _backfill_started
+    if not active:
+        return False
+    logger.info("Waiting for Content OMA ingest folder=%s (up to %.0fs)", folder, max_wait)
+    deadline = time.time() + max_wait
+    while time.time() < deadline:
+        if oma_content_page_count(user_id, folder) > 0:
+            return True
+        with _ingest_lock:
+            if _ingest_active.get(key, 0) <= 0 and key not in _backfill_started:
+                break
+        time.sleep(poll_sec)
+    return oma_content_page_count(user_id, folder) > 0
+
+
 def resolve_folder_content(
     user_id: int | str,
     folder: str,
@@ -674,6 +708,14 @@ def resolve_folder_content(
     import rag
 
     concept_ids: list[str] = []
+    oma_pages = oma_content_page_count(user_id, folder) if is_oma_enabled() else 0
+    _set_oma_meta(
+        oma_enabled=is_oma_enabled(),
+        rag_provider=RAG_PROVIDER,
+        student_oma_enabled=is_student_enabled(),
+        oma_pages=oma_pages,
+    )
+
     if is_oma_enabled():
         block, concept_ids = get_folder_context(
             user_id, folder, query,
@@ -690,12 +732,36 @@ def resolve_folder_content(
                 chars=len(block),
                 detail=f"{len(concept_ids)} concepts",
             )
+            _set_oma_meta(oma_pages=oma_content_page_count(user_id, folder))
             return block, "OMA", concept_ids
+
+        if _wait_for_oma_if_indexing(user_id, folder):
+            block, concept_ids = get_folder_context(
+                user_id, folder, query,
+                max_chars=max_chars,
+                max_content=max_content,
+                max_images=max_images,
+            )
+            if block:
+                log_content_source(
+                    "OMA",
+                    context_type=context_type,
+                    folder=folder,
+                    user_id=user_id,
+                    chars=len(block),
+                    detail=f"{len(concept_ids)} concepts (after ingest wait)",
+                )
+                _set_oma_meta(oma_pages=oma_content_page_count(user_id, folder))
+                return block, "OMA", concept_ids
 
         queue_folder_oma_backfill(
             user_id,
             folder,
             reason=f"chat {context_type} retrieval empty",
+        )
+        _set_oma_meta(
+            oma_backfill_queued=True,
+            oma_pages=oma_content_page_count(user_id, folder),
         )
 
     block = rag.build_folder_context(user_id, folder, query, max_chars=max_chars)
@@ -707,6 +773,7 @@ def resolve_folder_content(
             folder=folder,
             user_id=user_id,
             chars=len(block),
+            detail=f"oma_pages={oma_content_page_count(user_id, folder)}" if is_oma_enabled() else "",
         )
         return block, "RAG", []
 

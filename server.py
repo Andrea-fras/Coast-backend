@@ -80,6 +80,8 @@ _ALLOWED_ORIGINS = [
     "http://localhost:5173", "http://localhost:5174", "http://localhost:3000",
     "https://dist-delta-eight-99.vercel.app",
     "https://app.coast.academy",
+    "https://coast.academy",
+    "https://www.coast.academy",
 ]
 for _origin in os.getenv("FRONTEND_URL", "").split(","):
     _origin = _origin.strip().rstrip("/")
@@ -3468,9 +3470,24 @@ def health():
     try:
         paper_count = db.query(Paper).count()
         user_count = db.query(User).count()
-        return {"status": "ok", "papers": paper_count, "users": user_count}
     finally:
         db.close()
+
+    import oma_provider
+    oma_db = oma_provider.OMA_DB_PATH
+    payload = {
+        "status": "ok",
+        "papers": paper_count,
+        "users": user_count,
+        "oma": {
+            "enabled": oma_provider.is_oma_enabled(),
+            "student_enabled": oma_provider.is_student_enabled(),
+            "rag_provider": oma_provider.RAG_PROVIDER,
+            "db_bytes": _path_size_bytes(oma_db),
+            "db_exists": oma_db.exists(),
+        },
+    }
+    return payload
 
 
 def _get_paper_paths(course: str | None = None) -> list[Path]:
@@ -3542,17 +3559,31 @@ def oma_folder_stats(folder_name: str, user: User = Depends(get_current_user)):
     """How many concepts / chunks / images does OMA have for this folder?"""
     import oma_provider
     if not oma_provider.is_oma_enabled():
-        return {"error": "OMA not enabled"}
+        return {"error": "OMA not enabled", "rag_provider": oma_provider.RAG_PROVIDER}
     from coast_content_oma.stores import make_namespace
     src_uid = _curated_uid(folder_name) if _curated_uid(folder_name) is not None else user.id
     ns = make_namespace(src_uid, folder_name)
     orch = oma_provider._content_orchestrator()
-    return {
+    result = {
         "namespace": ns,
+        "owner_id": src_uid,
+        "rag_provider": oma_provider.RAG_PROVIDER,
+        "oma_pages": oma_provider.oma_content_page_count(src_uid, folder_name),
         "concepts": orch.concept.stats(ns),
         "content": orch.content.stats(ns),
         "images": orch.images.stats(ns),
     }
+    if oma_provider.is_student_enabled():
+        from coast_content_oma.student.stores import course_namespace
+        student_orch = oma_provider._student_orchestrator()
+        course_ns = course_namespace(user.id, folder_name)
+        result["student_oma"] = {
+            "namespace": course_ns,
+            "episodes": len(student_orch.episodes.all(course_ns)),
+            "mastery_records": len(student_orch.mastery.all(course_ns)),
+            "patterns": len(student_orch.patterns.all(course_ns)),
+        }
+    return result
 
 
 @app.get("/api/oma/folder/{folder_name}/preview")

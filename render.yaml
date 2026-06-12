@@ -39,7 +39,7 @@ services:
       - key: PEDRO_PROVIDER
         value: "gemini"
       - key: FRONTEND_URL
-        sync: false
+        value: "https://app.coast.academy"
       - key: OPENAI_API_KEY
         sync: false
       - key: GEMINI_API_KEY
