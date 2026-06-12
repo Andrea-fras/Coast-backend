@@ -309,6 +309,143 @@ def ingest_pdf_async(user_id: int | str, folder: str, pdf_path: str | Path) -> N
     ).start()
 
 
+def _folder_uploads_dir() -> Path:
+    return Path(os.environ.get("FOLDER_UPLOADS_DIR", "./folder_uploads"))
+
+
+def resolve_source_pdf_path(
+    source_id: str,
+    filename: str,
+    file_path: str | None = None,
+) -> Path | None:
+    """Resolve on-disk PDF path for a FolderSource row."""
+    if file_path:
+        p = Path(file_path)
+        if p.is_file() and p.suffix.lower() == ".pdf":
+            return p
+    p = _folder_uploads_dir() / f"{source_id}{Path(filename).suffix.lower()}"
+    if p.is_file() and p.suffix.lower() == ".pdf":
+        return p
+    return None
+
+
+def load_folder_pdf_sources(user_id: int | str, folder: str) -> list[dict]:
+    """Load PDF sources from folder_sources for OMA backfill."""
+    from database import FolderSource, SessionLocal
+
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(FolderSource)
+            .filter(
+                FolderSource.user_id == user_id,
+                FolderSource.folder_name == folder,
+            )
+            .all()
+        )
+        out: list[dict] = []
+        for s in rows:
+            path = resolve_source_pdf_path(s.source_id, s.filename, s.file_path)
+            if not path:
+                continue
+            out.append({
+                "path": str(path),
+                "filename": s.filename or path.name,
+                "page_count": int(s.page_count or 0),
+                "source_id": s.source_id,
+            })
+        return out
+    finally:
+        db.close()
+
+
+_backfill_started: set[str] = set()
+
+
+def oma_content_page_count(user_id: int | str, folder: str) -> int:
+    if not is_oma_enabled():
+        return 0
+    from coast_content_oma.stores import make_namespace
+
+    ns = make_namespace(user_id, folder)
+    return _content_orchestrator().content.count(ns)
+
+
+def queue_folder_oma_backfill(
+    user_id: int | str,
+    folder: str,
+    *,
+    reason: str = "",
+) -> bool:
+    """Background Content OMA ingest when a folder has PDFs but OMA is empty."""
+    if not is_oma_enabled():
+        return False
+    key = _ingest_key(user_id, folder)
+    with _ingest_lock:
+        if key in _backfill_started or _ingest_active.get(key, 0) > 0:
+            return False
+        if oma_content_page_count(user_id, folder) > 0:
+            return False
+        _backfill_started.add(key)
+
+    def _run() -> None:
+        try:
+            sources = load_folder_pdf_sources(user_id, folder)
+            if not sources:
+                logger.info(
+                    "OMA backfill skipped — no PDFs folder=%s user=%s",
+                    folder, user_id,
+                )
+                return
+            logger.info(
+                "OMA backfill starting folder=%s user=%s pdfs=%d %s",
+                folder, user_id, len(sources), reason,
+            )
+            ensure_oma_ready_for_outline(
+                user_id,
+                folder,
+                pdf_sources=sources,
+                wait_sec=2400,
+            )
+        except Exception:
+            logger.exception("OMA backfill failed folder=%s user=%s", folder, user_id)
+        finally:
+            with _ingest_lock:
+                _backfill_started.discard(key)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return True
+
+
+def backfill_all_missing_folders() -> dict:
+    """Queue OMA ingest for every (user, folder) that has PDFs but empty OMA."""
+    if not is_oma_enabled():
+        return {"queued": 0, "folders": []}
+
+    from database import FolderSource, SessionLocal
+
+    db = SessionLocal()
+    try:
+        rows = db.query(FolderSource).all()
+    finally:
+        db.close()
+
+    seen: set[tuple[int, str]] = set()
+    queued: list[dict] = []
+    for s in rows:
+        if not resolve_source_pdf_path(s.source_id, s.filename, s.file_path):
+            continue
+        pair = (int(s.user_id), s.folder_name)
+        if pair in seen:
+            continue
+        seen.add(pair)
+        if oma_content_page_count(pair[0], pair[1]) > 0:
+            continue
+        if queue_folder_oma_backfill(pair[0], pair[1], reason="bulk backfill"):
+            queued.append({"user_id": pair[0], "folder": pair[1]})
+    return {"queued": len(queued), "folders": queued}
+
+
 def ensure_oma_ready_for_outline(
     user_id: int | str,
     folder: str,
@@ -554,6 +691,12 @@ def resolve_folder_content(
                 detail=f"{len(concept_ids)} concepts",
             )
             return block, "OMA", concept_ids
+
+        queue_folder_oma_backfill(
+            user_id,
+            folder,
+            reason=f"chat {context_type} retrieval empty",
+        )
 
     block = rag.build_folder_context(user_id, folder, query, max_chars=max_chars)
     if block:

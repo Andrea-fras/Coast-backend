@@ -342,6 +342,17 @@ def on_startup():
             import traceback; traceback.print_exc()
     threading.Thread(target=_bg_curated, daemon=True).start()
 
+    def _bg_oma_backfill():
+        try:
+            import oma_provider
+            if oma_provider.is_oma_enabled():
+                print("  [oma] Checking for folders with PDFs but no Content OMA index…")
+                result = oma_provider.backfill_all_missing_folders()
+                print(f"  [oma] Backfill queued for {result.get('queued', 0)} folder(s).")
+        except Exception:
+            import traceback; traceback.print_exc()
+    threading.Thread(target=_bg_oma_backfill, daemon=True).start()
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # AUTH DEPENDENCY
@@ -1494,7 +1505,7 @@ def delete_folder(folder_name: str, user: User = Depends(get_current_user)):
 
 @app.post("/api/folders/{folder_name}/embed")
 def embed_folder(folder_name: str, user: User = Depends(get_current_user)):
-    """Embed all notebooks in a folder into ChromaDB."""
+    """Embed all notebooks in a folder into ChromaDB and queue Content OMA indexing."""
     try:
         # Curated folders are pre-embedded at bootstrap; skip instead of letting
         # any user trigger an expensive shared re-embed.
@@ -1502,6 +1513,16 @@ def embed_folder(folder_name: str, user: User = Depends(get_current_user)):
             return {"notebooks_embedded": 0, "total_chunks": 0, "skipped": "curated"}
         embed_uid = _curated_uid(folder_name) if _curated_uid(folder_name) is not None else user.id
         result = rag.embed_all_in_folder(embed_uid, folder_name)
+
+        import oma_provider
+        if oma_provider.is_oma_enabled():
+            queued = oma_provider.queue_folder_oma_backfill(
+                embed_uid,
+                folder_name,
+                reason="embed endpoint",
+            )
+            result = {**result, "oma_backfill_queued": queued}
+
         return result
     except Exception:
         import traceback
@@ -3363,6 +3384,7 @@ def admin_control_center(user: User = Depends(get_current_user)):
         db.close()
 
     import oma_provider
+    oma_db = oma_provider.OMA_DB_PATH
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "live": live,
@@ -3392,6 +3414,9 @@ def admin_control_center(user: User = Depends(get_current_user)):
             "enabled": oma_provider.is_oma_enabled(),
             "student_oma_enabled": oma_provider.is_student_enabled(),
             "rag_provider": oma_provider.RAG_PROVIDER,
+            "db_path": str(oma_db),
+            "db_bytes": _path_size_bytes(oma_db),
+            "image_dir_bytes": _path_size_bytes(oma_provider.OMA_IMAGE_DIR),
         },
     }
 
@@ -3482,12 +3507,16 @@ def oma_status(user: User = Depends(get_current_user)):
     if user.email not in ADMIN_EMAILS:
         raise HTTPException(403, "Admin only")
     import oma_provider
+    db_path = oma_provider.OMA_DB_PATH
     return {
         "rag_provider": oma_provider.RAG_PROVIDER,
         "oma_enabled": oma_provider.is_oma_enabled(),
         "student_oma_enabled": oma_provider.is_student_enabled(),
-        "db_path": str(oma_provider.OMA_DB_PATH),
+        "db_path": str(db_path),
+        "db_bytes": _path_size_bytes(db_path),
         "image_dir": str(oma_provider.OMA_IMAGE_DIR),
+        "image_dir_bytes": _path_size_bytes(oma_provider.OMA_IMAGE_DIR),
+        "ingest_active": dict(oma_provider._ingest_active),
     }
 
 
@@ -3598,25 +3627,33 @@ def oma_folder_reingest(folder_name: str, user: User = Depends(get_current_user)
     if not oma_provider.is_oma_enabled():
         return {"error": "OMA not enabled"}
 
-    db = SessionLocal()
-    try:
-        sources = (
-            db.query(FolderSource)
-            .filter(
-                FolderSource.user_id == user.id,
-                FolderSource.folder_name == folder_name,
-            )
-            .all()
-        )
-        queued = []
-        for s in sources:
-            stored = FOLDER_UPLOADS_DIR / f"{s.source_id}{Path(s.filename).suffix.lower()}"
-            if stored.exists() and stored.suffix.lower() == ".pdf":
-                oma_provider.ingest_pdf_async(user.id, folder_name, stored)
-                queued.append(s.source_id)
-        return {"queued": queued, "count": len(queued)}
-    finally:
-        db.close()
+    owner_id = _curated_uid(folder_name) if _curated_uid(folder_name) is not None else user.id
+    sources = oma_provider.load_folder_pdf_sources(owner_id, folder_name)
+    if not sources:
+        return {"queued": [], "count": 0, "owner_id": owner_id}
+
+    queued = oma_provider.queue_folder_oma_backfill(
+        owner_id,
+        folder_name,
+        reason="ingest-all endpoint",
+    )
+    return {
+        "queued": [s["source_id"] for s in sources],
+        "count": len(sources),
+        "owner_id": owner_id,
+        "started": queued,
+    }
+
+
+@app.post("/api/admin/oma/backfill-all")
+def admin_oma_backfill_all(user: User = Depends(get_current_user)):
+    """Queue Content OMA ingest for every folder that has PDFs but no OMA index."""
+    if user.email not in ADMIN_EMAILS:
+        raise HTTPException(403, "Admin only")
+    import oma_provider
+    if not oma_provider.is_oma_enabled():
+        return {"error": "OMA not enabled", "queued": 0}
+    return oma_provider.backfill_all_missing_folders()
 
 
 @app.get("/api/oma/student/{folder_name}/profile")
