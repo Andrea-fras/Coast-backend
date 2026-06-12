@@ -25,6 +25,66 @@ from database import (
 )
 
 
+_RECAP_REQUEST = re.compile(
+    r"\b(summary|summarize|summarise|recap|overview|catch me up|"
+    r"what we (?:have |'ve )?(?:done|covered|learned|studied)|"
+    r"what did we (?:do|cover|learn)|review (?:what|our)|"
+    r"everything we(?:'ve| have) (?:done|covered))\b",
+    re.I,
+)
+
+
+def is_recap_request(message: str | None) -> bool:
+    return bool(message and _RECAP_REQUEST.search(message))
+
+
+def _fetch_lesson_conversation_recap(
+    user_id: int,
+    folder_name: str,
+    max_chars: int = 9000,
+) -> str:
+    """Recent Pedro lesson chat — what was actually taught in sessions."""
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(ChatMessage)
+            .filter(
+                ChatMessage.user_id == user_id,
+                ChatMessage.context_type.in_(("lesson", "folder")),
+                ChatMessage.context_id == folder_name,
+            )
+            .order_by(ChatMessage.created_at.desc())
+            .limit(60)
+            .all()
+        )
+        if not rows:
+            return ""
+        rows = list(reversed(rows))
+        lines: list[str] = []
+        used = 0
+        for msg in rows:
+            role = "Student" if msg.role == "user" else "Pedro"
+            sec = msg.section_index
+            prefix = f"[Section {sec + 1}] " if sec is not None else ""
+            text = (msg.content or "").strip()
+            if not text or _SECTION_OPENER.match(text):
+                continue
+            line = f"{prefix}{role}: {text[:600]}"
+            if used + len(line) > max_chars:
+                break
+            lines.append(line)
+            used += len(line)
+        if not lines:
+            return ""
+        return (
+            "--- RECENT LESSON CONVERSATIONS (what Pedro already taught) ---\n"
+            + "\n".join(lines)
+            + "\n--- END RECENT LESSON CONVERSATIONS ---\n"
+        )
+    finally:
+        db.close()
+
+
 def generate_outline(user_id: int, folder_name: str, source_user_id: int | None = None, structure: dict | None = None) -> dict:
     """Generate a structured course outline from all sources in a folder.
     
@@ -242,6 +302,7 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
             existing.current_section = 0
             existing.estimated_minutes = total_minutes
             existing.updated_at = datetime.now(timezone.utc)
+            # ever_mastered + lesson notes are intentionally preserved on regenerate.
         else:
             existing = CourseOutline(
                 user_id=user_id,
@@ -854,6 +915,11 @@ def get_lesson_state(user_id: int, folder_name: str, source_user_id: int | None 
                 if sp.get("mastery_pct") is None or sp["mastery_pct"] < 100:
                     sp["mastery_pct"] = 100
 
+        if _sync_ever_mastered(outline, section_progress):
+            outline.updated_at = datetime.now(timezone.utc)
+            db.commit()
+        ever_mastered = bool(getattr(outline, "ever_mastered", False))
+
         return {
             "has_outline": True,
             "content_ready": content_ready,
@@ -864,6 +930,7 @@ def get_lesson_state(user_id: int, folder_name: str, source_user_id: int | None 
             "estimated_minutes": outline.estimated_minutes,
             "progress_percent": round((outline.current_section / max(outline.total_sections, 1)) * 100),
             "is_complete": is_complete,
+            "ever_mastered": ever_mastered,
             "section_progress": section_progress,
             "section_verified": can_advance_from_section(
                 user_id, folder_name, int(outline.current_section),
@@ -954,11 +1021,16 @@ def advance_section(user_id: int, folder_name: str) -> dict:
             db.commit()
 
         is_complete = outline.current_section >= outline.total_sections
+        if is_complete:
+            _sync_ever_mastered(outline)
+            outline.updated_at = datetime.now(timezone.utc)
+            db.commit()
 
         return {
             "current_section": outline.current_section,
             "total_sections": outline.total_sections,
             "is_complete": is_complete,
+            "ever_mastered": bool(getattr(outline, "ever_mastered", False)),
             "next_section": sections[outline.current_section] if outline.current_section < len(sections) else None,
         }
     finally:
@@ -1007,8 +1079,31 @@ def claim_section_reward(
         db.close()
 
 
+def _sync_ever_mastered(outline, section_progress: list | None = None) -> bool:
+    """Persist course-level mastery badge — survives lesson reset/replay."""
+    if bool(getattr(outline, "ever_mastered", False)):
+        return True
+    if outline.total_sections > 0 and outline.current_section >= outline.total_sections:
+        outline.ever_mastered = True
+        return True
+    if section_progress and outline.total_sections > 0:
+        all_done = all(
+            (section_progress[i].get("mastery_pct") or 0) >= 100
+            for i in range(min(len(section_progress), outline.total_sections))
+            if section_progress[i].get("attempted") or section_progress[i].get("mastered")
+        )
+        attempted_count = sum(
+            1 for i in range(min(len(section_progress), outline.total_sections))
+            if section_progress[i].get("attempted") or section_progress[i].get("mastered")
+        )
+        if attempted_count >= outline.total_sections and all_done:
+            outline.ever_mastered = True
+            return True
+    return False
+
+
 def reset_lesson(user_id: int, folder_name: str) -> dict:
-    """Reset lesson progress to start over."""
+    """Reset lesson progress pointer for replay — keeps ever_mastered trophy and notes."""
     db = SessionLocal()
     try:
         outline = (
@@ -1019,10 +1114,21 @@ def reset_lesson(user_id: int, folder_name: str) -> dict:
         if not outline:
             return {"error": "No outline found"}
 
+        ever_mastered = bool(getattr(outline, "ever_mastered", False))
+
         outline.current_section = 0
         outline.updated_at = datetime.now(timezone.utc)
+
+        sections = json.loads(outline.outline_json)
+        for i in range(len(sections)):
+            clear_section_verification(user_id, folder_name, i)
+
         db.commit()
-        return {"status": "reset", "current_section": 0}
+        return {
+            "status": "reset",
+            "current_section": 0,
+            "ever_mastered": ever_mastered,
+        }
     finally:
         db.close()
 
@@ -1151,12 +1257,15 @@ def apply_test_out(user_id: int, folder_name: str, target_section_index: int) ->
 
         outline.current_section = target_idx
         outline.updated_at = datetime.now(timezone.utc)
+        if target_idx >= outline.total_sections:
+            _sync_ever_mastered(outline)
         db.commit()
 
         return {
             "current_section": target_idx,
             "total_sections": outline.total_sections,
             "is_complete": target_idx >= outline.total_sections,
+            "ever_mastered": bool(getattr(outline, "ever_mastered", False)),
             "skipped_sections": list(range(current_idx, target_idx)),
         }
     finally:
@@ -1268,6 +1377,7 @@ def _fallback_source_context(
     key_topics: list[str],
     source_notebooks: list[str],
     max_chars: int = 24000,
+    search_terms_extra: list[str] | None = None,
 ) -> str:
     """When RAG is unavailable, build section context by matching sources to section topics."""
     from database import FolderSource as FS
@@ -1281,6 +1391,11 @@ def _fallback_source_context(
             return ""
 
         search_terms = [t.lower() for t in [section_title] + key_topics + source_notebooks if t]
+        if search_terms_extra:
+            for term in search_terms_extra:
+                t = term.lower().strip()
+                if len(t) > 2 and t not in search_terms:
+                    search_terms.append(t)
 
         def _relevance_score(src) -> int:
             title_lower = (src.title or "").lower()
@@ -1373,6 +1488,7 @@ def build_lesson_prompt(
     source_user_id: int | None = None,
     structure: dict | None = None,
     student_message: str | None = None,
+    section_index: int | None = None,
 ) -> str | None:
     """Build a specialized system prompt for the current lesson section.
     
@@ -1380,8 +1496,10 @@ def build_lesson_prompt(
     structure: optional dict with pedagogy hints for curated lessons.
     student_message: when set, also retrieve Content OMA material targeted at the
         student's current question (skipped for automatic section-openers).
+    section_index: active section in chat (defaults to outline progress pointer).
     """
     src_uid = source_user_id if source_user_id is not None else user_id
+    recap = is_recap_request(student_message)
     db = SessionLocal()
     try:
         outline = (
@@ -1393,9 +1511,9 @@ def build_lesson_prompt(
             return None
 
         sections = json.loads(outline.outline_json)
-        current_idx = outline.current_section
+        current_idx = int(section_index if section_index is not None else outline.current_section)
         if current_idx >= len(sections):
-            return None
+            current_idx = max(0, len(sections) - 1)
 
         current = sections[current_idx]
         section_title = current.get("title", f"Section {current_idx + 1}")
@@ -1404,23 +1522,28 @@ def build_lesson_prompt(
         source_nbs = current.get("source_notebooks", [])
 
         query_parts = [section_title] + key_topics + objectives
-        query = " ".join(query_parts)
+        if recap and student_message:
+            for s in sections:
+                query_parts.append(s.get("title") or "")
+                query_parts.extend(s.get("key_topics") or [])
+            query_parts.insert(0, student_message)
+        elif student_message:
+            query_parts.insert(0, student_message)
+        query = " ".join(dict.fromkeys(p for p in query_parts if p))
+        max_material = 32000 if recap else 22000
         material_context, used_oma = _fetch_section_material(
-            src_uid, folder_name, query, max_chars=22000,
+            src_uid, folder_name, query, max_chars=max_material,
         )
 
         # For follow-up questions in lesson chat, pull query-specific excerpts too.
         if student_message:
             try:
                 import oma_provider
-                if (
-                    oma_provider.is_oma_enabled()
-                    and not oma_provider._is_lesson_intro(student_message)
-                ):
+                if oma_provider.is_oma_enabled() and not oma_provider._is_lesson_intro(student_message):
                     extra, q_concept_ids = oma_provider.get_folder_context(
                         src_uid, folder_name, student_message,
-                        max_chars=8000,
-                        max_content=8,
+                        max_chars=12000 if recap else 8000,
+                        max_content=12 if recap else 8,
                         max_images=2,
                     )
                     if extra and extra not in material_context:
@@ -1442,8 +1565,15 @@ def build_lesson_prompt(
                 traceback.print_exc()
 
         if not material_context:
+            fallback_query = query
+            if recap:
+                fallback_query = " ".join(
+                    s.get("title", "") for s in sections
+                ) + " " + (student_message or "")
             material_context = _fallback_source_context(
-                src_uid, folder_name, section_title, key_topics, source_nbs, max_chars=24000
+                src_uid, folder_name, section_title, key_topics, source_nbs,
+                max_chars=32000 if recap else 24000,
+                search_terms_extra=fallback_query.split() if recap else None,
             )
             if material_context:
                 try:
@@ -1487,6 +1617,20 @@ def build_lesson_prompt(
             prompt += f"Already covered: {', '.join(completed)}\n"
         if upcoming:
             prompt += f"Coming next: {', '.join(upcoming[:3])}\n"
+
+        if recap:
+            prompt += (
+                "\nRECAP / SUMMARY MODE:\n"
+                "The student wants a summary of what they've covered in this course. "
+                "Use ALL of the following — do NOT say you lack their lecture slides:\n"
+                "1) SOURCE MATERIAL below (from their uploaded PDFs via Content OMA)\n"
+                "2) RECENT LESSON CONVERSATIONS below (what you already taught them)\n"
+                "3) STUDENT PROFILE (sections finished, mastery, accomplishments)\n"
+                "Organize by section or topic. Be specific to THEIR course materials.\n"
+            )
+            recap_block = _fetch_lesson_conversation_recap(user_id, folder_name)
+            if recap_block:
+                prompt += "\n" + recap_block
 
         prompt += (
             "\nTEACHING APPROACH:\n"

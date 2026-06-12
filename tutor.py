@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -19,11 +20,13 @@ load_dotenv()
 
 from database import (
     ChatMessage,
+    CourseOutline,
     QuizSession,
     SavedNotebook,
     SessionAnswer,
     SessionLocal,
     SkillProfile,
+    StudyFolder,
     TutorMemo,
     User,
 )
@@ -501,13 +504,20 @@ def build_system_prompt(
         )
     elif context_type == "global":
         if notebook_content and explicit_notebook_ref:
-            parts.append(
-                "\nThis is a general conversation. The student explicitly referenced the following notebook(s) — "
-                "use them as your PRIMARY source for factual references, just like in a notebook-specific chat."
-                "\n--- REFERENCED NOTEBOOK CONTENT ---\n"
-                + notebook_content[:12000]
-                + "\n--- END NOTEBOOK CONTENT ---"
-            )
+            if "COURSE MATERIAL:" in (notebook_content or ""):
+                parts.append(
+                    "\nThe student is asking about a specific course they uploaded materials for. "
+                    "Use the course material below (Content OMA). Do NOT claim you lack their slides.\n"
+                    + notebook_content[:16000]
+                )
+            else:
+                parts.append(
+                    "\nThis is a general conversation. The student explicitly referenced the following notebook(s) — "
+                    "use them as your PRIMARY source for factual references, just like in a notebook-specific chat."
+                    "\n--- REFERENCED NOTEBOOK CONTENT ---\n"
+                    + notebook_content[:12000]
+                    + "\n--- END NOTEBOOK CONTENT ---"
+                )
         elif notebook_content:
             parts.append(
                 "\nThis is a general conversation. You found some relevant content from the student's notebooks:"
@@ -644,6 +654,96 @@ def _get_relevant_notebook_snippets(user_id: int, message: str, max_chars: int =
         db.close()
 
 
+def _match_user_folder(user_id: int, message: str) -> str | None:
+    """Best-effort match of a global-chat message to one of the student's courses."""
+    db = SessionLocal()
+    try:
+        names: set[str] = set()
+        for o in db.query(CourseOutline).filter(CourseOutline.user_id == user_id).all():
+            if o.folder_name:
+                names.add(o.folder_name)
+        for f in db.query(StudyFolder).filter(StudyFolder.user_id == user_id).all():
+            if f.name:
+                names.add(f.name)
+    finally:
+        db.close()
+
+    if not names:
+        return None
+
+    msg = message.lower()
+    best_name = None
+    best_score = 0
+    for name in names:
+        low = name.lower()
+        score = 0
+        if low in msg:
+            score += 20
+        for token in re.split(r"[\W_]+", low):
+            if len(token) > 2 and token in msg:
+                score += 2
+        if score > best_score:
+            best_score = score
+            best_name = name
+
+    if best_score >= 2:
+        return best_name
+
+    try:
+        import lesson as lesson_mod
+        if len(names) == 1 and lesson_mod.is_recap_request(message):
+            return next(iter(names))
+    except Exception:
+        pass
+    return None
+
+
+def _resolve_global_lesson_context(user_id: int, message: str) -> tuple[str | None, str | None]:
+    """Pull Content OMA / RAG + lesson chat history for global Pedro chat."""
+    folder = _match_user_folder(user_id, message)
+    if not folder:
+        return None, None
+    try:
+        import lesson as lesson_mod
+        import oma_provider
+        from curated_config import curated_source_uid
+
+        rag_uid = curated_source_uid(folder)
+        effective_uid = rag_uid if rag_uid is not None else user_id
+        block, _source, _ = oma_provider.resolve_folder_content(
+            effective_uid,
+            folder,
+            message,
+            context_type="global-lesson",
+            max_chars=16000,
+            max_content=12,
+            max_images=2,
+        )
+        if not block:
+            block = lesson_mod._fallback_source_context(
+                effective_uid, folder, "", [], [], max_chars=16000,
+            )
+        if not block:
+            return None, folder
+
+        wrapped = (
+            f"\n--- COURSE MATERIAL: {folder} ---\n"
+            "The student uploaded lecture PDFs for this course. You have access via Content OMA. "
+            "Answer using this material. Do NOT say you lack their slides or lecture notes.\n"
+            + block
+            + "\n--- END COURSE MATERIAL ---\n"
+        )
+        if lesson_mod.is_recap_request(message):
+            recap = lesson_mod._fetch_lesson_conversation_recap(user_id, folder)
+            if recap:
+                wrapped += "\n" + recap
+        return wrapped, folder
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        return None, folder
+
+
 def send_message(
     user_id: int,
     message: str,
@@ -701,6 +801,7 @@ def send_message(
                         source_user_id=src_uid if src_uid is not None else None,
                         structure=get_lesson_structure(context_id),
                         student_message=message,
+                        section_index=section_index,
                     )
             except Exception:
                 import traceback as tb
@@ -741,6 +842,7 @@ def send_message(
             except (ValueError, TypeError):
                 pass
         elif context_type == "global":
+            matched_folder = None
             if notebook_ids:
                 parts = []
                 for nb_id in notebook_ids[:3]:
@@ -751,9 +853,32 @@ def send_message(
                     notebook_content = "\n\n--- NEXT NOTEBOOK ---\n\n".join(parts)
                     explicit_notebook_ref = True
             if not notebook_content:
+                folder_block, matched_folder = _resolve_global_lesson_context(user_id, message)
+                if folder_block:
+                    notebook_content = folder_block
+                    explicit_notebook_ref = True
+            if not notebook_content:
                 snippets = _get_relevant_notebook_snippets(user_id, message)
                 if snippets:
                     notebook_content = snippets
+
+        student_profile_block = None
+        try:
+            import oma_provider
+            if oma_provider.is_student_enabled():
+                if context_type in ("folder", "lesson", "test_out") and context_id:
+                    student_profile_block = oma_provider.get_student_profile_block(
+                        user_id, context_id,
+                    )
+                elif context_type == "global":
+                    if locals().get("matched_folder"):
+                        student_profile_block = oma_provider.get_student_profile_block(
+                            user_id, locals()["matched_folder"],
+                        )
+                    else:
+                        student_profile_block = oma_provider.get_global_student_profile_block(user_id)
+        except Exception:
+            pass
 
         # Build system prompt
         system_prompt = build_system_prompt(
@@ -764,6 +889,7 @@ def send_message(
             skill_profile=skill_data,
             session_context=session_context,
             explicit_notebook_ref=explicit_notebook_ref,
+            student_profile_block=student_profile_block,
         )
 
         # Load conversation history (scoped to this user so one user can't
@@ -929,6 +1055,7 @@ def send_message_stream(
                         source_user_id=src_uid if src_uid is not None else None,
                         structure=get_lesson_structure(context_id),
                         student_message=message,
+                        section_index=lesson_section_idx,
                     )
             except Exception:
                 import traceback as tb
@@ -969,6 +1096,7 @@ def send_message_stream(
             except (ValueError, TypeError):
                 pass
         elif context_type == "global":
+            matched_folder = None
             if notebook_ids:
                 parts = []
                 for nb_id in notebook_ids[:3]:
@@ -979,12 +1107,17 @@ def send_message_stream(
                     notebook_content = "\n\n--- NEXT NOTEBOOK ---\n\n".join(parts)
                     explicit_notebook_ref = True
             if not notebook_content:
+                folder_block, matched_folder = _resolve_global_lesson_context(user_id, message)
+                if folder_block:
+                    notebook_content = folder_block
+                    explicit_notebook_ref = True
+            if not notebook_content:
                 snippets = _get_relevant_notebook_snippets(user_id, message)
                 if snippets:
                     notebook_content = snippets
 
         # Student OMA — personalized profile block for Pedro.
-        # Lesson/folder: per-course profile. Global: cross-course summary.
+        # Lesson/folder: per-course profile. Global: cross-course or matched course.
         student_profile_block = None
         try:
             import oma_provider
@@ -998,7 +1131,12 @@ def send_message_stream(
                         ),
                     )
                 elif context_type == "global":
-                    student_profile_block = oma_provider.get_global_student_profile_block(user_id)
+                    if locals().get("matched_folder"):
+                        student_profile_block = oma_provider.get_student_profile_block(
+                            user_id, locals()["matched_folder"],
+                        )
+                    else:
+                        student_profile_block = oma_provider.get_global_student_profile_block(user_id)
         except Exception:
             import traceback as tb
             tb.print_exc()

@@ -297,6 +297,7 @@ class CourseOutline(Base):
     total_sections = Column(Integer, default=0)
     current_section = Column(Integer, default=0)
     estimated_minutes = Column(Integer, default=0)
+    ever_mastered = Column(Boolean, default=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -418,6 +419,15 @@ def _run_migrations():
         if "bonus_unlock_points" not in cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE user_map_state ADD COLUMN bonus_unlock_points INTEGER DEFAULT 0"))
+    if "course_outlines" in insp.get_table_names():
+        cols = [c["name"] for c in insp.get_columns("course_outlines")]
+        if "ever_mastered" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE course_outlines ADD COLUMN ever_mastered BOOLEAN DEFAULT 0"))
+                conn.execute(text(
+                    "UPDATE course_outlines SET ever_mastered = 1 "
+                    "WHERE total_sections > 0 AND current_section >= total_sections"
+                ))
 
 
 def init_db():
