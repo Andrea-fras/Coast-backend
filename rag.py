@@ -189,6 +189,23 @@ def embed_notebook(user_id: int, folder: str, notebook_id: str, notebook_json: d
     return len(chunks)
 
 
+def delete_user_collections(user_id: int) -> int:
+    """Delete all Chroma collections belonging to a user. Returns count removed."""
+    try:
+        client = _get_chroma()
+        prefix = f"u{user_id}_"
+        removed = 0
+        for meta in client.list_collections():
+            name = meta.name if hasattr(meta, "name") else str(meta)
+            if name.startswith(prefix):
+                client.delete_collection(name)
+                removed += 1
+        return removed
+    except Exception:
+        traceback.print_exc()
+        return 0
+
+
 def delete_notebook_embeddings(user_id: int, folder: str, notebook_id: str):
     """Remove all embeddings for a specific notebook from the folder collection."""
     col_name = _collection_name(user_id, folder)

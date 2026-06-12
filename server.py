@@ -250,6 +250,17 @@ def _admin_server_metrics() -> dict:
             "exists": p.exists(),
         })
 
+    data_mount_breakdown = []
+    data_root = Path("/data")
+    if data_root.is_dir():
+        for child in sorted(data_root.iterdir()):
+            data_mount_breakdown.append({
+                "label": child.name + ("/" if child.is_dir() else ""),
+                "path": str(child),
+                "bytes": _path_size_bytes(child),
+            })
+        data_mount_breakdown.sort(key=lambda x: x["bytes"], reverse=True)
+
     disk = None
     for mount in (Path("/data"), Path("/"), Path(".")):
         try:
@@ -287,7 +298,7 @@ def _admin_server_metrics() -> dict:
         "uptime_seconds": int((datetime.now(timezone.utc) - _server_started_at).total_seconds()),
         "started_at": _server_started_at.isoformat(),
         "environment": "production" if os.getenv("RENDER") else "development",
-        "storage": {"breakdown": breakdown, "disk": disk},
+        "storage": {"breakdown": breakdown, "disk": disk, "data_mount": data_mount_breakdown},
         "database": row_counts,
         "traffic": {
             "total_requests": _request_total,
@@ -604,6 +615,9 @@ def register(req: RegisterRequest):
     ok, err = validate_email_address(email)
     if not ok:
         raise HTTPException(400, err)
+
+    if os.getenv("RENDER") and email.endswith("@loadtest.local"):
+        raise HTTPException(403, "Load-test accounts are disabled on production.")
 
     db = SessionLocal()
     try:
@@ -3215,6 +3229,70 @@ def admin_live_users(user: User = Depends(get_current_user)):
     return _collect_live_users()
 
 
+def _is_loadtest_email(email: str) -> bool:
+    return (email or "").lower().endswith("@loadtest.local")
+
+
+def _user_account_breakdown(db) -> dict:
+    from sqlalchemy import func
+
+    total = db.query(User).count()
+    loadtest = db.query(User).filter(func.lower(User.email).like("%@loadtest.local")).count()
+    google = db.query(User).filter(User.google_id.isnot(None)).count()
+    return {
+        "total_rows": total,
+        "real_users": total - loadtest,
+        "loadtest_bots": loadtest,
+        "google_auth": google,
+        "email_auth": db.query(User).filter(User.google_id.is_(None)).count(),
+    }
+
+
+def _purge_user_data(db, user_id: int) -> None:
+    from database import (
+        CourseOutline,
+        FolderSource,
+        LessonNotes,
+        MapTileProvenance,
+        SectionRewardClaim,
+        SectionVerification,
+        SourceImage,
+        StudyFolder,
+        TreasureChestOpen,
+        UserMapState,
+    )
+
+    for src in db.query(FolderSource).filter(FolderSource.user_id == user_id).all():
+        if src.file_path:
+            try:
+                Path(src.file_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+    for img in db.query(SourceImage).filter(SourceImage.user_id == user_id).all():
+        if img.image_path:
+            try:
+                Path(img.image_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    db.query(ActivityEvent).filter(ActivityEvent.user_id == user_id).delete()
+    db.query(UserFeedback).filter(UserFeedback.user_id == user_id).delete()
+    db.query(LessonNotes).filter(LessonNotes.user_id == user_id).delete()
+    db.query(CourseOutline).filter(CourseOutline.user_id == user_id).delete()
+    db.query(StudyFolder).filter(StudyFolder.user_id == user_id).delete()
+    db.query(FolderSource).filter(FolderSource.user_id == user_id).delete()
+    db.query(SourceImage).filter(SourceImage.user_id == user_id).delete()
+    db.query(UserMapState).filter(UserMapState.user_id == user_id).delete()
+    db.query(SectionVerification).filter(SectionVerification.user_id == user_id).delete()
+    db.query(SectionRewardClaim).filter(SectionRewardClaim.user_id == user_id).delete()
+    db.query(MapTileProvenance).filter(MapTileProvenance.user_id == user_id).delete()
+    db.query(TreasureChestOpen).filter(TreasureChestOpen.user_id == user_id).delete()
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if user:
+        db.delete(user)
+
+
 def _collect_live_users() -> dict:
     now = datetime.now(timezone.utc)
     active = []
@@ -3276,9 +3354,11 @@ def admin_control_center(user: User = Depends(get_current_user)):
                 "email": u.email,
                 "course": u.course,
                 "created_at": u.created_at.isoformat() if u.created_at else None,
+                "is_loadtest": _is_loadtest_email(u.email),
             }
             for u in recent_users
         ]
+        user_breakdown = _user_account_breakdown(db)
     finally:
         db.close()
 
@@ -3286,12 +3366,15 @@ def admin_control_center(user: User = Depends(get_current_user)):
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "live": live,
+        "user_breakdown": user_breakdown,
         "kpis": {
             "online_now": live["count"],
             "dau": analytics["active_users"]["dau"],
             "wau": analytics["active_users"]["wau"],
             "mau": analytics["active_users"]["mau"],
-            "total_users": analytics["headline"]["total_users"],
+            "total_users": user_breakdown["real_users"],
+            "total_rows": user_breakdown["total_rows"],
+            "loadtest_bots": user_breakdown["loadtest_bots"],
             "total_messages": analytics["headline"]["total_messages"],
             "messages_today": messages_today,
             "signups_today": signups_today,
@@ -3310,6 +3393,43 @@ def admin_control_center(user: User = Depends(get_current_user)):
             "student_oma_enabled": oma_provider.is_student_enabled(),
             "rag_provider": oma_provider.RAG_PROVIDER,
         },
+    }
+
+
+@app.post("/api/admin/cleanup-loadtest-users")
+def admin_cleanup_loadtest_users(user: User = Depends(get_current_user)):
+    """Delete synthetic load-test accounts (@loadtest.local) and their data."""
+    if user.email not in ADMIN_EMAILS:
+        raise HTTPException(403, "Admin access only")
+
+    from sqlalchemy import func
+    import rag
+
+    db = SessionLocal()
+    try:
+        bots = (
+            db.query(User)
+            .filter(func.lower(User.email).like("%@loadtest.local"))
+            .all()
+        )
+        deleted_users = 0
+        chroma_collections = 0
+        for bot in bots:
+            chroma_collections += rag.delete_user_collections(bot.id)
+            _purge_user_data(db, bot.id)
+            deleted_users += 1
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+    return {
+        "ok": True,
+        "deleted_users": deleted_users,
+        "chroma_collections_removed": chroma_collections,
+        "message": f"Removed {deleted_users} load-test accounts.",
     }
 
 
