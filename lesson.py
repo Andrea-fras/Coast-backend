@@ -120,23 +120,55 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
         total_pages = sum(getattr(s, "page_count", 0) or 0 for s in raw_sources)
         total_budget = 80_000
 
-        # Lesson outlines use Chroma RAG (embed step must run first).
+        # Content OMA for this folder only (no account-wide backfill).
         sources_text = ""
-        outline_via_rag = False
+        outline_via_oma = False
+        oma_required = False
         try:
-            import rag
-            rag_query = (
-                f"course outline syllabus topics learning objectives {folder_name} "
-                + " ".join(s.title for s in raw_sources[:8])
+            import oma_provider
+            source_meta = [
+                {
+                    "source_id": s.source_id,
+                    "title": s.title,
+                    "page_count": s.page_count,
+                    "filename": s.filename or f"{s.source_id}.pdf",
+                }
+                for s in raw_sources
+            ]
+            pdf_sources = oma_provider.load_folder_pdf_sources(src_uid, folder_name)
+            oma_required = oma_provider.is_oma_enabled() and bool(pdf_sources)
+            if oma_required:
+                ready = oma_provider.ensure_oma_ready_for_outline(
+                    src_uid, folder_name,
+                    expected_pages=total_pages,
+                    pdf_sources=pdf_sources,
+                )
+                if not ready:
+                    return {
+                        "error": (
+                            "Content OMA is still indexing this course's uploads. "
+                            "Please wait and try Generate Lesson again."
+                        ),
+                    }
+            oma_index = oma_provider.build_outline_context(
+                src_uid, folder_name,
+                source_meta=source_meta,
+                max_chars=total_budget,
             )
-            rag_block = rag.build_folder_context(
-                src_uid, folder_name, rag_query, max_chars=total_budget,
-            )
-            if rag_block:
-                sources_text = rag_block
-                outline_via_rag = True
+            if oma_index:
+                sources_text = oma_index
+                outline_via_oma = True
+            elif oma_required:
+                return {
+                    "error": (
+                        "Content OMA could not build a course index from your uploads. "
+                        "Try re-uploading or wait a bit longer."
+                    ),
+                }
         except Exception:
             traceback.print_exc()
+            if oma_required:
+                return {"error": "Content OMA failed while preparing the lesson outline."}
 
         if not sources_text:
             per_source_budget = max(400, total_budget // max(total_sources, 1))
@@ -175,7 +207,7 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
             if len(sources_text) > total_budget:
                 sources_text = sources_text[:total_budget] + "\n...[truncated]"
 
-        if outline_via_rag and total_pages:
+        if outline_via_oma and total_pages:
             max_sections = min(40, max(6, total_pages // 8))
         else:
             max_sections = min(25, max(4, total_sources // 2 + 3))
@@ -202,12 +234,26 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
                 + pedagogy_block
             )
 
+        oma_rules = ""
+        if outline_via_oma:
+            oma_rules = (
+                "\n\nThe source materials below are a Content OMA structured index: every page "
+                "with section titles, content types (definition, example, exercise, etc.), "
+                "and a concept map with prerequisites. Use this to:\n"
+                "- Create one section per major topic within each source; split any source "
+                "with 10+ pages into 2–3 sections aligned to its page groupings\n"
+                "- Order sections so prerequisites in the concept map come first\n"
+                "- Set key_topics from the concepts listed for each page group\n"
+                "- Put exact source titles (in quotes in the index) in source_notebooks\n"
+            )
+
         system = (
             "You are a course designer. Given the student's source materials, create a structured "
             "course outline that covers ALL the key topics across ALL sources in a logical learning sequence.\n\n"
             "CRITICAL: You MUST include content from EVERY source listed. Do NOT skip any sources — "
             "even those listed last. The student uploaded all of them and expects the course to cover "
             "all their material.\n"
+            + oma_rules
             + structure_block +
             "\n\nRules:\n"
             f"- Create 4-{max_sections} sections depending on the amount of material\n"
@@ -223,7 +269,7 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
             '"key_topics": ["...", "..."], "source_notebooks": ["..."], "estimated_minutes": 20}]'
         )
 
-        material_label = "RAG-retrieved source material" if outline_via_rag else "Source materials"
+        material_label = "Content OMA course index" if outline_via_oma else "Source materials"
         context = (
             f"Folder: {folder_name}\nNumber of sources: {total_sources}\n"
             f"Total pages: {total_pages or 'unknown'}\n\n{material_label}:\n{sources_text}"
@@ -261,12 +307,21 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
 
         db.commit()
 
+        oma_pages = 0
+        try:
+            import oma_provider
+            if oma_provider.is_oma_enabled():
+                oma_pages = oma_provider.oma_content_page_count(src_uid, folder_name)
+        except Exception:
+            pass
+
         return {
             "sections": outline_sections,
             "total_sections": len(outline_sections),
             "current_section": 0,
             "estimated_minutes": total_minutes,
-            "outline_source": "rag" if outline_via_rag else "raw",
+            "outline_source": "oma" if outline_via_oma else "raw",
+            "oma_pages_indexed": oma_pages,
         }
 
     except Exception:
@@ -1404,20 +1459,17 @@ def _fetch_section_material(
     query: str,
     max_chars: int = 22000,
 ) -> tuple[str, bool]:
-    """Retrieve course material for a lesson section via Chroma RAG."""
+    """Retrieve course material for a lesson section via Content OMA, then RAG."""
     try:
-        import rag
         import oma_provider
-        block = rag.build_folder_context(user_id, folder_name, query, max_chars=max_chars)
-        if block:
-            oma_provider.log_content_source(
-                "RAG",
-                context_type="lesson",
-                folder=folder_name,
-                user_id=user_id,
-                chars=len(block),
-            )
-        return block, False
+        block, source, _ = oma_provider.resolve_folder_content(
+            user_id, folder_name, query,
+            context_type="lesson",
+            max_chars=max_chars,
+            max_content=12,
+            max_images=3,
+        )
+        return block, source == "OMA"
     except Exception:
         traceback.print_exc()
         return "", False
@@ -1435,7 +1487,7 @@ def build_lesson_prompt(
     
     source_user_id: if set, read sources/RAG from this user (for curated/shared folders).
     structure: optional dict with pedagogy hints for curated lessons.
-    student_message: when set, also retrieve RAG material targeted at the
+    student_message: when set, also retrieve Content OMA material targeted at the
         student's current question (skipped for automatic section-openers).
     section_index: active section in chat (defaults to outline progress pointer).
     """
@@ -1472,31 +1524,34 @@ def build_lesson_prompt(
             query_parts.insert(0, student_message)
         query = " ".join(dict.fromkeys(p for p in query_parts if p))
         max_material = 32000 if recap else 22000
-        material_context, _used_rag = _fetch_section_material(
+        material_context, used_oma = _fetch_section_material(
             src_uid, folder_name, query, max_chars=max_material,
         )
 
-        # For follow-up questions, pull query-specific RAG excerpts too.
         if student_message:
             try:
-                import rag
                 import oma_provider
-                if not oma_provider._is_lesson_intro(student_message):
-                    extra = rag.build_folder_context(
+                if oma_provider.is_oma_enabled() and not oma_provider._is_lesson_intro(student_message):
+                    extra, q_concept_ids = oma_provider.get_folder_context(
                         src_uid, folder_name, student_message,
                         max_chars=12000 if recap else 8000,
+                        max_content=12 if recap else 8,
+                        max_images=2,
                     )
                     if extra and extra not in material_context:
                         material_context += (
-                            "\n\n--- ADDITIONAL MATERIAL FOR THIS QUESTION ---\n"
+                            "\n\n--- ADDITIONAL MATERIAL FOR THIS QUESTION "
+                            "(retrieved via Content OMA) ---\n"
                             + extra
                         )
+                        used_oma = True
                         oma_provider.log_content_source(
-                            "RAG",
+                            "OMA",
                             context_type="lesson-question",
                             folder=folder_name,
                             user_id=src_uid,
                             chars=len(extra),
+                            detail=f"{len(q_concept_ids)} concepts",
                         )
             except Exception:
                 traceback.print_exc()
@@ -1653,8 +1708,13 @@ def build_lesson_prompt(
             )
 
         if material_context:
+            source_label = (
+                "Content OMA — structured retrieval from the student's uploaded documents"
+                if used_oma
+                else "from the student's uploaded documents"
+            )
             prompt += (
-                "--- SOURCE MATERIAL FOR THIS SECTION (RAG — retrieved from the student's uploaded documents) ---\n"
+                f"--- SOURCE MATERIAL FOR THIS SECTION ({source_label}) ---\n"
                 + material_context
                 + "\n--- END SOURCE MATERIAL ---\n"
             )
@@ -1665,9 +1725,10 @@ def build_lesson_prompt(
                 "their specific uploaded materials.\n"
             )
 
-        image_block = _find_relevant_images(src_uid, folder_name, section_title, key_topics, source_nbs)
-        if image_block:
-            prompt += image_block
+        if not used_oma:
+            image_block = _find_relevant_images(src_uid, folder_name, section_title, key_topics, source_nbs)
+            if image_block:
+                prompt += image_block
 
         return prompt
     except Exception:
