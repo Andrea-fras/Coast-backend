@@ -131,6 +131,22 @@ async def cors_safety_net(request: StarletteRequest, call_next):
         response.headers["Access-Control-Allow-Credentials"] = "true"
     return response
 
+
+@app.middleware("http")
+async def track_request_traffic(request: StarletteRequest, call_next):
+    """In-memory request counters for admin traffic charts."""
+    global _request_total
+    response = await call_next(request)
+    if request.method != "OPTIONS":
+        _request_total += 1
+        minute_key = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M")
+        _request_counts[minute_key] = _request_counts.get(minute_key, 0) + 1
+        if len(_request_counts) > 180:
+            oldest = sorted(_request_counts.keys())[:-120]
+            for k in oldest:
+                del _request_counts[k]
+    return response
+
 _cors_headers = {
     "Access-Control-Allow-Origin": _PROD_ORIGIN,
     "Access-Control-Allow-Credentials": "true",
@@ -179,6 +195,107 @@ RATE_LIMIT_WINDOW_DAYS = 7          # rolling window for chat limit
 
 _live_users: dict[int, dict] = {}
 HEARTBEAT_TIMEOUT = 60
+
+_server_started_at = datetime.now(timezone.utc)
+_request_total = 0
+_request_counts: dict[str, int] = {}
+
+
+def _path_size_bytes(path: Path) -> int:
+    if not path.exists():
+        return 0
+    if path.is_file():
+        return path.stat().st_size
+    total = 0
+    try:
+        for f in path.rglob("*"):
+            if f.is_file():
+                total += f.stat().st_size
+    except OSError:
+        pass
+    return total
+
+
+def _traffic_series(minutes: int = 60) -> list[dict]:
+    now = datetime.now(timezone.utc)
+    return [
+        {
+            "minute": (now - timedelta(minutes=offset)).strftime("%Y-%m-%dT%H:%M"),
+            "count": _request_counts.get(
+                (now - timedelta(minutes=offset)).strftime("%Y-%m-%dT%H:%M"), 0
+            ),
+        }
+        for offset in range(minutes - 1, -1, -1)
+    ]
+
+
+def _admin_server_metrics() -> dict:
+    import oma_provider
+    from rag import CHROMA_PATH
+
+    storage_items = [
+        ("Primary DB", Path(os.getenv("DATABASE_PATH", "coast.db"))),
+        ("OMA DB", oma_provider.OMA_DB_PATH),
+        ("Uploads", FOLDER_UPLOADS_DIR),
+        ("Chroma", CHROMA_PATH),
+        ("OMA Images", oma_provider.OMA_IMAGE_DIR),
+    ]
+    breakdown = []
+    for label, p in storage_items:
+        p = Path(p)
+        breakdown.append({
+            "label": label,
+            "path": str(p),
+            "bytes": _path_size_bytes(p),
+            "exists": p.exists(),
+        })
+
+    disk = None
+    for mount in (Path("/data"), Path("/"), Path(".")):
+        try:
+            usage = shutil.disk_usage(mount)
+            disk = {
+                "mount": str(mount.resolve()),
+                "total_bytes": usage.total,
+                "used_bytes": usage.used,
+                "free_bytes": usage.free,
+                "used_pct": round(usage.used / usage.total * 100, 1) if usage.total else 0,
+            }
+            break
+        except OSError:
+            continue
+
+    from database import CourseOutline
+    db = SessionLocal()
+    try:
+        row_counts = {
+            "users": db.query(User).count(),
+            "chat_messages": db.query(ChatMessage).count(),
+            "notebooks": db.query(SavedNotebook).count(),
+            "study_folders": db.query(StudyFolder).count(),
+            "course_outlines": db.query(CourseOutline).count(),
+            "activity_events": db.query(ActivityEvent).count(),
+            "feedback": db.query(UserFeedback).count(),
+        }
+    finally:
+        db.close()
+
+    rpm_window = _traffic_series(5)
+    requests_last_5m = sum(b["count"] for b in rpm_window)
+
+    return {
+        "uptime_seconds": int((datetime.now(timezone.utc) - _server_started_at).total_seconds()),
+        "started_at": _server_started_at.isoformat(),
+        "environment": "production" if os.getenv("RENDER") else "development",
+        "storage": {"breakdown": breakdown, "disk": disk},
+        "database": row_counts,
+        "traffic": {
+            "total_requests": _request_total,
+            "requests_last_5m": requests_last_5m,
+            "requests_per_minute": round(requests_last_5m / 5, 1),
+            "series_60m": _traffic_series(60),
+        },
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -343,6 +460,7 @@ def _user_payload(user: User) -> dict:
         "onboarding_completed": bool(user.onboarding_completed),
         "email_verified": bool(getattr(user, "email_verified", True)),
         "auth_provider": "google" if getattr(user, "google_id", None) else "email",
+        "is_admin": user.email in ADMIN_EMAILS,
     }
 
 
@@ -3073,12 +3191,17 @@ def admin_feedback(user: User = Depends(get_current_user)):
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+class HeartbeatBody(BaseModel):
+    feature: str = ""
+
+
 @app.post("/api/heartbeat")
-def heartbeat(user: User = Depends(get_current_user)):
+def heartbeat(body: HeartbeatBody = HeartbeatBody(), user: User = Depends(get_current_user)):
     """Called every ~30s by each active browser tab."""
     _live_users[user.id] = {
         "name": user.name,
         "email": user.email,
+        "feature": body.feature or "",
         "last_seen": datetime.now(timezone.utc),
     }
     return {"ok": True}
@@ -3089,7 +3212,10 @@ def admin_live_users(user: User = Depends(get_current_user)):
     """Return currently active users (heartbeat within last 60s). Admin only."""
     if user.email not in ADMIN_EMAILS:
         raise HTTPException(403, "Admin access only")
+    return _collect_live_users()
 
+
+def _collect_live_users() -> dict:
     now = datetime.now(timezone.utc)
     active = []
     stale_ids = []
@@ -3100,6 +3226,7 @@ def admin_live_users(user: User = Depends(get_current_user)):
                 "user_id": uid,
                 "name": info["name"],
                 "email": info["email"],
+                "feature": info.get("feature") or "unknown",
                 "seconds_ago": int(age),
             })
         else:
@@ -3108,7 +3235,82 @@ def admin_live_users(user: User = Depends(get_current_user)):
     for uid in stale_ids:
         del _live_users[uid]
 
+    active.sort(key=lambda u: u["seconds_ago"])
     return {"count": len(active), "users": active}
+
+
+@app.get("/api/admin/control-center")
+def admin_control_center(user: User = Depends(get_current_user)):
+    """Aggregated mission-control payload: live users, KPIs, traffic, storage."""
+    if user.email not in ADMIN_EMAILS:
+        raise HTTPException(403, "Admin access only")
+
+    analytics = admin_analytics(user)
+    live = _collect_live_users()
+    server = _admin_server_metrics()
+
+    db = SessionLocal()
+    try:
+        from sqlalchemy import func
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        messages_today = (
+            db.query(ChatMessage)
+            .filter(func.substr(ChatMessage.created_at, 1, 10) == today_str)
+            .count()
+        )
+        signups_today = (
+            db.query(User)
+            .filter(func.substr(User.created_at, 1, 10) == today_str)
+            .count()
+        )
+        recent_users = (
+            db.query(User)
+            .order_by(User.created_at.desc())
+            .limit(8)
+            .all()
+        )
+        recent_signups = [
+            {
+                "id": u.id,
+                "name": u.name,
+                "email": u.email,
+                "course": u.course,
+                "created_at": u.created_at.isoformat() if u.created_at else None,
+            }
+            for u in recent_users
+        ]
+    finally:
+        db.close()
+
+    import oma_provider
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "live": live,
+        "kpis": {
+            "online_now": live["count"],
+            "dau": analytics["active_users"]["dau"],
+            "wau": analytics["active_users"]["wau"],
+            "mau": analytics["active_users"]["mau"],
+            "total_users": analytics["headline"]["total_users"],
+            "total_messages": analytics["headline"]["total_messages"],
+            "messages_today": messages_today,
+            "signups_today": signups_today,
+            "total_hours": analytics["time"]["total_hours"],
+            "retention": analytics["retention"],
+        },
+        "headline": analytics["headline"],
+        "engagement": analytics["engagement"],
+        "growth": analytics["growth"],
+        "active_users": analytics["active_users"],
+        "time": analytics["time"],
+        "recent_signups": recent_signups,
+        "server": server,
+        "oma": {
+            "enabled": oma_provider.is_oma_enabled(),
+            "student_oma_enabled": oma_provider.is_student_enabled(),
+            "rag_provider": oma_provider.RAG_PROVIDER,
+        },
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════
