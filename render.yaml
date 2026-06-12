@@ -18,7 +18,7 @@ services:
         value: "/data/chroma"
       # ── OMA (content + student memory) — MUST live on the persistent disk ──
       - key: RAG_PROVIDER
-        value: "oma"
+        value: "flat"
       - key: STUDENT_OMA_ENABLED
         value: "true"
       - key: OMA_DB_PATH

@@ -49,15 +49,7 @@ _ON_RENDER_DISK = bool(os.getenv("RENDER") and _RENDER_DATA.is_dir())
 
 
 def _resolve_rag_provider() -> str:
-    """Use Content OMA on Render production (persistent /data disk).
-
-    render.yaml defines RAG_PROVIDER=oma but many Render services were created
-    before the blueprint — the env var is missing and defaults to flat.
-    """
-    explicit = (os.environ.get("RAG_PROVIDER") or "").strip().lower()
-    if _ON_RENDER_DISK and explicit in ("", "flat"):
-        return "oma"
-    return explicit or "flat"
+    return (os.environ.get("RAG_PROVIDER") or "flat").strip().lower()
 
 
 def _resolve_data_path(env_key: str, local_default: str, render_default: str) -> Path:
