@@ -844,6 +844,15 @@ def get_lesson_state(user_id: int, folder_name: str, source_user_id: int | None 
         section_progress = get_section_mastery_list(
             user_id, folder_name, sections, outline.current_section, source_user_id=src_uid,
         )
+        is_complete = outline.current_section >= outline.total_sections
+        current_section = int(outline.current_section)
+        for i, sp in enumerate(section_progress):
+            finished = i < current_section or (is_complete and i < len(sections))
+            if finished:
+                sp["mastered"] = True
+                sp["attempted"] = True
+                if sp.get("mastery_pct") is None or sp["mastery_pct"] < 100:
+                    sp["mastery_pct"] = 100
 
         return {
             "has_outline": True,
@@ -854,7 +863,7 @@ def get_lesson_state(user_id: int, folder_name: str, source_user_id: int | None 
             "current_section": outline.current_section,
             "estimated_minutes": outline.estimated_minutes,
             "progress_percent": round((outline.current_section / max(outline.total_sections, 1)) * 100),
-            "is_complete": outline.current_section >= outline.total_sections,
+            "is_complete": is_complete,
             "section_progress": section_progress,
             "section_verified": can_advance_from_section(
                 user_id, folder_name, int(outline.current_section),
