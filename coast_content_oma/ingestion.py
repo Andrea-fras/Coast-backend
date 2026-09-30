@@ -557,6 +557,10 @@ class IngestionPipeline:
                 "width": width,
                 "height": height,
             }
+            if img_result.get("also_on_pages"):
+                store_specific["also_on_pages"] = img_result["also_on_pages"]  # the same figure on later slides
+            if img_result.get("bbox"):
+                store_specific["bbox"] = img_result["bbox"]  # position on the page, as fractions
             if img_result.get("_pending_vision"):
                 store_specific["_pending_vision"] = True
             if img_result.get("vision_tier"):
@@ -698,6 +702,8 @@ class IngestionPipeline:
                     "height": img["height"],
                     "context_hint": context,
                     "img_idx": img["idx"],
+                    "also_on_pages": img.get("also_on_pages") or [],
+                    "bbox": img.get("bbox"),
                 })
         return saved
 
@@ -751,6 +757,8 @@ class IngestionPipeline:
                     "description": vis.get("description") or "",
                     "image_type": vis.get("image_type") or "figure",
                     "concepts": vis.get("concepts") or [],
+                    "also_on_pages": s.get("also_on_pages") or [],
+                    "bbox": s.get("bbox"),
                 }))
             return out
 

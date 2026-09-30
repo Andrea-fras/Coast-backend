@@ -1,7 +1,9 @@
 """PDF text + image extraction.
 
-Reuses pdfplumber for text and PyMuPDF (fitz) for images. Produces a
-list of page dicts: [{page_number, text, images: [{idx, pil_image, bbox}]}, ...]
+PyMuPDF (fitz) reads both text and images (pdfplumber and pypdf are fallbacks). Produces
+a list of page dicts: [{page_number, text, images: [{idx, pil_image, bbox}]}, ...]
+Figures are then thinned by select_figures: slide templates, backgrounds, icons and
+repeats are not worth describing.
 
 This is intentionally separate from ingestion.py so we can swap the
 extractor later (e.g. use Coast's existing extractor.py) without
@@ -31,19 +33,23 @@ def extract_pages(pdf_path: str | Path, extract_images: bool = True, use_cache: 
         from .normalized_source import load_pages
         cached = load_pages(pdf_path, extract_images)
         if cached is not None:
-            return cached
+            return select_figures(cached) if extract_images else cached
     if pdf_path.suffix.lower() == '.pptx':
-        return _extract_pptx(pdf_path, extract_images)
+        pages = _extract_pptx(pdf_path, extract_images)
+        return select_figures(pages) if extract_images else pages
 
-    text_by_page = _extract_text_pdfplumber(pdf_path)
-    # PDF plain text loses baseline information: 3 superscript 150 becomes 3150.
-    # Only replace pages with detected scripts; retain the existing layout path elsewhere.
     import fitz
-    with fitz.open(pdf_path) as doc:
-        for i, page in enumerate(doc):
-            structured, has_scripts = _text_with_scripts(page)
-            if has_scripts and i < len(text_by_page):
-                text_by_page[i] = structured
+    try:
+        with fitz.open(pdf_path) as doc:
+            # PDF plain text loses baseline information: 3 superscript 150 becomes 3150,
+            # so pages with scripts keep them marked (^(...), _(...)).
+            text_by_page = []
+            for page in doc:
+                structured, has_scripts = _text_with_scripts(page)
+                text_by_page.append(structured if has_scripts else _page_text(page))
+    except Exception as e:  # a PDF PyMuPDF can't read: fall back to the pure-Python readers
+        logger.warning(f"PyMuPDF text extraction failed ({e}); falling back to pdfplumber.")
+        text_by_page = _extract_text_pdfplumber(pdf_path)
     # OCR only pages without usable text; preserve the existing text extractor.
     if any(not text.strip() for text in text_by_page):
         import fitz
@@ -69,6 +75,136 @@ def extract_pages(pdf_path: str | Path, extract_images: bool = True, use_cache: 
             "text": text_by_page[i] if i < len(text_by_page) else "",
             "images": images_by_page[i] if i < len(images_by_page) else [],
         })
+    return select_figures(pages) if extract_images else pages
+
+
+def _page_text(page) -> str:
+    """A page's text in reading lines, about 15x faster than pdfplumber.
+
+    PyMuPDF's own lines keep the PDF's spacing; fragments that sit on the same visual
+    line (inline maths is often drawn a little higher, as separate lines) are joined
+    left to right. Only text drawn inside the page is read: text hidden behind a cropped
+    image or outside the slide never reaches a lesson."""
+    import fitz
+    frags = []
+    # TEXTFLAGS_TEXT: text only (the default dict mode also decodes every image on the page).
+    for block in page.get_text("dict", flags=fitz.TEXTFLAGS_TEXT)["blocks"]:
+        for line in block.get("lines", []):
+            text = "".join(span["text"] for span in line["spans"]).strip()
+            if text:
+                x0, y0, x1, y1 = line["bbox"]
+                frags.append((x0, y0, x1, y1, text, max(span["size"] for span in line["spans"])))
+    frags.sort(key=lambda f: ((f[1] + f[3]) / 2, f[0]))
+    rows: list[list] = []  # [top, bottom, fragments]
+    for f in frags:
+        height = max(f[3] - f[1], 0.1)
+        for row in reversed(rows[-4:]):
+            if min(row[1], f[3]) - max(row[0], f[1]) >= 0.5 * min(height, row[1] - row[0]):
+                row[2].append(f)
+                row[0], row[1] = min(row[0], f[1]), max(row[1], f[3])
+                break
+        else:
+            rows.append([f[1], f[3], [f]])
+    rows.sort(key=lambda row: row[0])
+    out = []
+    for _, _, fs in rows:
+        fs.sort(key=lambda f: f[0])
+        text = fs[0][4]
+        for a, b in zip(fs, fs[1:]):
+            # A smaller fragment touching the one before it is a sub- or superscript.
+            script = min(a[5], b[5]) < 0.85 * max(a[5], b[5])
+            text += ("" if script and b[0] - a[2] < 1.0 else " ") + b[4]
+        out.append(text)
+    return "\n".join(out)
+
+
+def _dhash(img) -> int:
+    """A 256-bit difference hash: near-identical images (the same logo rendered at another
+    size or crop) differ in only a few bits."""
+    from PIL import Image
+    g = img.convert("L").resize((17, 16), Image.BILINEAR)
+    px = g.tobytes()  # one byte per pixel in L mode
+    bits = 0
+    for y in range(16):
+        for x in range(16):
+            bits = (bits << 1) | (px[y * 17 + x] > px[y * 17 + x + 1])
+    return bits
+
+
+def select_figures(pages: list[dict[str, Any]], report: list | None = None) -> list[dict[str, Any]]:
+    """Keep only figures worth describing, before any AI sees them.
+
+    - Slide templates: an image (or near-copies of it) on at least a quarter of the
+      slides, a banner strip along the top or bottom on three or more, or a full-page
+      background on five or more.
+    - Icons: shown at under 0.3% of the page.
+    - Repeats: an image used on several slides (build-up slides) is kept once, on its first
+      page, with the others listed in also_on_pages.
+    Full-page renders of drawn diagrams (page_diagram) are always kept."""
+    from PIL import ImageChops, ImageStat
+    n_pages = max(1, len(pages))
+    items = []
+    for page in pages:
+        for img in page.get("images") or []:
+            if img.get("extraction_kind") == "page_diagram" or "pil_image" not in img:
+                continue
+            pil = img["pil_image"]
+            items.append({"page": page["page_number"], "img": img, "hash": _dhash(pil),
+                          "aspect": pil.width / max(pil.height, 1), "thumb": pil.convert("RGB").resize((24, 24))})
+
+    def same(a, b):
+        """The same picture (re-encoded, rescaled or re-rendered), not merely a similar one:
+        two road signs in the same red circle differ in their pictogram, and both matter."""
+        if abs(a["aspect"] - b["aspect"]) > 0.06 * max(a["aspect"], b["aspect"]):
+            return False
+        if bin(a["hash"] ^ b["hash"]).count("1") > 16:
+            return False
+        return max(ImageStat.Stat(ImageChops.difference(a["thumb"], b["thumb"])).mean) <= 6
+
+    # Each group is compared through its first member, so similar images never chain
+    # together into one group.
+    groups: list[list] = []
+    for item in items:
+        for members in groups:
+            if same(members[0], item):
+                members.append(item)
+                break
+        else:
+            groups.append([item])
+
+    drop: set[int] = set()
+    for members in groups:
+        on_pages = sorted({m["page"] for m in members})
+        boxes = [m["img"].get("bbox") for m in members if m["img"].get("bbox")]
+        strip = any((b[3] - b[1]) < 0.2 and (b[2] - b[0]) > 0.5 and (b[1] < 0.15 or b[3] > 0.85) for b in boxes)
+        background = any((b[2] - b[0]) * (b[3] - b[1]) > 0.7 for b in boxes)
+        # A full-page photo on a few slides is usually content (the lecture's subject);
+        # the same full-page image on five or more is the slide background.
+        template = (len(on_pages) >= max(4, n_pages / 4) or (len(on_pages) >= 3 and strip)
+                    or (len(on_pages) >= 5 and background))
+        if report is not None and (template or len(members) > 1):
+            report.append({"action": "template" if template else "kept once", "pages": on_pages,
+                           "strip": strip, "background": background, "image": members[0]["img"]})
+        if template:
+            drop.update(id(m["img"]) for m in members)
+            continue
+        first = members[0]["img"]  # items are in page order
+        drop.update(id(m["img"]) for m in members[1:])
+        others = sorted(set(first.get("also_on_pages") or []) | set(p for p in on_pages if p != members[0]["page"]))
+        if others:
+            first["also_on_pages"] = others
+    for item in items:
+        b = item["img"].get("bbox")
+        if b and (b[2] - b[0]) * (b[3] - b[1]) < 0.003:
+            drop.add(id(item["img"]))
+    kept = total = 0
+    for page in pages:
+        imgs = page.get("images") or []
+        total += len(imgs)
+        page["images"] = [img for img in imgs if id(img) not in drop]
+        kept += len(page["images"])
+    if total != kept:
+        logger.info("figures: kept %d of %d (dropped slide templates, icons and repeats)", kept, total)
     return pages
 
 
@@ -147,27 +283,68 @@ def _extract_images_pymupdf(pdf_path: Path) -> list[list[dict[str, Any]]]:
     out: list[list[dict[str, Any]]] = []
     try:
         doc = fitz.open(str(pdf_path))
+        decoded: dict[int, Any] = {}  # xref -> image: a logo on every slide is decoded once
+        # The same image object on a quarter or more of the slides is part of the slide
+        # template (a logo, a header banner): skip it before decoding anything.
+        listed = [page.get_images(full=True) for page in doc]
+        on_pages: dict[int, int] = {}
+        for imgs in listed:
+            for xref in {img[0] for img in imgs}:
+                on_pages[xref] = on_pages.get(xref, 0) + 1
+        template = {x for x, n in on_pages.items() if n >= max(4, len(listed) / 4)}
         for page_idx, page in enumerate(doc):
             page_imgs: list[dict[str, Any]] = []
             needs_render = False
-            for img_idx, img in enumerate(page.get_images(full=True)):
+            pw, ph = page.rect.width or 1, page.rect.height or 1
+            # Where each image sits. A slide with many images is scanned once; otherwise each
+            # is found by name (get_image_rects checksums the pixels and is far slower).
+            placements = None
+            if len(listed[page_idx]) > 8:
+                placements = {}
+                for info in page.get_image_info(xrefs=True):
+                    if info.get("xref"):
+                        placements.setdefault(info["xref"], fitz.Rect(info["bbox"]))
+            for img_idx, img in enumerate(listed[page_idx]):
                 xref = img[0]
+                if xref in template:
+                    continue
                 try:
-                    base = doc.extract_image(xref)
-                    img_bytes = base.get("image")
-                    if not img_bytes:
-                        continue
+                    if placements is not None:
+                        placed = placements.get(xref)
+                    else:
+                        try:
+                            placed = page.get_image_bbox(img)
+                        except Exception:
+                            placed = None
+                    shown = [placed] if placed is not None and placed.is_valid and not placed.is_empty and not placed.is_infinite else []
+                    if not shown and img[1]:  # a masked image must be rendered from its exact spot
+                        shown = page.get_image_rects(xref)
+                    bbox = None
+                    if shown:
+                        r = shown[0] & page.rect
+                        bbox = [round(r.x0 / pw, 3), round(r.y0 / ph, 3), round(r.x1 / pw, 3), round(r.y1 / ph, 3)]
                     # Rendering the occurrence also preserves its soft mask and actual
                     # slide background (which is not necessarily white).
-                    rects = page.get_image_rects(xref) if base.get('smask') else []
+                    rects = shown if img[1] else []
                     if rects:
-                        pil_img = _render_clip(page, rects[0], max_size=min(1200, max(img[2:4])))
+                        if xref not in decoded:  # rendered once, on its first slide
+                            decoded[xref] = _render_clip(page, rects[0], max_size=min(1200, max(img[2:4])))
+                        pil_img = decoded[xref]
                     else:
-                        with Image.open(io.BytesIO(img_bytes)) as original:
-                            pil_img = original.convert("RGB")
-                        # Same cap as rendered clips and PPTX images: a camera photo decodes
-                        # to tens of MB, and every page's images are held until saved.
-                        pil_img.thumbnail((1200, 1200))
+                        if xref not in decoded:
+                            img_bytes = doc.extract_image(xref).get("image")
+                            if not img_bytes:
+                                decoded[xref] = None
+                                continue
+                            with Image.open(io.BytesIO(img_bytes)) as original:
+                                pil_img = original.convert("RGB")
+                            # Same cap as rendered clips and PPTX images: a camera photo decodes
+                            # to tens of MB, and every page's images are held until saved.
+                            pil_img.thumbnail((1200, 1200))
+                            decoded[xref] = pil_img
+                        pil_img = decoded[xref]
+                        if pil_img is None:
+                            continue
                     w, h = pil_img.size
                     if w < 80 or h < 80:
                         continue
@@ -190,6 +367,7 @@ def _extract_images_pymupdf(pdf_path: Path) -> list[list[dict[str, Any]]]:
                         "pil_image": pil_img,
                         "width": w,
                         "height": h,
+                        "bbox": bbox,  # where it sits on the page, as fractions of its size
                     })
                 except Exception as e:
                     logger.debug(f"failed to extract image {img_idx} on page {page_idx}: {e}")
