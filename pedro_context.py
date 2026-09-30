@@ -137,7 +137,7 @@ Answer what the student asks, directly and accurately, then offer the most usefu
 
 When the question is about a course they uploaded, Coast adds the matching lecture pages to their message; teach from those pages and cite them. If no pages came with it, answer from established knowledge and say that it goes beyond their slides. If you can't tell which course or topic they mean, ask.
 
-When they ask about their progress, their strengths or what to study, answer from the record in Coast's note: say what they have shown on their own, what only with help, what they remembered in a later session, and what hasn't been checked yet. Don't claim more than the record shows, and suggest a concrete next step: a section to do or revisit, or a quick check you can run now.
+When they ask about themselves, their progress, their strengths or what to study, answer from the student's record, which covers every course: say what they have shown on their own, what only with help, what they remembered in a later session, and what hasn't been checked yet. Don't claim more than the record shows, and don't claim less: where it lists sections done or graded answers, never say nothing has been checked. Suggest a concrete next step: a section to do or revisit, or a quick check you can run now.
 
 If you check their understanding, ask the smallest question that reveals the important thinking, and respond to the answer as in a lesson: confirm and move on when it is right, probe only the missing piece when it is partly right, and give progressively stronger help when they are stuck."""
 
@@ -586,22 +586,12 @@ _LATEST = {"wrong": "wrong", "hinted": "correct with help", "recall": "remembere
            "right": "correct on their own"}
 
 
-def graded_evidence(db, user_id: int, wanted: set, folder: Optional[str] = None, limit: int = 8,
-                    exclude: Optional[str] = None) -> list[str]:
-    """Plain lines about the student's graded answers on concepts that share words with
-    `wanted`, read from Pedro's grading tags in lesson transcripts (the canonical record)
-    after his corrections of his own errors. Keeps three kinds of success apart: on their
-    own, with help, and remembered in a later session.
-
-    Within one course (`folder`) a shared word is enough and each line ends with a pacing
-    hint led by the latest answer. Across courses a shared word is not the same skill
-    ("polynomial degree" is not "node degree"): every word of the concept, or at least two,
-    must match, and the lines report what happened without telling Pedro what to skip."""
-    from datetime import datetime
+def _graded_attempts(db, user_id: int, folder: Optional[str] = None, exclude: Optional[str] = None) -> list[dict]:
+    """The student's graded answers in order, after Pedro's corrections of his own errors."""
     from database import ChatMessage
+    from sqlalchemy import or_
     # Every surface where Pedro grades answers on a course: lessons, test-outs, and the
     # course's own chat. The open chat isn't tied to one course, so its grades live in OMA only.
-    from sqlalchemy import or_
     q = db.query(ChatMessage.content, ChatMessage.created_at, ChatMessage.context_id,
                  ChatMessage.section_index, ChatMessage.conversation_id).filter(
         ChatMessage.user_id == user_id, ChatMessage.context_type.in_(("lesson", "test_out", "folder")),
@@ -614,8 +604,23 @@ def graded_evidence(db, user_id: int, wanted: set, folder: Optional[str] = None,
         q = q.filter(ChatMessage.context_id != exclude)
     rows = [(content, created, course, section if section is not None else conversation)
             for content, created, course, section, conversation in q.order_by(ChatMessage.id).all()]
+    return _reconciled(rows)
+
+
+def graded_evidence(db, user_id: int, wanted: set, folder: Optional[str] = None, limit: int = 8,
+                    exclude: Optional[str] = None) -> list[str]:
+    """Plain lines about the student's graded answers on concepts that share words with
+    `wanted`, read from Pedro's grading tags in lesson transcripts (the canonical record)
+    after his corrections of his own errors. Keeps three kinds of success apart: on their
+    own, with help, and remembered in a later session.
+
+    Within one course (`folder`) a shared word is enough and each line ends with a pacing
+    hint led by the latest answer. Across courses a shared word is not the same skill
+    ("polynomial degree" is not "node degree"): every word of the concept, or at least two,
+    must match, and the lines report what happened without telling Pedro what to skip."""
+    from datetime import datetime
     stats: dict[str, dict] = {}
-    for attempt in _reconciled(rows):
+    for attempt in _graded_attempts(db, user_id, folder, exclude):
         words = {_stem(w) for w in _words(attempt["concept"])}
         shared = (words - _STOP) & wanted
         # Across courses every word of the concept counts ("property graphs" is not "graph").
@@ -1035,30 +1040,118 @@ _OPEN_STOP = set("does suggest already strong weak good bad profile learner stud
                  "help explain tell show give today week exam course lecture lesson".split())
 
 
-def courses_frame(db, user) -> str:
-    """The student's courses and where they are in each, most recently studied first."""
+def _grade_counts(kinds) -> str:
+    parts = [f"{kinds['right']} correct on their own" if kinds["right"] else "",
+             f"{kinds['recall']} remembered in a later session" if kinds["recall"] else "",
+             f"{kinds['hinted']} correct only with help" if kinds["hinted"] else "",
+             f"{kinds['wrong']} wrong" if kinds["wrong"] else ""]
+    return ", ".join(p for p in parts if p)
+
+
+def _short(name: str, cap: int = 60) -> str:
+    return name if len(name) <= cap else name[:cap - 1].rstrip(" ,(") + "…"
+
+
+def _few(names: list[str], cap: int) -> str:
+    return ", ".join(names[:cap]) + (f" and {len(names) - cap} more" if len(names) > cap else "")
+
+
+def student_record(db, user) -> str:
+    """What Coast's record says about the student across every course, in a few lines: where
+    they are in each course, what their graded answers show, what is shaky now and what is
+    solid. Always in the open chat, so a question about themselves never meets a blank: a
+    note matched to the words of the question finds nothing for "what do you know about me",
+    and a list of recent courses drops the ones they actually studied. Counts and the few
+    most recent concepts only, so it stays short after years of study."""
+    from collections import Counter
     from database import ChatMessage, CourseOutline
     from sqlalchemy import func
     recent = dict(db.query(ChatMessage.context_id, func.max(ChatMessage.id))
-                  .filter(ChatMessage.user_id == user.id, ChatMessage.context_type == "lesson")
+                  .filter(ChatMessage.user_id == user.id, ChatMessage.context_type.in_(("lesson", "test_out", "folder")))
                   .group_by(ChatMessage.context_id).all())
+    per_course: dict[str, Counter] = {}
+    per_concept: dict[tuple, dict] = {}
+    for i, a in enumerate(_graded_attempts(db, user.id)):  # oldest first
+        per_course.setdefault(a["course"], Counter())[a["kind"]] += 1
+        c = per_concept.setdefault((a["concept"], a["course"]), {"kinds": Counter(), "last": None, "order": 0})
+        c["kinds"][a["kind"]] += 1
+        c["last"] = a["kind"]
+        c["order"] = i
+
     outlines = db.query(CourseOutline).filter(CourseOutline.user_id == user.id).all()
     outlines.sort(key=lambda o: (recent.get(o.folder_name) or 0, o.updated_at or o.created_at), reverse=True)
-    lines = []
-    for o in outlines[:8]:
+    started, untouched = [], []
+    for o in outlines:
         try:
             sections = json.loads(o.outline_json or "[]")
         except ValueError:
-            continue
-        if not sections:
-            continue
+            sections = []
         done = min(int(o.current_section or 0), len(sections))
-        where = ("finished" if done >= len(sections)
-                 else f"{done} of {len(sections)} sections done, next: {sections[done].get('title')}")
-        lines.append(f"- {o.folder_name}: {where}")
-    if not lines:
-        return "# The student's courses\nNo course roadmaps yet."
-    return "# The student's courses (most recently studied first)\n" + "\n".join(lines)
+        grades = per_course.pop(o.folder_name, None)
+        if not done and not grades:
+            untouched.append(o.folder_name)
+            continue
+        if sections and done >= len(sections):
+            where = f"all {len(sections)} sections done"
+        else:
+            where = f"{done} of {len(sections)} sections done" + (f", next: {sections[done].get('title')}" if sections else "")
+        started.append(f"- {o.folder_name}: {where}. "
+                       + (f"Graded answers: {_grade_counts(grades)}." if grades else "No graded answers yet."))
+    # Answers from a course whose roadmap is gone are still theirs.
+    started += [f"- {course} (no roadmap now): graded answers: {_grade_counts(grades)}."
+                for course, grades in per_course.items() if course]
+
+    lines = ["# The student's record (from Coast; the student can't see this)",
+             "Every course they have, and what their graded answers in lessons show. When they ask about "
+             "themselves, their progress or their strengths, answer from this: it is the whole record, not a sample."]
+    if not started and not untouched:
+        return "\n".join(lines + ["No courses yet."])
+    if started:
+        lines.append("Courses with progress (most recently studied first):")
+        lines += started[:12]
+        if len(started) > 12:
+            lines.append(f"- and {len(started) - 12} more with progress")
+    if untouched:
+        lines.append(f"Opened but not started (no sections done, no graded answers): {_few(untouched, 12)}.")
+    if not per_concept:
+        lines.append("No graded answers yet in any course, so nothing about what they know has been checked.")
+        return "\n".join(lines)
+    latest = sorted(per_concept.items(), key=lambda kv: kv[1]["order"], reverse=True)
+    shaky = [f"{_short(concept)} ({course}: {_grade_counts(c['kinds'])})" for (concept, course), c in latest
+             if c["last"] in ("wrong", "hinted")]
+    if shaky:
+        lines.append("Shaky right now (latest answer wrong, or right only with help): " + _few(shaky, 6) + ".")
+    solid: dict[str, list[str]] = {}
+    for (concept, course), c in latest:
+        if c["last"] in ("right", "recall") and sum(len(v) for v in solid.values()) < 8:
+            solid.setdefault(course, []).append(_short(concept))
+    if solid:
+        lines.append("Solid lately (latest answer correct on their own): "
+                     + "; ".join(f"{course}: {', '.join(names)}" for course, names in solid.items()) + ".")
+    clicked = _clicked_explanations(user.id, [o.folder_name for o in outlines])
+    if clicked:
+        lines.append("Explanations that clicked for them: " + " | ".join(clicked) + ".")
+    return "\n".join(lines)
+
+
+def _clicked_explanations(user_id: int, courses: list[str], limit: int = 3) -> list[str]:
+    """Explanations that made something click, newest first, across their courses."""
+    try:
+        import oma_provider
+        if not oma_provider.is_student_enabled():
+            return []
+        from coast_content_oma.student.stores import course_namespace
+        orch = oma_provider._student_orchestrator()
+        moments = []
+        for course in courses:
+            for p in orch.patterns.all(course_namespace(user_id, course)):
+                if (p.store_specific or {}).get("pattern_type") == "golden_moment" and (p.content or "").strip():
+                    moments.append((str(p.created_at or ""), course, p.content.strip().split(" → ")[0][:160]))
+        moments.sort(reverse=True)
+        return [f"{text} ({course})" for _, course, text in moments[:limit]]
+    except Exception:
+        log.exception("student record: OMA lookup failed")
+        return []
 
 
 def open_request(user, message: str, conversation_id: Optional[str]) -> Optional[PedroRequest]:
@@ -1072,7 +1165,7 @@ def open_request(user, message: str, conversation_id: Optional[str]) -> Optional
         return None
     folder = tutor._match_user_folder(user.id, message)
     with SessionLocal() as db:
-        frame = courses_frame(db, user)
+        frame = student_record(db, user)
         history = []
         if conversation_id:
             rows = (db.query(ChatMessage.role, ChatMessage.content)
@@ -1099,9 +1192,10 @@ def open_request(user, message: str, conversation_id: Optional[str]) -> Optional
         record = graded_evidence(db, user.id, wanted, folder, limit=8) if wanted else []
         if record:
             note += ["Their graded answers on this topic (from lessons):"] + record
-        else:
-            note.append("No graded answers on this topic were found in their lessons (it may not have come up, "
-                        "or was recorded under another name), so what they know about it is unknown.")
+        elif wanted:
+            note.append("No graded answers matched the words of this question (it may not have come up, or was "
+                        "recorded under another name). That says nothing about the rest of their record, which is "
+                        "in the student's record above.")
         note += _learner_lines(user, folder, wanted)
         pages: list[dict] = []
         if folder:

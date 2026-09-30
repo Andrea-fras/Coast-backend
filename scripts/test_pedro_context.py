@@ -4,6 +4,7 @@
 """
 import sys
 import tempfile
+import json
 import unittest
 from pathlib import Path
 
@@ -249,6 +250,45 @@ class Evidence(unittest.TestCase):
         self.assertEqual(len(lines), 1)
         self.assertIn("degree (Graphs)", lines[0])
         self.assertNotIn("no need", lines[0])
+
+    def outline(self, folder, done, total=4, days_ago=0):
+        from datetime import timedelta
+        from database import CourseOutline
+        sections = [{"title": f"{folder} {i}"} for i in range(total)]
+        self.db.add(CourseOutline(user_id=1, folder_name=folder, outline_json=json.dumps(sections),
+                                  total_sections=total, current_section=done,
+                                  updated_at=self.now - timedelta(days=days_ago)))
+        self.db.commit()
+
+    def record(self):
+        from types import SimpleNamespace
+        return pc.student_record(self.db, SimpleNamespace(id=1, name="Hari"))
+
+    def test_the_record_keeps_studied_courses_however_many_newer_ones_were_opened(self):
+        self.outline("NetSci", 7, total=19, days_ago=2)
+        self.add("[ANSWER_CORRECT: shortest path]")
+        self.add("[ANSWER_WRONG: interconnected systems]")
+        for i in range(10):  # opened later, never studied
+            self.outline(f"New{i}", 0)
+        rec = self.record()
+        self.assertIn("- NetSci: 7 of 19 sections done, next: NetSci 7. Graded answers: 1 correct on their own, 1 wrong.", rec)
+        self.assertIn("Opened but not started", rec)
+        self.assertIn("interconnected systems (NetSci: 1 wrong)", rec.split("Shaky right now")[1])
+        self.assertIn("NetSci: shortest path", rec.split("Solid lately")[1])
+
+    def test_a_student_with_no_graded_answers_is_told_so_plainly(self):
+        self.outline("NetSci", 0)
+        rec = self.record()
+        self.assertIn("nothing about what they know has been checked", rec)
+        self.assertNotIn("Courses with progress", rec)
+
+    def test_the_latest_answer_decides_shaky_or_solid(self):
+        self.outline("NetSci", 1)
+        self.add("[ANSWER_WRONG: node degree]")
+        self.add("[ANSWER_CORRECT: node degree]")
+        rec = self.record()
+        self.assertNotIn("Shaky", rec)
+        self.assertIn("NetSci: node degree", rec)
 
     def test_the_latest_answer_leads_the_verdict(self):
         self.add("[ANSWER_CORRECT: eigenvector centrality | recall]", days_ago=30)
