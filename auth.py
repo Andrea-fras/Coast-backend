@@ -45,3 +45,15 @@ def decode_access_token(token: str) -> dict | None:
         return None
     except jwt.InvalidTokenError:
         return None
+
+
+def create_image_token(user_id: int) -> str:
+    return jwt.encode({"sub": str(user_id), "aud": "coast-images",
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=15)}, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def decode_image_token(token: str) -> dict | None:
+    try:
+        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM], audience="coast-images")
+    except jwt.PyJWTError:
+        return None

@@ -13,20 +13,6 @@ from typing import Optional
 TIERS = ("red", "orange", "yellow", "green")
 
 
-def is_topic_struggling(successes: int, mistakes: int) -> bool:
-    """Persistent difficulty — not a one-off wrong answer Pedro re-taught.
-
-    Struggling when the student got the same topic wrong multiple times,
-    or wrong/(wrong+right) exceeds 50%.
-    """
-    if mistakes >= 2:
-        return True
-    total = successes + mistakes
-    if total < 2:
-        return False
-    return mistakes / total > 0.5
-
-
 def compute_mastery_tier(store_specific: Optional[dict]) -> str:
     if not store_specific:
         return "red"
@@ -46,6 +32,16 @@ def compute_mastery_tier(store_specific: Optional[dict]) -> str:
 
     if ss.get("last_misconception") or (struggles >= 2 and score <= 0.35):
         return "red"
+
+    # The section evaluator judged it mastered: green needs an answer of their own behind
+    # that judgment, and their latest answer on it right. Help-only success stays yellow.
+    independent = successes - int(ss.get("hinted_successes", 0) or 0)
+    latest_right = (ss.get("last_strengthened") or "") >= (ss.get("last_struggle") or "")
+    if ss.get("last_eval_state") == "mastered" and independent >= 1 and latest_right and score >= 0.6:
+        return "green"
+    # It judged them still shaky: at most orange, until an answer after that judgment says otherwise.
+    if ss.get("last_eval_state") == "struggling" and (ss.get("last_strengthened") or "") <= (ss.get("last_eval_at") or ""):
+        return "orange"
 
     if score >= 0.75 and successes > struggles and struggles == 0:
         return "green"

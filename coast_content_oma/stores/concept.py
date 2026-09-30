@@ -24,30 +24,41 @@ class ConceptStore(SemanticStoreBase):
     STORE_NAME = "concept"
 
     def find_by_name(self, namespace: str, name: str) -> Optional[MemoryItem]:
-        """Exact (case-insensitive) match on canonical name or any alias."""
+        """Exact (case-insensitive) match on canonical name, alias or entity — in SQL,
+        so a lookup does not load the whole concept graph."""
         n = name.lower().strip()
         if not n:
             return None
-        for it in self.all(namespace):
-            ss = it.store_specific or {}
-            if (ss.get("name") or "").lower() == n:
-                return it
-            aliases = [a.lower() for a in (ss.get("aliases") or [])]
-            if n in aliases:
-                return it
-            if n in (e.lower() for e in it.entities):
-                return it
-        return None
+        from .db import connect_db
+        from ._semantic_base import _row_to_item
+        with connect_db(self.db_path) as conn:
+            row = conn.execute(
+                f"""SELECT * FROM {self.table} WHERE namespace = ? AND superseded_by IS NULL AND (
+                        lower(json_extract(store_specific, '$.name')) = ?
+                        OR EXISTS (SELECT 1 FROM json_each(store_specific, '$.aliases') WHERE lower(value) = ?)
+                        OR EXISTS (SELECT 1 FROM json_each(entities) WHERE lower(value) = ?))
+                    ORDER BY lower(json_extract(store_specific, '$.name')) = ? DESC LIMIT 1""",
+                (namespace, n, n, n, n),
+            ).fetchone()
+        return _row_to_item(row, self.STORE_NAME) if row else None
 
     def find_candidates(self, namespace: str, name: str, max_results: int = 5) -> list[MemoryItem]:
         """Fuzzy lookup via hybrid search (handles unknown phrasings)."""
         return self.search(namespace, name, max_results=max_results)
 
-    def prerequisites_of(self, namespace: str, concept_id: str) -> list[MemoryItem]:
-        it = self.get(concept_id)
+    def prerequisites_of(
+        self,
+        namespace: str,
+        concept_id: str,
+        resolver=None,
+    ) -> list[MemoryItem]:
+        rid = resolver.resolve(namespace, concept_id) if resolver else concept_id
+        it = self.get(rid) or self.get(concept_id)
         if not it:
             return []
         pre_ids = (it.store_specific or {}).get("prerequisite_concept_ids") or []
+        if resolver:
+            pre_ids = resolver.resolve_edge_ids(namespace, pre_ids)
         return [c for c in self.get_many(pre_ids) if c and c.namespace == namespace]
 
     def traverse_prereq_chain(
@@ -55,19 +66,22 @@ class ConceptStore(SemanticStoreBase):
         namespace: str,
         concept_id: str,
         max_depth: int = 4,
+        resolver=None,
     ) -> list[MemoryItem]:
         """Walk the prerequisite chain breadth-first; returns ordered prerequisites
         (closest first). Caps depth to avoid cycles in a malformed graph."""
+        root = resolver.resolve(namespace, concept_id) if resolver else concept_id
         out: list[MemoryItem] = []
-        seen: set[str] = {concept_id}
-        frontier = [concept_id]
+        seen: set[str] = {root}
+        frontier = [root]
         for _ in range(max_depth):
             next_frontier: list[str] = []
             for cid in frontier:
-                for p in self.prerequisites_of(namespace, cid):
-                    if p.id in seen:
+                for p in self.prerequisites_of(namespace, cid, resolver=resolver):
+                    pid = resolver.resolve(namespace, p.id) if resolver else p.id
+                    if pid in seen:
                         continue
-                    seen.add(p.id)
+                    seen.add(pid)
                     out.append(p)
                     next_frontier.append(p.id)
             if not next_frontier:
@@ -127,10 +141,22 @@ class ConceptStore(SemanticStoreBase):
             ).fetchall()
         return [(rid, _unpack(blob)) for rid, blob in rows if blob]
 
-    def merge_into(self, namespace: str, src_id: str, dst_id: str) -> bool:
-        """Merge concept src into dst: union aliases / edges / sources,
-        re-point every other concept's edges from src to dst, then mark
-        src superseded. Reads of the namespace skip superseded rows."""
+    def merge_into(
+        self,
+        namespace: str,
+        src_id: str,
+        dst_id: str,
+        *,
+        alias_store=None,
+        use_ledger: bool = False,
+        merge_confidence: float = 1.0,
+        merge_reason: str = "dedup",
+    ) -> bool:
+        """Merge concept src into dst.
+
+        When use_ledger=True, append an alias ledger entry and skip
+        destructive edge rewrites — reads resolve through the ledger.
+        """
         if src_id == dst_id:
             return False
         src = self.get(src_id)
@@ -152,9 +178,14 @@ class ConceptStore(SemanticStoreBase):
             if a and a.lower().strip() != dst_name
         ]
 
-        for key in ("prerequisite_concept_ids", "related_concept_ids", "lecture_sources"):
-            merged = list(dict.fromkeys((dss.get(key) or []) + (sss.get(key) or [])))
-            dss[key] = [v for v in merged if v not in (src_id, dst_id)]
+        if use_ledger:
+            for key in ("prerequisite_concept_ids", "related_concept_ids", "lecture_sources"):
+                merged = list(dict.fromkeys((dss.get(key) or []) + (sss.get(key) or [])))
+                dss[key] = [v for v in merged if v not in (src_id, dst_id)]
+        else:
+            for key in ("prerequisite_concept_ids", "related_concept_ids", "lecture_sources"):
+                merged = list(dict.fromkeys((dss.get(key) or []) + (sss.get(key) or [])))
+                dss[key] = [v for v in merged if v not in (src_id, dst_id)]
 
         if not dss.get("definition") and sss.get("definition"):
             dss["definition"] = sss["definition"]
@@ -164,7 +195,16 @@ class ConceptStore(SemanticStoreBase):
         dst.entities = [dss.get("name") or dst_id] + dss["aliases"]
         self._insert(dst)
 
-        # Re-point edges in every other concept of the namespace.
+        if use_ledger and alias_store is not None:
+            if not alias_store.append_merge(
+                namespace, src_id, dst_id,
+                confidence=merge_confidence, reason=merge_reason,
+            ):
+                return False
+            self.supersede(src_id, dst_id)
+            return True
+
+        # Legacy destructive path — re-point edges in every other concept.
         for other in self.all(namespace):
             if other.id in (src_id, dst_id):
                 continue

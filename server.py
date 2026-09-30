@@ -1,11 +1,14 @@
 """FastAPI server for Coast — auth, notebooks, sessions, and OCR pipeline."""
 
 from __future__ import annotations
+from notes_service import sanitize_notes, notes_revision
 
+import asyncio
 import json
 import math
 import os
 import shutil
+import sys
 import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -13,10 +16,12 @@ from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
+
+import ai_usage
 
 load_dotenv()
 
@@ -71,10 +76,8 @@ def _bg_post_process(user_id: int, folder: str, nb_id: str, notebook_data: dict)
         import traceback
         traceback.print_exc()
     print(f"[BG] Post-processing done for notebook {nb_id}")
-from viz_router import viz_router
 
 app = FastAPI(title="Coast API", version="2.0.0")
-app.include_router(viz_router)
 
 _ALLOWED_ORIGINS = [
     "http://localhost:5173", "http://localhost:5174", "http://localhost:3000",
@@ -100,6 +103,9 @@ app.add_middleware(
 
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import Response as StarletteResponse
+
+import security as _security  # noqa: E402
+app.middleware("http")(_security.security_headers)
 
 _PROD_ORIGIN = next(
     (o for o in _ALLOWED_ORIGINS if o.startswith("https://") and "localhost" not in o),
@@ -148,6 +154,22 @@ async def track_request_traffic(request: StarletteRequest, call_next):
             for k in oldest:
                 del _request_counts[k]
     return response
+
+@app.middleware("http")
+async def attribute_ai_usage(request: StarletteRequest, call_next):
+    """Tag every AI call made while serving this request with the student and feature."""
+    import ai_usage
+    user_id = None
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        payload = decode_access_token(auth_header[7:])
+        if payload and str(payload.get("sub", "")).isdigit():
+            user_id = int(payload["sub"])
+    token = ai_usage.begin(user_id, ai_usage.feature_from_path(request.url.path))
+    try:
+        return await call_next(request)
+    finally:
+        ai_usage.end(token)
 
 _cors_headers = {
     "Access-Control-Allow-Origin": _PROD_ORIGIN,
@@ -327,13 +349,18 @@ async def _raise_threadpool_cap():
 @app.on_event("startup")
 def on_startup():
     init_db()
+    import oma_provider
+    from coast_content_oma.course_identity import initialize
+    initialize(oma_provider.OMA_DB_PATH)
+    import learning_jobs
+    learning_jobs.start()
+    threading.Thread(target=learning_jobs.recover_sources, name="coast-source-recovery", daemon=True).start()
     if PAPERS_DIR.exists():
         load_papers_from_json(PAPERS_DIR)
         print(f"Loaded papers from {PAPERS_DIR}")
     from paper_scanner import load_scanned_into_db
     load_scanned_into_db()
 
-    import threading
     def _bg_curated():
         try:
             from curated_config import bootstrap_all_curated_content
@@ -347,7 +374,7 @@ def on_startup():
     try:
         import oma_provider
         print(
-            f"  [oma] RAG_PROVIDER={oma_provider.RAG_PROVIDER} "
+            f"  [oma] RAG_PROVIDER={oma_provider.get_rag_provider()} "
             f"student_oma={oma_provider.is_student_enabled()} "
             f"db={oma_provider.OMA_DB_PATH}"
         )
@@ -378,15 +405,12 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> User:
     return user
 
 
-ADMIN_EMAILS = {
-    "andreaf.fraschetti@gmail.com",
-    "rio.mauss@gmail.com",
-}
+from security import ADMIN_EMAILS, HOUR, MINUTE, client_ip, is_admin, limiter  # noqa: E402
 
 
 def _require_curated_write_access(folder_name: str, user: User) -> None:
     """Premade (curated) folders are shared — only admins may modify them."""
-    if _curated_uid(folder_name) is not None and user.email not in ADMIN_EMAILS:
+    if _curated_uid(folder_name) is not None and not is_admin(user):
         raise HTTPException(403, "Premade course content is read-only.")
 
 
@@ -398,7 +422,7 @@ def _get_user_usage(user_id: int):
     db = SessionLocal()
     try:
         admin = db.query(User).filter(User.id == user_id).first()
-        if admin and admin.email in ADMIN_EMAILS:
+        if admin and is_admin(admin):
             return {
                 "chat_messages_used": 0,
                 "chat_messages_limit": 999999,
@@ -439,6 +463,11 @@ def _get_user_usage(user_id: int):
         db.close()
 
 
+if os.getenv("COAST_ENABLE_MANIM", "false").lower() == "true":
+    from viz_router import viz_router
+    app.include_router(viz_router, dependencies=[Depends(get_current_user)])
+
+
 @app.get("/api/usage")
 def get_usage(user: User = Depends(get_current_user)):
     """Return the user's current usage against rate limits."""
@@ -454,6 +483,7 @@ class RegisterRequest(BaseModel):
     name: str
     password: str
     course: str = ""
+    beta_code: str = ""
 
 
 class LoginRequest(BaseModel):
@@ -472,6 +502,7 @@ class VerifyEmailCheckRequest(BaseModel):
 
 class GoogleAuthRequest(BaseModel):
     credential: str
+    beta_code: str = ""
 
 
 def _user_payload(user: User) -> dict:
@@ -483,7 +514,7 @@ def _user_payload(user: User) -> dict:
         "onboarding_completed": bool(user.onboarding_completed),
         "email_verified": bool(getattr(user, "email_verified", True)),
         "auth_provider": "google" if getattr(user, "google_id", None) else "email",
-        "is_admin": user.email in ADMIN_EMAILS,
+        "is_admin": is_admin(user),
     }
 
 
@@ -496,14 +527,16 @@ def _auth_token_response(user: User) -> dict:
 def auth_config():
     """Public auth configuration for the login screen."""
     import os
+    import beta_codes
     return {
         "google_client_id": os.environ.get("GOOGLE_CLIENT_ID", "").strip(),
         "email_verification_enabled": _email_verification_required(),
+        "beta_code_required": beta_codes.required(),
     }
 
 
 @app.post("/api/auth/verify-email/send")
-def send_verify_email(req: VerifyEmailSendRequest):
+def send_verify_email(req: VerifyEmailSendRequest, request: Request):
     from auth_email import generate_code, normalize_email, send_verification_email, validate_email_address
     from database import EmailVerification
 
@@ -511,6 +544,8 @@ def send_verify_email(req: VerifyEmailSendRequest):
     ok, err = validate_email_address(email)
     if not ok:
         raise HTTPException(400, err)
+    limiter.check(f"verify-send:ip:{client_ip(request)}", 20, HOUR)
+    limiter.check(f"verify-send:{email}", 5, HOUR, "Too many codes requested for this email. Try again in an hour.")
 
     db = SessionLocal()
     try:
@@ -528,28 +563,36 @@ def send_verify_email(req: VerifyEmailSendRequest):
         else:
             db.add(EmailVerification(email=email, code=code, expires_at=expires, verified=False))
         db.commit()
+        limiter.reset(f"verify-check:{email}")  # a fresh code gets fresh attempts
 
         sent, detail = send_verification_email(email, code)
         if sent:
             return {"ok": True, "message": "Verification code sent. Check your inbox."}
-        if detail.startswith("dev_code:"):
+        if detail.startswith("dev_code:") and not os.getenv("RENDER"):
             return {"ok": True, "message": "Dev mode: use the code shown below.", "dev_code": detail.split(":", 1)[1]}
-        raise HTTPException(503, detail)
+        print(f"[auth] verification email not sent: {detail}")
+        raise HTTPException(503, "We couldn't send the email right now. Please try again or sign in with Google.")
     finally:
         db.close()
 
 
 @app.post("/api/auth/verify-email/check")
-def check_verify_email(req: VerifyEmailCheckRequest):
+def check_verify_email(req: VerifyEmailCheckRequest, request: Request):
+    import hmac
     from auth_email import normalize_email
     from database import EmailVerification
 
     email = normalize_email(req.email)
     code = req.code.strip()
+    limiter.check(f"verify-check:ip:{client_ip(request)}", 30, 15 * MINUTE)
+    # Five wrong guesses burn the code: a six-digit code can't be brute-forced.
+    if limiter.blocked(f"verify-check:{email}", 5, HOUR):
+        raise HTTPException(429, "Too many wrong codes. Request a new code.")
     db = SessionLocal()
     try:
         row = db.query(EmailVerification).filter(EmailVerification.email == email).first()
-        if not row or row.code != code:
+        if not row or not hmac.compare_digest(str(row.code or ""), code):
+            limiter.record(f"verify-check:{email}")
             raise HTTPException(400, "Invalid verification code.")
         exp = row.expires_at
         if exp.tzinfo is None:
@@ -564,8 +607,9 @@ def check_verify_email(req: VerifyEmailCheckRequest):
 
 
 @app.post("/api/auth/google")
-def google_auth(req: GoogleAuthRequest):
+def google_auth(req: GoogleAuthRequest, request: Request):
     import os
+    limiter.check(f"google:ip:{client_ip(request)}", 30, 15 * MINUTE)
     from google.auth.transport import requests as google_requests
     from google.oauth2 import id_token
 
@@ -603,6 +647,15 @@ def google_auth(req: GoogleAuthRequest):
             db.refresh(user)
             return _auth_token_response(user)
 
+        # A new account: during the beta it needs an unused invite code.
+        import beta_codes
+        code = None
+        if beta_codes.required():
+            try:
+                code = beta_codes.check(db, req.beta_code)
+            except beta_codes.BetaCodeError as exc:
+                raise HTTPException(403, str(exc))
+
         user = User(
             email=email,
             name=name,
@@ -611,6 +664,13 @@ def google_auth(req: GoogleAuthRequest):
             email_verified=True,
         )
         db.add(user)
+        db.flush()
+        if code:
+            try:
+                beta_codes.consume(db, code, user.id, email)
+            except beta_codes.BetaCodeError as exc:
+                db.rollback()
+                raise HTTPException(403, str(exc))
         db.commit()
         db.refresh(user)
         return _auth_token_response(user)
@@ -619,7 +679,8 @@ def google_auth(req: GoogleAuthRequest):
 
 
 @app.post("/api/auth/register")
-def register(req: RegisterRequest):
+def register(req: RegisterRequest, request: Request):
+    import beta_codes
     from auth_email import normalize_email, validate_email_address
     from database import EmailVerification
 
@@ -627,6 +688,9 @@ def register(req: RegisterRequest):
     ok, err = validate_email_address(email)
     if not ok:
         raise HTTPException(400, err)
+    limiter.check(f"register:ip:{client_ip(request)}", 10, HOUR)
+    if len(req.password or "") < 8:
+        raise HTTPException(400, "Use a password of at least 8 characters.")
 
     if os.getenv("RENDER") and email.endswith("@loadtest.local"):
         raise HTTPException(403, "Load-test accounts are disabled on production.")
@@ -637,11 +701,19 @@ def register(req: RegisterRequest):
         if existing:
             raise HTTPException(400, "Email already registered")
 
+        code = None
+        if beta_codes.required() and not beta_codes.exempt(email):
+            try:
+                code = beta_codes.check(db, req.beta_code)
+            except beta_codes.BetaCodeError as exc:
+                raise HTTPException(400, str(exc))
+
         vrow = db.query(EmailVerification).filter(
             EmailVerification.email == email,
             EmailVerification.verified == True,
         ).first()
-        if not vrow and _email_verification_required():
+        # Team addresses always need proof of ownership, whatever the global setting.
+        if not vrow and (_email_verification_required() or email in ADMIN_EMAILS):
             raise HTTPException(400, "Verify your email before creating an account.")
 
         user = User(
@@ -649,11 +721,18 @@ def register(req: RegisterRequest):
             name=req.name.strip(),
             password_hash=hash_password(req.password),
             course=req.course.strip(),
-            email_verified=True,
+            email_verified=bool(vrow),  # only an emailed code proves the address
         )
         db.add(user)
         if vrow:
             db.delete(vrow)
+        db.flush()
+        if code:
+            try:
+                beta_codes.consume(db, code, user.id, email)
+            except beta_codes.BetaCodeError as exc:
+                db.rollback()
+                raise HTTPException(400, str(exc))
         db.commit()
         db.refresh(user)
 
@@ -663,19 +742,25 @@ def register(req: RegisterRequest):
 
 
 @app.post("/api/auth/login")
-def login(req: LoginRequest):
+def login(req: LoginRequest, request: Request):
     from auth_email import normalize_email
 
     email = normalize_email(req.email)
+    limiter.check(f"login:ip:{client_ip(request)}", 30, 15 * MINUTE)
+    if limiter.blocked(f"login-fail:{email}", 8, 15 * MINUTE):
+        raise HTTPException(429, "Too many failed sign-ins for this account. Wait 15 minutes and try again.")
     db = SessionLocal()
     try:
         user = db.query(User).filter(User.email == email).first()
         if not user:
+            limiter.record(f"login-fail:{email}")
             raise HTTPException(401, "Invalid email or password")
         if user.google_id:
             raise HTTPException(401, "This account uses Google sign-in.")
         if not verify_password(req.password, user.password_hash):
+            limiter.record(f"login-fail:{email}")
             raise HTTPException(401, "Invalid email or password")
+        limiter.reset(f"login-fail:{email}")
         if _email_verification_required() and not getattr(user, "email_verified", True):
             raise HTTPException(403, "Please verify your email before signing in.")
 
@@ -690,7 +775,8 @@ def get_me(user: User = Depends(get_current_user)):
 
 
 class OnboardingRequest(BaseModel):
-    preferences: dict
+    preferences: dict = {}
+    conversation_id: Optional[str] = None
 
 
 @app.post("/api/auth/onboarding")
@@ -700,7 +786,22 @@ def complete_onboarding(req: OnboardingRequest, user: User = Depends(get_current
         db_user = db.query(User).filter(User.id == user.id).first()
         if not db_user:
             raise HTTPException(404, "User not found")
-        db_user.learning_preferences = json.dumps(req.preferences)
+
+        traits_saved: list = []
+        prefs = dict(req.preferences or {})
+        if req.conversation_id:
+            try:
+                import onboarding as onboarding_mod
+                traits_saved = onboarding_mod.get_saved_onboarding_traits(user.id)
+                if not traits_saved:
+                    traits_saved = onboarding_mod.finalize_onboarding(user.id, req.conversation_id)
+                extracted = onboarding_mod.traits_to_preferences(traits_saved)
+                prefs = {**extracted, **prefs}
+            except Exception:
+                import traceback
+                traceback.print_exc()
+
+        db_user.learning_preferences = json.dumps(prefs)
         db_user.onboarding_completed = True
         db.commit()
         return {
@@ -709,6 +810,7 @@ def complete_onboarding(req: OnboardingRequest, user: User = Depends(get_current
             "name": db_user.name,
             "course": db_user.course,
             "onboarding_completed": True,
+            "traits_saved": traits_saved,
         }
     finally:
         db.close()
@@ -995,7 +1097,7 @@ def submit_section_answers(
             except Exception:
                 import traceback as tb
                 tb.print_exc()
-        threading.Thread(target=_bg_update_skills, daemon=True).start()
+        threading.Thread(target=ai_usage.carry(_bg_update_skills), daemon=True).start()
 
         return {
             "status": "recorded",
@@ -1203,9 +1305,11 @@ Respond with ONLY valid JSON (no markdown fences):
 
 
 @app.post("/api/evaluate-answer")
-def evaluate_answer(req: EvaluateAnswerRequest):
+def evaluate_answer(req: EvaluateAnswerRequest, user: User = Depends(get_current_user)):
     """Use GPT-4o-mini to evaluate an open-ended answer."""
     from openai import OpenAI
+
+    limiter.check(f"evaluate:{user.id}", 60, HOUR)
 
     api_key = os.getenv("OPENAI_API_KEY", "")
     if not api_key:
@@ -1236,12 +1340,13 @@ def evaluate_answer(req: EvaluateAnswerRequest):
         )
 
     try:
-        response = client.chat.completions.create(
+        import provider_capacity
+        response = provider_capacity.call('openai', lambda: client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=400,
             temperature=0.2,
-        )
+        ), priority='interactive')
         raw = response.choices[0].message.content.strip()
         if raw.startswith("```"):
             lines = raw.split("\n")
@@ -1274,11 +1379,49 @@ def evaluate_answer(req: EvaluateAnswerRequest):
         }
 
 
-@app.get("/api/stats")
-def get_user_stats(user: User = Depends(get_current_user)):
-    """Aggregate stats for the user's dashboard, including streak."""
-    from datetime import timedelta
+def _local_day(ts, offset_min):
+    """The calendar day of a stored UTC timestamp for someone offset_min minutes east of UTC."""
+    if ts.tzinfo is not None:
+        ts = ts.astimezone(timezone.utc).replace(tzinfo=None)
+    return (ts + timedelta(minutes=offset_min)).date()
 
+
+def study_days(db, user_id, offset_min=0, since_days=400):
+    """Local days on which the user studied: wrote to Pedro (lessons, workshops, chat),
+    finished a section, a quiz, a flashcard review or a treasure quiz, or a focus block."""
+    from database import ReviewHistory, SectionRewardClaim, TreasureChestOpen
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=since_days)
+    stamps = []
+    for column, *filters in (
+        (ChatMessage.created_at, ChatMessage.user_id == user_id, ChatMessage.role == "user"),
+        (QuizSession.completed_at, QuizSession.user_id == user_id, QuizSession.completed == True),  # noqa: E712
+        (SectionRewardClaim.created_at, SectionRewardClaim.user_id == user_id),
+        (ReviewHistory.reviewed_at, ReviewHistory.user_id == user_id),
+        (TreasureChestOpen.opened_at, TreasureChestOpen.user_id == user_id),
+        (ActivityEvent.created_at, ActivityEvent.user_id == user_id,
+         ActivityEvent.feature == "focus", ActivityEvent.action == "complete"),
+    ):
+        stamps += [t for (t,) in db.query(column).filter(*filters, column != None, column >= cutoff).distinct()]  # noqa: E711
+    return {_local_day(t, offset_min) for t in stamps}
+
+
+def study_streak(days, today):
+    """Consecutive study days ending today, or ending yesterday while today is still open."""
+    check = today if today in days else today - timedelta(days=1)
+    streak = 0
+    while check in days:
+        streak += 1
+        check -= timedelta(days=1)
+    return streak
+
+
+@app.get("/api/stats")
+def get_user_stats(tz_offset: int = 0, user: User = Depends(get_current_user)):
+    """Aggregate stats for the user's dashboard, including streak.
+
+    tz_offset: the browser's minutes east of UTC, so days roll over at local midnight.
+    """
+    tz_offset = max(-840, min(840, tz_offset))
     db = SessionLocal()
     try:
         sessions = db.query(QuizSession).filter(QuizSession.user_id == user.id, QuizSession.completed == True).all()
@@ -1287,19 +1430,9 @@ def get_user_stats(user: User = Depends(get_current_user)):
         total_correct = sum(s.score for s in sessions)
         avg_score = (total_correct / total_questions * 100) if total_questions > 0 else 0
 
-        # Compute streak — consecutive days with at least one completed session
-        today = datetime.now(timezone.utc).date()
-        active_dates = set()
-        for s in sessions:
-            if s.completed_at:
-                active_dates.add(s.completed_at.date())
-
-        # Count streak backwards from today
-        streak = 0
-        check_date = today
-        while check_date in active_dates:
-            streak += 1
-            check_date -= timedelta(days=1)
+        today = _local_day(datetime.now(timezone.utc), tz_offset)
+        active_dates = study_days(db, user.id, tz_offset)
+        streak = study_streak(active_dates, today)
 
         # Build week activity (last 7 days, Mon-Sun aligned to current week)
         # Find the Monday of current week
@@ -1308,10 +1441,10 @@ def get_user_stats(user: User = Depends(get_current_user)):
         day_labels = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']
         for i in range(7):
             d = monday + timedelta(days=i)
-            if d > today:
-                status = 'future'
-            elif d in active_dates:
+            if d in active_dates:
                 status = 'active'
+            elif d >= today:
+                status = 'future'  # today is still open
             else:
                 status = 'missed'
             week_days.append({'label': day_labels[i], 'status': status})
@@ -1322,6 +1455,7 @@ def get_user_stats(user: User = Depends(get_current_user)):
             "total_correct": total_correct,
             "average_score": round(avg_score, 1),
             "streak": streak,
+            "studied_today": today in active_dates,
             "week": week_days,
         }
     finally:
@@ -1359,11 +1493,13 @@ def list_notebooks(user: User = Depends(get_current_user)):
 
 
 @app.get("/api/notebooks/folders")
-def list_folders(user: User = Depends(get_current_user)):
-    """Return persisted folder names for this user."""
+def list_folders(detail: bool = False, user: User = Depends(get_current_user)):
+    """Folder names for this user; with ?detail=true, [{name, kind}] (lesson or workshop)."""
     db = SessionLocal()
     try:
         rows = db.query(StudyFolder).filter(StudyFolder.user_id == user.id).order_by(StudyFolder.created_at).all()
+        if detail:
+            return [{"name": r.name, "kind": r.kind or "lesson"} for r in rows]
         return [r.name for r in rows]
     finally:
         db.close()
@@ -1408,6 +1544,7 @@ def move_notebook(saved_id: int, req: MoveNotebookRequest, user: User = Depends(
 
 class CreateFolderRequest(BaseModel):
     name: str
+    kind: Optional[str] = "lesson"  # "lesson" or "workshop"
 
 
 @app.post("/api/notebooks/folders")
@@ -1416,17 +1553,22 @@ def create_folder(req: CreateFolderRequest, user: User = Depends(get_current_use
     name = req.name.strip()[:100]
     if not name:
         raise HTTPException(400, "Folder name cannot be empty")
+    kind = (req.kind or "lesson").strip().lower()
+    if kind not in ("lesson", "workshop"):
+        raise HTTPException(400, "Choose a lesson or a workshop")
     db = SessionLocal()
     try:
         existing = db.query(StudyFolder).filter(
             StudyFolder.user_id == user.id, StudyFolder.name == name
         ).first()
         if existing:
-            return {"folder": name}
-        folder = StudyFolder(user_id=user.id, name=name)
+            return {"folder": name, "kind": existing.kind or "lesson"}
+        from coast_content_oma.course_identity import register
+        register(db, user.id, name)
+        folder = StudyFolder(user_id=user.id, name=name, kind=kind)
         db.add(folder)
         db.commit()
-        return {"folder": name}
+        return {"folder": name, "kind": kind}
     finally:
         db.close()
 
@@ -1456,6 +1598,30 @@ def rename_folder(folder_name: str, req: RenameFolderRequest, user: User = Depen
         if existing:
             raise HTTPException(409, "A folder with that name already exists")
 
+        from database import CourseChatEpoch, CourseIdentity, SectionVerification, SectionRewardClaim, MapTileProvenance, PlacementTestSession, LearningJob
+        from coast_content_oma.course_identity import register
+        running = db.query(LearningJob).filter_by(status='running').all()
+        if any((p := json.loads(job.payload_json)).get('user_id') == user.id and p.get('folder') == folder_name for job in running):
+            raise HTTPException(409, "Pedro is saving this lesson. Retry the rename in a moment.")
+        register(db, user.id, folder_name)
+        identity = db.get(CourseIdentity, (user.id, folder_name))
+        if db.get(CourseIdentity, (user.id, new_name)):
+            raise HTTPException(409, "That course name is already reserved by learning history")
+        from database import SourceChatTurn
+        import time as _time
+        if db.query(SourceChatTurn).filter_by(user_id=user.id, folder_name=folder_name, status='running').filter(SourceChatTurn.started_at > _time.time() - 300).first():
+            raise HTTPException(409, "Wait for the source answer to finish before renaming this lesson.")
+        db.query(SourceChatTurn).filter_by(user_id=user.id, folder_name=folder_name).update({'folder_name': new_name})
+        identity.folder_name = new_name
+        db.query(ChatMessage).filter(ChatMessage.user_id == user.id, ChatMessage.context_id == folder_name,
+            ChatMessage.context_type.in_(['lesson','folder','test_out','sources'])).update({ChatMessage.context_id: new_name}, synchronize_session=False)
+        for model in (CourseChatEpoch, SectionVerification, SectionRewardClaim, MapTileProvenance, PlacementTestSession):
+            db.query(model).filter(model.user_id == user.id, model.folder_name == folder_name).update({model.folder_name: new_name}, synchronize_session=False)
+        for job in db.query(LearningJob).filter(LearningJob.status.in_(['queued','failed'])).all():
+            payload = json.loads(job.payload_json)
+            if payload.get('user_id') == user.id and payload.get('folder') == folder_name:
+                payload['folder'] = new_name
+                job.payload_json = json.dumps(payload)
         folder.name = new_name
         db.query(SavedNotebook).filter(
             SavedNotebook.user_id == user.id, SavedNotebook.folder == folder_name
@@ -1474,6 +1640,8 @@ def rename_folder(folder_name: str, req: RenameFolderRequest, user: User = Depen
             CourseOutline.user_id == user.id, CourseOutline.folder_name == folder_name
         ).update({CourseOutline.folder_name: new_name})
         db.commit()
+        import map_world
+        map_world.invalidate_map_cache(user.id)
         return {"status": "renamed", "old_name": folder_name, "new_name": new_name}
     finally:
         db.close()
@@ -1510,19 +1678,81 @@ def embed_folder(folder_name: str, user: User = Depends(get_current_user)):
     try:
         # Curated folders are pre-embedded at bootstrap; skip instead of letting
         # any user trigger an expensive shared re-embed.
-        if _curated_uid(folder_name) is not None and user.email not in ADMIN_EMAILS:
+        if _curated_uid(folder_name) is not None and not is_admin(user):
             return {"notebooks_embedded": 0, "total_chunks": 0, "skipped": "curated"}
         embed_uid = _curated_uid(folder_name) if _curated_uid(folder_name) is not None else user.id
+        import oma_provider
+        if oma_provider.is_oma_enabled():
+            return {"notebooks_embedded": 0, "total_chunks": 0, "skipped": "oma"}
         return rag.embed_all_in_folder(embed_uid, folder_name)
     except Exception:
         import traceback
         traceback.print_exc()
         return {"notebooks_embedded": 0, "total_chunks": 0, "error": "Embedding failed"}
 
+class UploadFileIntent(BaseModel):
+    upload_id: str
+    filename: str
+    size_bytes: int
+
+
+class UploadBatchIntent(BaseModel):
+    files: list[UploadFileIntent]
+
+
+@app.post("/api/folders/{folder_name}/uploads")
+def reserve_folder_uploads(folder_name: str, body: UploadBatchIntent, user: User = Depends(get_current_user)):
+    _require_curated_write_access(folder_name, user)
+    import upload_lifecycle
+    return {"uploads": upload_lifecycle.reserve(user.id, folder_name, [f.model_dump() for f in body.files])}
+
+
+@app.get("/api/folders/{folder_name}/uploads")
+def get_folder_uploads(folder_name: str, user: User = Depends(get_current_user)):
+    import upload_lifecycle
+    return {"uploads": upload_lifecycle.list_uploads(user.id, folder_name)}
+
+
+@app.delete("/api/folders/{folder_name}/uploads/{upload_id}")
+def cancel_folder_upload(folder_name: str, upload_id: str, user: User = Depends(get_current_user)):
+    _require_curated_write_access(folder_name, user)
+    import upload_lifecycle
+    upload_lifecycle.cancel(user.id, folder_name, upload_id)
+    return {"status": "cancelled"}
+
+
+# Reading a PDF holds every page (and its images) in memory, so only a couple
+# run at once; further uploads wait their turn instead of exhausting RAM.
+_EXTRACT_SLOTS = threading.BoundedSemaphore(max(1, int(os.getenv("COAST_EXTRACT_CONCURRENCY", "2"))))
+_READ_SLOTS = None
+
+
+async def _read_upload(path: str) -> list[dict]:
+    """Read an uploaded PDF or PowerPoint in a separate Python process (the PDF readers are
+    pure Python and would otherwise freeze every other request for tens of seconds), saving
+    the page copy that indexing loads. Returns the pages' text."""
+    global _READ_SLOTS
+    if _READ_SLOTS is None:
+        _READ_SLOTS = asyncio.Semaphore(max(1, int(os.getenv("COAST_EXTRACT_CONCURRENCY", "2"))))
+    async with _READ_SLOTS:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "coast_content_oma.read_upload", path,
+            cwd=str(Path(__file__).parent), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        try:
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=float(os.getenv("COAST_EXTRACT_TIMEOUT", "600")))
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise RuntimeError("reading the file took too long")
+    if proc.returncode != 0:
+        raise RuntimeError(err.decode(errors="replace")[-400:])
+    return json.loads(out)
+
+
 @app.post("/api/folders/{folder_name}/upload")
 async def upload_folder_source(
     folder_name: str,
     file: UploadFile = File(...),
+    upload_id: Optional[str] = Form(None),
     authorization: Optional[str] = Header(None),
 ):
     """Upload a raw document to a folder — extract text, embed, no notebook generation."""
@@ -1548,12 +1778,32 @@ async def upload_folder_source(
     if ext not in allowed:
         raise HTTPException(400, f"Unsupported file type: {ext}")
 
-    tmp_path = None
+    tmp_path = stored_path = None
+    claim = None
+    committed = False
     try:
+        import upload_lifecycle
+        if (getattr(file, "size", None) or 0) > upload_lifecycle.MAX_UPLOAD_BYTES:
+            raise HTTPException(413, upload_lifecycle.TOO_LARGE)
+        # Spool to disk in chunks so a large upload never sits in memory whole.
+        size = 0
         with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-            content = await file.read()
-            tmp.write(content)
             tmp_path = Path(tmp.name)
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > upload_lifecycle.MAX_UPLOAD_BYTES:
+                    raise HTTPException(413, upload_lifecycle.TOO_LARGE)
+                tmp.write(chunk)
+        # Older API callers can still upload directly; the website registers the whole batch first.
+        if not upload_id:
+            upload_id = uuid.uuid4().hex
+            upload_lifecycle.reserve(user.id, folder_name, [{"upload_id": upload_id,
+                "filename": file.filename, "size_bytes": size}])
+        claim, replay = upload_lifecycle.begin(user.id, folder_name, upload_id, file.filename, size)
+        if replay:
+            return replay
+        # After begin(), so a refused file shows as failed in the upload list and can be removed.
+        _security.check_upload(tmp_path, ext)
 
         raw_text = ""
         page_count = 0
@@ -1561,53 +1811,32 @@ async def upload_folder_source(
 
         import asyncio
 
-        def _extract_text_only():
-            """Lightweight text extraction — no image loading to save memory."""
-            if ext == ".pptx":
-                from pptx import Presentation as PptxPres
-                prs = PptxPres(str(tmp_path))
-                pages = []
-                for i, slide in enumerate(prs.slides):
-                    texts = []
-                    for shape in slide.shapes:
-                        if shape.has_text_frame:
-                            texts.append(shape.text_frame.text)
-                    pages.append({"slide_number": i + 1, "text": "\n".join(texts), "images": []})
-                return pages
-            elif ext == ".pdf":
-                import pdfplumber
-                pages = []
-                with pdfplumber.open(str(tmp_path)) as pdf:
-                    for i, pg in enumerate(pdf.pages):
-                        txt = pg.extract_text() or ""
-                        pages.append({"slide_number": i + 1, "text": txt, "images": []})
-                return pages if pages else None
-            return None
-
-        pages = await asyncio.to_thread(_extract_text_only)
-
         if ext not in (".pdf", ".pptx"):
-            return JSONResponse(status_code=400, content={"detail": "Image files must be uploaded via the full notebook pipeline"},
-                                headers=_cors_headers)
-        if pages:
-            page_count = len(pages)
-            raw_text = "\n\n".join(p.get("text", "") for p in pages if p.get("text"))
-        else:
-            return JSONResponse(status_code=400, content={"detail": "Could not extract text from this file"},
-                                headers=_cors_headers)
-
-        if not raw_text.strip():
-            return JSONResponse(status_code=400, content={"detail": "No text could be extracted from this file"},
-                                headers=_cors_headers)
+            raise HTTPException(400, "Image files must be uploaded via the full notebook pipeline")
 
         source_id = f"src_{uuid.uuid4().hex[:10]}"
         title = Path(file.filename).stem.replace("_", " ").replace("-", " ")
-
         stored_path = FOLDER_UPLOADS_DIR / f"{source_id}{ext}"
         shutil.copy2(str(tmp_path), str(stored_path))
 
+        # Read the file once, in a separate process: text for this reply, and the saved page
+        # copy (figures included) that indexing loads in about a second.
+        try:
+            pages = await _read_upload(str(stored_path))
+        except Exception as exc:
+            print(f"[upload] Could not read {ext}: {type(exc).__name__}")
+            raise HTTPException(400, "This file could not be read. Try saving a new PDF or PowerPoint (.pptx) copy.") from exc
+
+        if not pages:
+            raise HTTPException(400, "Could not extract text from this file")
+        page_count = len(pages)
+        raw_text = "\n\n".join(p.get("text", "") for p in pages if p.get("text"))
+        if not raw_text.strip():
+            raise HTTPException(400, "No text could be extracted from this file")
+
         db = SessionLocal()
         try:
+            upload_lifecycle.finish(db, user.id, folder_name, upload_id, claim, source_id)
             fs = FolderSource(
                 user_id=user.id,
                 folder_name=folder_name,
@@ -1619,10 +1848,22 @@ async def upload_folder_source(
                 raw_text=raw_text,
                 file_path=str(stored_path),
             )
+            from coast_content_oma.course_identity import register
+            register(db, user.id, folder_name)
             db.add(fs)
+            db.flush()
+            import oma_provider
+            if oma_provider.is_oma_enabled():
+                from learning_jobs import enqueue_source
+                enqueue_source(db, fs)
             db.commit()
+            committed = True
         finally:
             db.close()
+
+        if _curated_uid(folder_name) is None:
+            import source_search
+            source_search.schedule(source_id)
 
         def _bg_embed():
             try:
@@ -1634,21 +1875,17 @@ async def upload_folder_source(
 
         def _bg_images():
             from image_extractor import extract_and_store_images
-            extract_and_store_images(stored_path, ext, source_id, user.id, folder_name, SOURCE_IMAGES_DIR)
+            with _EXTRACT_SLOTS:
+                extract_and_store_images(stored_path, ext, source_id, user.id, folder_name, SOURCE_IMAGES_DIR)
 
-        def _bg_oma_ingest():
-            try:
-                import oma_provider
-                if oma_provider.is_oma_enabled() and ext == ".pdf":
-                    print(f"[BG] OMA ingest starting for {file.filename}")
-                    oma_provider.ingest_pdf_into_oma(user.id, folder_name, stored_path)
-            except Exception:
-                import traceback
-                traceback.print_exc()
 
-        threading.Thread(target=_bg_embed, daemon=True).start()
-        threading.Thread(target=_bg_images, daemon=True).start()
-        threading.Thread(target=_bg_oma_ingest, daemon=True).start()
+        import oma_provider
+        if oma_provider.is_oma_enabled():
+            from learning_jobs import wake
+            wake()
+        else:
+            threading.Thread(target=ai_usage.carry(_bg_embed), daemon=True).start()
+            threading.Thread(target=ai_usage.carry(_bg_images), daemon=True).start()
 
         return {
             "source_id": source_id,
@@ -1656,16 +1893,23 @@ async def upload_folder_source(
             "page_count": page_count,
             "filename": file.filename,
         }
-    except HTTPException:
+    except HTTPException as exc:
+        if claim:
+            upload_lifecycle.fail(user.id, folder_name, upload_id, claim, exc.detail)
         raise
     except Exception:
         import traceback
         traceback.print_exc()
+        if claim:
+            upload_lifecycle.fail(user.id, folder_name, upload_id, claim, "Upload failed. Retry this file.")
         return JSONResponse(status_code=500, content={"detail": "Upload failed — server error"},
                             headers=_cors_headers)
     finally:
         if tmp_path:
             tmp_path.unlink(missing_ok=True)
+        if stored_path and not committed:
+            stored_path.unlink(missing_ok=True)
+            shutil.rmtree(str(stored_path) + '.pages', ignore_errors=True)
 
 
 @app.delete("/api/folders/{folder_name}/sources/{source_id}")
@@ -1676,6 +1920,9 @@ def delete_folder_source(folder_name: str, source_id: str, user: User = Depends(
     db = SessionLocal()
     file_path = None
     try:
+        from sqlalchemy import text
+        from database import LearningJob
+        db.execute(text('BEGIN IMMEDIATE'))
         fs = db.query(FolderSource).filter(
             FolderSource.user_id == owner_id,
             FolderSource.folder_name == folder_name,
@@ -1683,7 +1930,21 @@ def delete_folder_source(folder_name: str, source_id: str, user: User = Depends(
         ).first()
         if not fs:
             raise HTTPException(404, "Source not found")
+        jobs = db.query(LearningJob).filter(
+            text("json_extract(payload_json, '$.source_id') = :sid")
+        ).params(sid=source_id).all()
+        if any(job.status == 'running' for job in jobs) or fs.oma_ingest_status == 'INGESTING':
+            raise HTTPException(409, 'This source is being processed. Retry deletion when processing finishes.')
+        import oma_provider
+        from coast_content_oma.stores.base import make_namespace
+        from coast_content_oma.source_lifecycle import remove_source_material
+        remove_source_material(oma_provider.OMA_DB_PATH, make_namespace(owner_id, folder_name), source_id)
+        for job in jobs:
+            job.status = 'done'
+            job.last_error = 'Source intentionally deleted'
         file_path = fs.file_path
+        from database import SourceSearchIndex
+        db.query(SourceSearchIndex).filter_by(source_id=source_id).delete()
         db.delete(fs)
         # Cascade: remove extracted image rows for this source.
         try:
@@ -1700,6 +1961,8 @@ def delete_folder_source(folder_name: str, source_id: str, user: User = Depends(
 
     if file_path:
         Path(file_path).unlink(missing_ok=True)
+        from coast_content_oma.normalized_source import cache_dir
+        shutil.rmtree(cache_dir(file_path), ignore_errors=True)
 
     try:
         rag.delete_notebook_embeddings(owner_id, folder_name, source_id)
@@ -1707,6 +1970,15 @@ def delete_folder_source(folder_name: str, source_id: str, user: User = Depends(
         pass
 
     return {"status": "deleted", "source_id": source_id}
+
+
+def _inline_disposition(filename: str) -> str:
+    """Content-Disposition for a stored file: an ASCII fallback name plus the real name,
+    so quotes or line breaks in an uploaded file's name can't break the header."""
+    from urllib.parse import quote
+    name = str(filename or "file").replace("\r", " ").replace("\n", " ")
+    ascii_name = "".join(c if 32 <= ord(c) < 127 and c not in '"\\' else "_" for c in name)
+    return f"inline; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"
 
 
 @app.get("/api/folders/{folder_name}/sources/{source_id}/file")
@@ -1740,7 +2012,7 @@ def get_source_file(folder_name: str, source_id: str, user: User = Depends(get_c
         path=str(file_path),
         media_type=media_type,
         filename=filename,
-        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        headers={"Content-Disposition": _inline_disposition(filename)},
     )
 
 
@@ -1762,14 +2034,39 @@ def _resolve_image_path(stored_path: str) -> Path | None:
     return None
 
 
+@app.get("/api/image-access")
+def issue_image_access(user: User = Depends(get_current_user)):
+    from auth import create_image_token
+    return JSONResponse({"access": create_image_token(user.id)}, headers={"Cache-Control": "no-store"})
+
+
+def get_image_user(authorization: Optional[str] = Header(None), access: str | None = None):
+    from auth import decode_image_token
+    payload = None
+    if authorization and authorization.startswith("Bearer "):
+        payload = decode_access_token(authorization.split(" ", 1)[1])
+    if not payload and access:
+        payload = decode_image_token(access)
+    if not payload:
+        raise HTTPException(401, "Sign in to view this image")
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == int(payload["sub"])).first()
+        if not user:
+            raise HTTPException(401, "User no longer exists")
+        return user
+    finally:
+        db.close()
+
+
 @app.get("/api/source-images/{image_id}")
-def serve_source_image(image_id: int):
+def serve_source_image(image_id: int, user: User = Depends(get_image_user)):
     """Serve an extracted source image by its DB id."""
     db = SessionLocal()
     try:
         si = db.query(SourceImage).filter(SourceImage.id == image_id).first()
-        if not si:
-            raise HTTPException(404, "Image not found in DB")
+        if not si or (si.user_id != user.id and _curated_uid(si.folder_name) != si.user_id):
+            raise HTTPException(404, "Image not found")
         resolved = _resolve_image_path(si.image_path)
         if not resolved:
             print(f"[images] File missing: {si.image_path}  (id={image_id}, source={si.source_id})")
@@ -1781,16 +2078,38 @@ def serve_source_image(image_id: int):
         return FileResponse(
             path=str(resolved),
             media_type="image/png",
-            headers={"Cache-Control": "public, max-age=86400"},
+            headers={"Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer"},
         )
     finally:
         db.close()
 
 
+@app.get("/api/source-pages/{source_id}/{page_number}")
+def serve_source_page(source_id: str, page_number: int, user: User = Depends(get_image_user)):
+    """One lecture page as an image, for slides Pedro shows in the chat (image-token auth,
+    so a plain <img> can load it). Curated courses serve their owner's uploads."""
+    from curated_config import CURATED_FOLDER_NAMES
+    with SessionLocal() as db:
+        source = db.query(FolderSource).filter_by(source_id=source_id).first()
+        allowed = source and (source.user_id == user.id or (
+            source.folder_name in CURATED_FOLDER_NAMES and _curated_uid(source.folder_name) == source.user_id))
+        if not allowed or not source.file_path or not 1 <= page_number <= (source.page_count or 0):
+            raise HTTPException(404, "Page not found")
+        path = source.file_path
+    import pedro_context
+    rendered = pedro_context.page_image(path, page_number)
+    if not rendered:
+        raise HTTPException(404, "Page preview unavailable")
+    from fastapi.responses import Response
+    data, media = rendered
+    return Response(data, media_type=media,
+                    headers={"Cache-Control": "private, max-age=3600", "Referrer-Policy": "no-referrer"})
+
+
 @app.get("/api/debug/images")
 def debug_images(user: User = Depends(get_current_user)):
     """Debug endpoint: show image status and curated source file_paths."""
-    if user.email not in ADMIN_EMAILS:
+    if not is_admin(user):
         raise HTTPException(403, "Admin only")
     db = SessionLocal()
     try:
@@ -1952,7 +2271,7 @@ async def generate_notebook_from_source(
                 result["_folder"] = folder_name
 
                 threading.Thread(
-                    target=_bg_post_process,
+                    target=ai_usage.carry(_bg_post_process),
                     args=(user.id, folder_name, nb_id, result),
                     daemon=True,
                 ).start()
@@ -1963,7 +2282,7 @@ async def generate_notebook_from_source(
         except Exception as exc:
             progress_q.put({"stage": "error", "message": str(exc)})
 
-    threading.Thread(target=run_pipeline, daemon=True).start()
+    threading.Thread(target=ai_usage.carry(run_pipeline), daemon=True).start()
 
     async def event_stream():
         idle_ticks = 0
@@ -2039,11 +2358,20 @@ def folder_sources(folder_name: str, user: User = Depends(get_current_user)):
                 "page_count": src.page_count,
                 "embedded": src.source_id in embedded_ids,
                 "type": "document",
+                "oma_ingest_status": getattr(src, "oma_ingest_status", None) or "PENDING",
             })
 
         return {"sources": all_sources, "embedding_stats": chroma_sources}
     finally:
         db.close()
+
+
+@app.get("/api/folders/{folder_name}/oma-ingest")
+def folder_oma_ingest_status(folder_name: str, user: User = Depends(get_current_user)):
+    """Per-source OMA ingest progress (pages, vision, concepts, roadmap readiness)."""
+    import oma_provider
+    src_uid = _curated_uid(folder_name) if _curated_uid(folder_name) is not None else user.id
+    return oma_provider.get_folder_ingest_progress(src_uid, folder_name)
 
 @app.post("/api/folders/{folder_name}/study-plan")
 def folder_study_plan(folder_name: str, user: User = Depends(get_current_user)):
@@ -2083,14 +2411,20 @@ def folder_notebooks(folder_name: str, user: User = Depends(get_current_user)):
 # LESSON / COURSE OUTLINE
 # ═══════════════════════════════════════════════════════════════════════════
 
+class OutlineSourceSelection(BaseModel):
+    source_ids: Optional[list[str]] = None
+
+
 @app.post("/api/folders/{folder_name}/outline")
-def generate_outline(folder_name: str, user: User = Depends(get_current_user)):
+def generate_outline(folder_name: str, body: Optional[OutlineSourceSelection] = None, user: User = Depends(get_current_user)):
     """Generate or regenerate a course outline from folder sources."""
     src_uid = _curated_uid(folder_name) if _curated_uid(folder_name) is not None else user.id
     structure = get_lesson_structure(folder_name)
-    result = lesson.generate_outline(user.id, folder_name, source_user_id=src_uid, structure=structure)
+    result = lesson.generate_outline(user.id, folder_name, source_user_id=src_uid, structure=structure,
+                                     expected_source_ids=body.source_ids if body else None,
+                                     course_format=lesson.folder_kind(user.id, folder_name))
     if "error" in result:
-        raise HTTPException(400, result["error"])
+        raise HTTPException(result.get("status_code", 400), result["error"])
     return result
 
 
@@ -2126,14 +2460,53 @@ def get_section_constellation(
 def get_lesson_state(folder_name: str, user: User = Depends(get_current_user)):
     """Get current lesson state — outline, progress, current section."""
     src_uid = _curated_uid(folder_name) if _curated_uid(folder_name) is not None else user.id
-    return lesson.get_lesson_state(user.id, folder_name, source_user_id=src_uid)
+    state = lesson.get_lesson_state(user.id, folder_name, source_user_id=src_uid)
+    if isinstance(state, dict) and state.get("has_outline"):
+        # Lets any device say "Continue lesson" once the current section has begun.
+        from database import ChatMessage
+        with SessionLocal() as db:
+            state["section_started"] = db.query(ChatMessage.id).filter(
+                ChatMessage.user_id == user.id, ChatMessage.context_type == "lesson",
+                ChatMessage.context_id == folder_name,
+                ChatMessage.section_index == state.get("current_section", 0),
+            ).first() is not None
+    return state
+
+
+@app.get("/api/lessons/summary")
+def lesson_summaries(user: User = Depends(get_current_user)):
+    """One small library/continue response, without per-course OMA scans."""
+    from database import CourseOutline, SectionRewardClaim, SectionVerification, ChatMessage
+    from sqlalchemy import func
+    with SessionLocal() as db:
+        outlines = db.query(CourseOutline).filter_by(user_id=user.id).all()
+        claims = {(r.folder_name, r.section_index) for r in db.query(SectionRewardClaim).filter_by(user_id=user.id).all()}
+        verified = {(r.folder_name, r.section_index) for r in db.query(SectionVerification).filter_by(user_id=user.id, is_active=True).all()}
+        recent = dict(db.query(ChatMessage.context_id, func.max(ChatMessage.created_at)).filter(
+            ChatMessage.user_id == user.id, ChatMessage.context_type == "lesson"
+        ).group_by(ChatMessage.context_id).all())
+        result = {}
+        for outline in outlines:
+            sections = json.loads(outline.outline_json or "[]")
+            progress = []
+            for i in range(len(sections)):
+                done = i < outline.current_section or (outline.folder_name, i) in claims or (outline.folder_name, i) in verified
+                progress.append({"mastery_pct": 100 if done else 0, "mastered": done, "attempted": done or i == outline.current_section})
+            complete = bool(sections) and all(p["mastered"] for p in progress)
+            last = recent.get(outline.folder_name)
+            result[outline.folder_name] = {"has_outline": True, "current_section": outline.current_section,
+                "total_sections": len(sections), "is_complete": complete, "ever_mastered": bool(outline.ever_mastered) or complete,
+                "section_progress": progress, "current_section_title": sections[outline.current_section].get("title", "") if outline.current_section < len(sections) else "",
+                "last_studied_at": last.isoformat() if last else None,
+                "updated_at": outline.updated_at.isoformat() if outline.updated_at else None}
+        return result
 
 
 @app.get("/api/map")
-def get_world_map(user: User = Depends(get_current_user)):
+def get_world_map(user: User = Depends(get_current_user), compact: bool = False):
     """Exploration map with fog of war."""
     import map_world
-    return map_world.get_map_state(user.id)
+    return map_world.get_map_state(user.id, compact=compact)
 
 
 class MapMoveRequest(BaseModel):
@@ -2191,7 +2564,7 @@ def apply_test_out_endpoint(
     target = body.get("target_section")
     if target is None:
         raise HTTPException(400, "target_section is required")
-    result = lesson.apply_test_out(user.id, folder_name, int(target))
+    result = lesson.apply_test_out(user.id, folder_name, int(target), body.get("conversation_id"))
     if "error" in result:
         raise HTTPException(400, result["error"])
     return result
@@ -2240,20 +2613,28 @@ def get_lesson_notes(folder_name: str, user: User = Depends(get_current_user)):
             LessonNotes.user_id == user.id,
             LessonNotes.folder_name == folder_name,
         ).first()
-        return {"content_html": row.content_html if row else ""}
+        return {"content_html": sanitize_notes(row.content_html if row else ""),
+                "revision": notes_revision(row.content_html if row else "")}
     finally:
         db.close()
 
 
 @app.put("/api/folders/{folder_name}/lesson-notes")
 def save_lesson_notes(folder_name: str, body: dict, user: User = Depends(get_current_user)):
-    html = body.get("content_html", "")
+    html = sanitize_notes(body.get("content_html", ""))
+    if "revision" not in body:
+        raise HTTPException(428, "Reload notes before saving: a revision is required")
     db = SessionLocal()
     try:
+        from sqlalchemy import text
+        db.execute(text("BEGIN IMMEDIATE"))
         row = db.query(LessonNotes).filter(
             LessonNotes.user_id == user.id,
             LessonNotes.folder_name == folder_name,
         ).first()
+        current_html = row.content_html if row else ""
+        if body.get("revision") != notes_revision(current_html) and html != current_html:
+            raise HTTPException(409, "Notes changed in another tab. Your draft was not overwritten.")
         if row:
             row.content_html = html
             row.updated_at = datetime.now(timezone.utc)
@@ -2265,18 +2646,64 @@ def save_lesson_notes(folder_name: str, body: dict, user: User = Depends(get_cur
             )
             db.add(row)
         db.commit()
-        return {"ok": True}
+        return {"ok": True, "revision": notes_revision(html)}
+    finally:
+        db.close()
+
+
+@app.get("/api/lesson-notes/all")
+def list_all_lesson_notes(user: User = Depends(get_current_user)):
+    """All saved lesson notes for the current user (notes workspace)."""
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(LessonNotes)
+            .filter(LessonNotes.user_id == user.id)
+            .order_by(LessonNotes.updated_at.desc())
+            .all()
+        )
+        return {
+            "notes": [
+                {
+                    "folder_name": r.folder_name,
+                    "content_html": sanitize_notes(r.content_html or ""),
+                    "revision": notes_revision(r.content_html or ""),
+                    "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+                }
+                for r in rows
+            ],
+        }
     finally:
         db.close()
 
 
 @app.get("/api/folders/{folder_name}/all-feedback")
 def get_all_feedback(folder_name: str, user: User = Depends(get_current_user)):
-    return {"sections": []}
+    return lesson.get_all_section_feedback(user.id, folder_name)
+
+
+class SectionFeedbackRequest(BaseModel):
+    section_index: int
+    section_title: str = ""
+
+
+@app.post("/api/folders/{folder_name}/section-feedback")
+def post_section_feedback(
+    folder_name: str,
+    body: SectionFeedbackRequest,
+    user: User = Depends(get_current_user),
+):
+    """Generate structured feedback for a completed lesson section."""
+    return lesson.generate_section_feedback(
+        user.id,
+        folder_name,
+        int(body.section_index),
+        body.section_title or "",
+    )
 
 
 @app.get("/api/folders/{folder_name}/section-chat/{section_index}")
-def get_section_chat(folder_name: str, section_index: int, user: User = Depends(get_current_user)):
+def get_section_chat(folder_name: str, section_index: int, user: User = Depends(get_current_user), resume: bool = False):
     db = SessionLocal()
     try:
         rows = (
@@ -2290,8 +2717,19 @@ def get_section_chat(folder_name: str, section_index: int, user: User = Depends(
             .order_by(ChatMessage.created_at.asc())
             .all()
         )
-        messages = [{"role": r.role, "content": r.content} for r in rows]
-        return {"messages": messages}
+        if resume:
+            from database import CourseChatEpoch
+            epoch = db.get(CourseChatEpoch, (user.id, folder_name))
+            rows = [r for r in rows if r.id > (epoch.through_message_id if epoch else 0)]
+            # A section can contain retries/review conversations. Resume the latest one.
+            if rows:
+                conversation_id = rows[-1].conversation_id
+                rows = [r for r in rows if r.conversation_id == conversation_id]
+        from coast_content_oma.student.grading import strip_ui_tags
+        # Grading tags stay in the stored transcript for evaluation; students never see them.
+        messages = [{"role": r.role, "content": strip_ui_tags(r.content).strip() if r.role == "pedro" else r.content}
+                    for r in rows]
+        return {"messages": messages, "conversation_id": rows[-1].conversation_id if rows else None}
     finally:
         db.close()
 
@@ -2317,7 +2755,7 @@ def save_notebook(notebook: dict, user: User = Depends(get_current_user)):
 
         folder = notebook.get("folder", "")
         threading.Thread(
-            target=_bg_post_process,
+            target=ai_usage.carry(_bg_post_process),
             args=(user.id, folder, nb_id, notebook),
             daemon=True,
         ).start()
@@ -2348,6 +2786,86 @@ def delete_notebook(notebook_id: int, user: User = Depends(get_current_user)):
         db.close()
 
 
+# Direct source Q&A intentionally bypasses lesson gates and Student OMA.
+class SourceQuestionRequest(BaseModel):
+    message: str
+    request_id: uuid.UUID
+    conversation_id: Optional[str] = None
+
+
+def _source_workspace(folder_name):
+    if _curated_uid(folder_name) is not None:
+        raise HTTPException(404, "Ask sources is available for your uploaded lessons.")
+
+
+@app.get("/api/folders/{folder_name}/ask-sources/status")
+def source_question_status(folder_name: str, user: User = Depends(get_current_user)):
+    _source_workspace(folder_name)
+    import source_search
+    return source_search.status(user.id, folder_name)
+
+
+@app.get("/api/folders/{folder_name}/ask-sources/conversations")
+def source_conversations(folder_name: str, user: User = Depends(get_current_user)):
+    _source_workspace(folder_name)
+    import source_chat
+    return source_chat.conversations(user.id, folder_name)
+
+
+@app.get("/api/folders/{folder_name}/ask-sources/history")
+def source_conversation_history(folder_name: str, conversation_id: str, user: User = Depends(get_current_user)):
+    _source_workspace(folder_name)
+    import source_chat
+    return source_chat.history(user.id, folder_name, conversation_id)
+
+
+@app.post("/api/folders/{folder_name}/ask-sources")
+def ask_sources(folder_name: str, req: SourceQuestionRequest, user: User = Depends(get_current_user)):
+    _source_workspace(folder_name)
+    question = req.message.strip()
+    if not question or len(question) > 6000:
+        raise HTTPException(400, "Enter a question of 1–6,000 characters.")
+    import source_chat
+    # Retries reuse the original question and do not consume another message.
+    from database import SourceChatTurn
+    with SessionLocal() as db:
+        retry = db.get(SourceChatTurn, (user.id, str(req.request_id))) is not None
+    if not retry and _get_user_usage(user.id)["chat_messages_remaining"] <= 0:
+        raise HTTPException(429, "Weekly message limit reached.")
+    claim = source_chat.begin(user.id, folder_name, question, str(req.request_id), req.conversation_id)
+    def events():
+        for event in source_chat.stream_answer(user.id, folder_name, question, claim):
+            yield f"data: {json.dumps(event)}\n\n"
+    return StreamingResponse(events(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.get("/api/folders/{folder_name}/sources/{source_id}/pages/{page_number}")
+def source_page_preview(folder_name: str, source_id: str, page_number: int, user: User = Depends(get_current_user)):
+    # Rendering a single original PDF page makes citations reliable in all browsers.
+    with SessionLocal() as db:
+        source = db.query(FolderSource).filter_by(user_id=user.id, folder_name=folder_name, source_id=source_id).first()
+        if not source or not source.file_path or not Path(source.file_path).is_file():
+            raise HTTPException(404, "Source no longer available.")
+        path, count, kind = source.file_path, source.page_count, source.source_type
+    if not 1 <= page_number <= count:
+        raise HTTPException(404, "Page not found.")
+    from fastapi.responses import Response
+    if kind == 'pdf':
+        import fitz
+        with fitz.open(path) as doc:
+            page = doc.load_page(page_number - 1)
+            scale = min(1.6, 1800 / max(page.rect.width, page.rect.height, 1))
+            png = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False).tobytes('png')
+        return Response(png, media_type='image/png', headers={'Cache-Control': 'private, max-age=300'})
+    from coast_content_oma.normalized_source import load_pages
+    pages = load_pages(path, extract_images=False) or []
+    page = next((p for p in pages if p['page_number'] == page_number), None)
+    if not page:
+        raise HTTPException(404, "Slide preview unavailable. Download the original PowerPoint.")
+    return {'text': page.get('text', ''), 'page': page_number, 'source_type': kind}
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # PEDRO CHAT (AI TUTOR)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2367,11 +2885,15 @@ def chat_send(req: ChatSendRequest, user: User = Depends(get_current_user)):
     """Send a message to Pedro and get a Socratic response."""
     if not req.message.strip():
         raise HTTPException(400, "Message cannot be empty")
-    if req.context_type not in ("notebook", "global", "session", "folder", "lesson", "test_out"):
+    if req.context_type not in ("notebook", "global", "session", "folder", "lesson", "test_out", "onboarding"):
         raise HTTPException(400, "Invalid context_type")
 
+    if req.context_type in ('lesson', 'test_out') and req.context_id:
+        from coast_content_oma.progressive import assert_chat_ready
+        assert_chat_ready(user.id,req.context_id,req.section_index,test_out=req.context_type == 'test_out')
+
     usage = _get_user_usage(user.id)
-    if usage["chat_messages_remaining"] <= 0:
+    if req.context_type != "onboarding" and usage["chat_messages_remaining"] <= 0:
         raise HTTPException(
             429,
             "You've reached your weekly message limit. "
@@ -2404,14 +2926,23 @@ def chat_stream(req: ChatSendRequest, user: User = Depends(get_current_user)):
     """Streaming version of chat/send — returns SSE with token chunks."""
     if not req.message.strip():
         raise HTTPException(400, "Message cannot be empty")
-    if req.context_type not in ("notebook", "global", "session", "folder", "lesson", "test_out"):
+    if req.context_type not in ("notebook", "global", "session", "folder", "lesson", "test_out", "onboarding"):
         raise HTTPException(400, "Invalid context_type")
 
+    if req.context_type in ('lesson', 'test_out') and req.context_id:
+        from coast_content_oma.progressive import assert_chat_ready
+        assert_chat_ready(user.id,req.context_id,req.section_index,test_out=req.context_type == 'test_out')
+
     usage = _get_user_usage(user.id)
-    if usage["chat_messages_remaining"] <= 0:
+    if req.context_type != "onboarding" and usage["chat_messages_remaining"] <= 0:
         raise HTTPException(429, "Weekly message limit reached.")
 
-    def event_stream():
+    # The turn is produced on its own thread so it always finishes and is saved,
+    # even if the student's connection drops mid-answer; the response only relays it.
+    import queue as queue_mod
+    events: "queue_mod.Queue[str | None]" = queue_mod.Queue()
+
+    def produce_turn():
         try:
             for token, meta in tutor.send_message_stream(
                 user_id=user.id,
@@ -2424,14 +2955,22 @@ def chat_stream(req: ChatSendRequest, user: User = Depends(get_current_user)):
                 concept_id=req.concept_id,
             ):
                 if token is not None:
-                    yield f"data: {json.dumps({'token': token})}\n\n"
+                    events.put(f"data: {json.dumps({'token': token})}\n\n")
                 if meta is not None:
                     meta["usage"] = _get_user_usage(user.id)
-                    yield f"data: {json.dumps({'done': True, **meta})}\n\n"
+                    events.put(f"data: {json.dumps({'done': True, **meta})}\n\n")
         except Exception as e:
             import traceback
             traceback.print_exc()
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            events.put(f"data: {json.dumps({'error': str(e)})}\n\n")
+        finally:
+            events.put(None)
+
+    threading.Thread(target=ai_usage.carry(produce_turn), name="coast-chat-turn", daemon=True).start()
+
+    def event_stream():
+        while (item := events.get()) is not None:
+            yield item
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -2449,7 +2988,7 @@ def chat_conversations(
     user: User = Depends(get_current_user),
 ):
     """List a user's Pedro conversations, optionally filtered by context_type."""
-    if context_type and context_type not in ("notebook", "global", "session", "folder", "lesson", "test_out"):
+    if context_type and context_type not in ("notebook", "global", "session", "folder", "lesson", "test_out", "onboarding"):
         raise HTTPException(400, "Invalid context_type")
     return tutor.get_conversations(user.id, context_type=context_type)
 
@@ -2602,6 +3141,8 @@ async def generate_notes(
             db = SessionLocal()
             user = db.query(User).filter(User.id == int(payload["sub"])).first()
             db.close()
+    if not user:  # runs paid AI models: never for anonymous callers
+        raise HTTPException(401, "Not authenticated")
 
     if user:
         usage = _get_user_usage(user.id)
@@ -2625,10 +3166,22 @@ async def generate_notes(
     if provider not in ("openai", "anthropic", "kimi"):
         provider = "openai"
 
+    import upload_lifecycle
     with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-        content = await file.read()
-        tmp.write(content)
         tmp_path = Path(tmp.name)
+        size = 0
+        while chunk := await file.read(1024 * 1024):
+            size += len(chunk)
+            if size > upload_lifecycle.MAX_UPLOAD_BYTES:
+                tmp.close()
+                tmp_path.unlink(missing_ok=True)
+                raise HTTPException(413, upload_lifecycle.TOO_LARGE)
+            tmp.write(chunk)
+    try:
+        _security.check_upload(tmp_path, ext)
+    except HTTPException:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
     progress_q: queue.Queue = queue.Queue()
 
@@ -2703,7 +3256,7 @@ async def generate_notes(
                         result["_folder"] = target_folder
 
                         threading.Thread(
-                            target=_bg_post_process,
+                            target=ai_usage.carry(_bg_post_process),
                             args=(user.id, target_folder, nb_id, result),
                             daemon=True,
                         ).start()
@@ -2721,7 +3274,7 @@ async def generate_notes(
 
     async def event_stream():
         loop = asyncio.get_event_loop()
-        threading.Thread(target=run_pipeline_thread, daemon=True).start()
+        threading.Thread(target=ai_usage.carry(run_pipeline_thread), daemon=True).start()
 
         while True:
             try:
@@ -2753,7 +3306,7 @@ async def generate_notes(
 @app.get("/api/admin/overview")
 def admin_overview(user: User = Depends(get_current_user)):
     """Return all users with stats, skill profiles, and tutor memos. Admin only."""
-    if user.email not in ADMIN_EMAILS:
+    if not is_admin(user):
         raise HTTPException(403, "Admin access only")
 
     from datetime import timedelta
@@ -2772,16 +3325,7 @@ def admin_overview(user: User = Depends(get_current_user)):
             total_correct = sum(s.score for s in sessions)
 
             # Streak
-            today = datetime.now(timezone.utc).date()
-            active_dates = set()
-            for s in sessions:
-                if s.completed_at:
-                    active_dates.add(s.completed_at.date())
-            streak = 0
-            check = today
-            while check in active_dates:
-                streak += 1
-                check -= timedelta(days=1)
+            streak = study_streak(study_days(db, u.id), datetime.now(timezone.utc).date())
 
             # Skill profile
             sp = db.query(SkillProfile).filter(SkillProfile.user_id == u.id).first()
@@ -2847,7 +3391,7 @@ def admin_overview(user: User = Depends(get_current_user)):
 @app.get("/api/admin/export-cohort")
 def export_cohort(user: User = Depends(get_current_user)):
     """Full data export for the current cohort — quiz answers, chat logs, skill profiles."""
-    if user.email not in ADMIN_EMAILS:
+    if not is_admin(user):
         raise HTTPException(403, "Admin access only")
 
     db = SessionLocal()
@@ -2971,7 +3515,7 @@ def log_activity(body: ActivityRequest, user: User = Depends(get_current_user)):
 @app.get("/api/admin/analytics")
 def admin_analytics(user: User = Depends(get_current_user)):
     """Platform-wide aggregate stats + growth data for the pitch deck."""
-    if user.email not in ADMIN_EMAILS:
+    if not is_admin(user):
         raise HTTPException(403, "Admin access only")
 
     from sqlalchemy import func
@@ -3182,7 +3726,7 @@ def submit_feedback(body: FeedbackRequest, user: User = Depends(get_current_user
 @app.get("/api/admin/feedback")
 def admin_feedback(user: User = Depends(get_current_user)):
     """Admin-only: return all user feedback with user info."""
-    if user.email not in ADMIN_EMAILS:
+    if not is_admin(user):
         raise HTTPException(403, "Admin access only")
 
     db = SessionLocal()
@@ -3235,7 +3779,7 @@ def heartbeat(body: HeartbeatBody = HeartbeatBody(), user: User = Depends(get_cu
 @app.get("/api/admin/live-users")
 def admin_live_users(user: User = Depends(get_current_user)):
     """Return currently active users (heartbeat within last 60s). Admin only."""
-    if user.email not in ADMIN_EMAILS:
+    if not is_admin(user):
         raise HTTPException(403, "Admin access only")
     return _collect_live_users()
 
@@ -3291,6 +3835,9 @@ def _purge_user_data(db, user_id: int) -> None:
     db.query(LessonNotes).filter(LessonNotes.user_id == user_id).delete()
     db.query(CourseOutline).filter(CourseOutline.user_id == user_id).delete()
     db.query(StudyFolder).filter(StudyFolder.user_id == user_id).delete()
+    from database import SourceSearchIndex, SourceChatTurn
+    db.query(SourceSearchIndex).filter(SourceSearchIndex.source_id.in_(db.query(FolderSource.source_id).filter_by(user_id=user_id))).delete(synchronize_session=False)
+    db.query(SourceChatTurn).filter_by(user_id=user_id).delete()
     db.query(FolderSource).filter(FolderSource.user_id == user_id).delete()
     db.query(SourceImage).filter(SourceImage.user_id == user_id).delete()
     db.query(UserMapState).filter(UserMapState.user_id == user_id).delete()
@@ -3328,10 +3875,18 @@ def _collect_live_users() -> dict:
     return {"count": len(active), "users": active}
 
 
+@app.get("/api/admin/ai-usage")
+def admin_ai_usage(days: int = 7, user: User = Depends(get_current_user)):
+    """Tokens and estimated cost of every AI call, by feature, model, day and student."""
+    if not is_admin(user):
+        raise HTTPException(403, "Admin access only")
+    return ai_usage.summary(max(1, min(days, 90)))
+
+
 @app.get("/api/admin/control-center")
 def admin_control_center(user: User = Depends(get_current_user)):
     """Aggregated mission-control payload: live users, KPIs, traffic, storage."""
-    if user.email not in ADMIN_EMAILS:
+    if not is_admin(user):
         raise HTTPException(403, "Admin access only")
 
     analytics = admin_analytics(user)
@@ -3358,12 +3913,19 @@ def admin_control_center(user: User = Depends(get_current_user)):
             .limit(8)
             .all()
         )
+        import beta_codes
+        from database import BetaCode
+        invite_codes = {
+            row.used_by_user_id: beta_codes.display(row.code)
+            for row in db.query(BetaCode).filter(BetaCode.used_by_user_id.in_([u.id for u in recent_users])).all()
+        }
         recent_signups = [
             {
                 "id": u.id,
                 "name": u.name,
                 "email": u.email,
                 "course": u.course,
+                "beta_code": invite_codes.get(u.id),
                 "created_at": u.created_at.isoformat() if u.created_at else None,
                 "is_loadtest": _is_loadtest_email(u.email),
             }
@@ -3403,7 +3965,7 @@ def admin_control_center(user: User = Depends(get_current_user)):
         "oma": {
             "enabled": oma_provider.is_oma_enabled(),
             "student_oma_enabled": oma_provider.is_student_enabled(),
-            "rag_provider": oma_provider.RAG_PROVIDER,
+            "rag_provider": oma_provider.get_rag_provider(),
             "db_path": str(oma_db),
             "db_bytes": _path_size_bytes(oma_db),
             "image_dir_bytes": _path_size_bytes(oma_provider.OMA_IMAGE_DIR),
@@ -3411,10 +3973,59 @@ def admin_control_center(user: User = Depends(get_current_user)):
     }
 
 
+class BetaCodeCreateRequest(BaseModel):
+    count: int = 1
+    note: str = ""
+
+
+@app.get("/api/admin/beta-codes")
+def admin_list_beta_codes(user: User = Depends(get_current_user)):
+    """Every invite code with its status (unused / used / revoked)."""
+    if not is_admin(user):
+        raise HTTPException(403, "Admin access only")
+    import beta_codes
+    db = SessionLocal()
+    try:
+        codes = [beta_codes.as_dict(row) for row in beta_codes.list_all(db)]
+    finally:
+        db.close()
+    counts = {s: sum(1 for c in codes if c["status"] == s) for s in ("unused", "used", "revoked")}
+    return {"required": beta_codes.required(), "counts": counts, "codes": codes}
+
+
+@app.post("/api/admin/beta-codes")
+def admin_create_beta_codes(req: BetaCodeCreateRequest, user: User = Depends(get_current_user)):
+    if not is_admin(user):
+        raise HTTPException(403, "Admin access only")
+    import beta_codes
+    count = max(1, min(50, int(req.count or 1)))
+    db = SessionLocal()
+    try:
+        rows = beta_codes.create(db, count=count, note=req.note, created_by=user.email)
+        return {"codes": [beta_codes.as_dict(row) for row in rows]}
+    finally:
+        db.close()
+
+
+@app.post("/api/admin/beta-codes/{code}/revoke")
+def admin_revoke_beta_code(code: str, user: User = Depends(get_current_user)):
+    if not is_admin(user):
+        raise HTTPException(403, "Admin access only")
+    import beta_codes
+    db = SessionLocal()
+    try:
+        row = beta_codes.revoke(db, code)
+        return {"code": beta_codes.as_dict(row)}
+    except beta_codes.BetaCodeError as exc:
+        raise HTTPException(400, str(exc))
+    finally:
+        db.close()
+
+
 @app.post("/api/admin/cleanup-loadtest-users")
 def admin_cleanup_loadtest_users(user: User = Depends(get_current_user)):
     """Delete synthetic load-test accounts (@loadtest.local) and their data."""
-    if user.email not in ADMIN_EMAILS:
+    if not is_admin(user):
         raise HTTPException(403, "Admin access only")
 
     from sqlalchemy import func
@@ -3454,34 +4065,35 @@ def admin_cleanup_loadtest_users(user: User = Depends(get_current_user)):
 
 @app.get("/api/health")
 def health():
-    db = SessionLocal()
-    try:
-        paper_count = db.query(Paper).count()
-        user_count = db.query(User).count()
-    finally:
-        db.close()
+    """Liveness for Render's health check and uptime monitors: cheap, and says
+    nothing about users or file paths (the admin Control Center has the details)."""
+    from sqlalchemy import text
+    with SessionLocal() as db:
+        db.execute(text("SELECT 1"))
+    return {"status": "ok"}
 
+
+class ContentProviderRequest(BaseModel):
+    provider: str  # "oma" | "flat"
+
+
+@app.get("/api/dev/content-provider")
+def get_content_provider():
+    """Local dev: read active RAG vs Content OMA mode."""
+    if os.getenv("RENDER"):
+        raise HTTPException(404, "Not available in production")
     import oma_provider
-    oma_db = oma_provider.OMA_DB_PATH
-    on_render = bool(os.getenv("RENDER"))
-    payload = {
-        "status": "ok",
-        "papers": paper_count,
-        "users": user_count,
-        "oma": {
-            "enabled": oma_provider.is_oma_enabled(),
-            "student_enabled": oma_provider.is_student_enabled(),
-            "rag_provider": oma_provider.RAG_PROVIDER,
-            "db_path": str(oma_db),
-            "db_bytes": _path_size_bytes(oma_db),
-            "db_exists": oma_db.exists(),
-            "on_render": on_render,
-            "render_disk": Path("/data").is_dir(),
-        },
-    }
-    if on_render and not oma_provider.is_oma_enabled():
-        payload["oma"]["fix"] = "Set RAG_PROVIDER=oma in Render Environment (or redeploy latest backend)"
-    return payload
+    return oma_provider.content_provider_status()
+
+
+@app.post("/api/dev/content-provider")
+def set_content_provider(req: ContentProviderRequest):
+    """Local dev: switch Pedro / lessons between RAG and Content OMA."""
+    if os.getenv("RENDER"):
+        raise HTTPException(404, "Not available in production")
+    import oma_provider
+    mode = "oma" if req.provider.strip().lower() in ("oma", "content_oma", "content oma") else "flat"
+    return oma_provider.set_rag_provider(mode)
 
 
 def _get_paper_paths(course: str | None = None) -> list[Path]:
@@ -3515,12 +4127,12 @@ def _get_paper_paths(course: str | None = None) -> list[Path]:
 @app.get("/api/oma/status")
 def oma_status(user: User = Depends(get_current_user)):
     """Quick sanity check — is OMA enabled, what db, etc."""
-    if user.email not in ADMIN_EMAILS:
+    if not is_admin(user):
         raise HTTPException(403, "Admin only")
     import oma_provider
     db_path = oma_provider.OMA_DB_PATH
     return {
-        "rag_provider": oma_provider.RAG_PROVIDER,
+        "rag_provider": oma_provider.get_rag_provider(),
         "oma_enabled": oma_provider.is_oma_enabled(),
         "student_oma_enabled": oma_provider.is_student_enabled(),
         "db_path": str(db_path),
@@ -3532,11 +4144,17 @@ def oma_status(user: User = Depends(get_current_user)):
 
 
 @app.get("/api/oma/images/{item_id}")
-def serve_oma_image(item_id: str):
+def serve_oma_image(item_id: str, user: User = Depends(get_image_user)):
     """Serve a Content OMA extracted image by its store item id."""
     import oma_provider
     if not oma_provider.is_oma_enabled():
         raise HTTPException(404, "OMA not enabled")
+    item = oma_provider._content_orchestrator().images.get(item_id)
+    from curated_config import CURATED_FOLDER_NAMES
+    from coast_content_oma.stores import make_namespace
+    public_namespaces = {make_namespace(_curated_uid(folder), folder) for folder in CURATED_FOLDER_NAMES}
+    if not item or (not item.namespace.startswith(f"u{user.id}__") and item.namespace not in public_namespaces):
+        raise HTTPException(404, "Image not found")
     path = oma_provider.get_oma_image_path(item_id)
     if not path:
         raise HTTPException(404, "Image not found")
@@ -3544,7 +4162,7 @@ def serve_oma_image(item_id: str):
     return FileResponse(
         path=str(path),
         media_type="image/png",
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={"Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer"},
     )
 
 
@@ -3553,7 +4171,7 @@ def oma_folder_stats(folder_name: str, user: User = Depends(get_current_user)):
     """How many concepts / chunks / images does OMA have for this folder?"""
     import oma_provider
     if not oma_provider.is_oma_enabled():
-        return {"error": "OMA not enabled", "rag_provider": oma_provider.RAG_PROVIDER}
+        return {"error": "OMA not enabled", "rag_provider": oma_provider.get_rag_provider()}
     from coast_content_oma.stores import make_namespace
     src_uid = _curated_uid(folder_name) if _curated_uid(folder_name) is not None else user.id
     ns = make_namespace(src_uid, folder_name)
@@ -3561,7 +4179,7 @@ def oma_folder_stats(folder_name: str, user: User = Depends(get_current_user)):
     result = {
         "namespace": ns,
         "owner_id": src_uid,
-        "rag_provider": oma_provider.RAG_PROVIDER,
+        "rag_provider": oma_provider.get_rag_provider(),
         "oma_pages": oma_provider.oma_content_page_count(src_uid, folder_name),
         "concepts": orch.concept.stats(ns),
         "content": orch.content.stats(ns),
@@ -3623,7 +4241,7 @@ def oma_folder_compare(folder_name: str, q: str, user: User = Depends(get_curren
         lesson_uses = "fallback_raw_text"
 
     return {
-        "rag_provider": oma_provider.RAG_PROVIDER,
+        "rag_provider": oma_provider.get_rag_provider(),
         "lesson_would_use": lesson_uses,
         "query": q,
         "content_oma": {
@@ -3657,23 +4275,15 @@ def oma_folder_reingest(folder_name: str, user: User = Depends(get_current_user)
     if not sources:
         return {"queued": [], "count": 0, "owner_id": owner_id}
 
-    queued = oma_provider.queue_folder_oma_backfill(
-        owner_id,
-        folder_name,
-        reason="ingest-all endpoint",
-    )
-    return {
-        "queued": [s["source_id"] for s in sources],
-        "count": len(sources),
-        "owner_id": owner_id,
-        "started": queued,
-    }
+    import learning_jobs
+    queued = learning_jobs.retry_sources(owner_id,folder_name)
+    return {"queued": queued, "count": len(queued), "owner_id": owner_id, "started": bool(queued)}
 
 
 @app.post("/api/admin/oma/backfill-all")
 def admin_oma_backfill_all(user: User = Depends(get_current_user)):
     """Queue Content OMA ingest for every folder that has PDFs but no OMA index."""
-    if user.email not in ADMIN_EMAILS:
+    if not is_admin(user):
         raise HTTPException(403, "Admin only")
     import oma_provider
     if not oma_provider.is_oma_enabled():
@@ -3722,6 +4332,18 @@ def oma_student_mindmap(user: User = Depends(get_current_user)):
     return result
 
 
+@app.on_event("shutdown")
+def stop_learning_worker():
+    import learning_jobs
+    learning_jobs.stop()
+    ai_usage.flush()  # queued usage rows are written before the process exits
+    try:
+        import oma_provider
+        oma_provider.flush_student_writes(timeout=20)  # don't drop queued student memory on deploy
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
     import uvicorn
 
@@ -3733,8 +4355,15 @@ if __name__ == "__main__":
     print(f"  Database:    {Path(__file__).parent / 'coast.db'}")
     try:
         import oma_provider
-        print(f"  RAG provider: {oma_provider.RAG_PROVIDER}")
+        print(f"  RAG provider: {oma_provider.get_rag_provider()}")
         print(f"  Student OMA:  {oma_provider.is_student_enabled()}")
+        import tutor as _tutor, claude_chat as _claude
+        if _tutor.CHAT_PROVIDER == "anthropic":
+            print(f"  Pedro:        Claude {_claude.PEDRO_MODEL} (key {'set' if _claude.available() else 'MISSING'}; "
+                  f"failover {_tutor.HELPER_PROVIDER})")
+        else:
+            print(f"  Pedro:        {_tutor.CHAT_PROVIDER}")
+        print(f"  Evaluator:    {'Claude ' + _claude.EVAL_MODEL if _claude.available() else 'Gemini/OpenAI'}")
         print(f"  OMA db:       {oma_provider.OMA_DB_PATH}")
     except Exception as _e:
         print(f"  OMA provider not available: {_e}")

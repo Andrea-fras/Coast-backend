@@ -28,9 +28,6 @@ from ...stores.db import connect_db
 from ..mastery_tier import compute_mastery_tier, sync_mastery_tier
 
 
-# Exponential moving average rate for mastery updates.
-EMA_ALPHA = 0.30
-
 # Confidence saturates after this many interactions.
 CONFIDENCE_CAP_N = 10
 
@@ -79,12 +76,26 @@ def effective_mastery(ss: dict, now: Optional[datetime] = None) -> float:
     return floor + (raw - floor) * decay
 
 
-def _outcome_value(outcome: str) -> float:
-    return {
-        "success": 1.0,
-        "struggle": 0.0,
-        "neutral": 0.5,
-    }.get(outcome, 0.5)
+# ── Evidence model ──────────────────────────────────────────────────
+# mastery_score is a recency-weighted success rate with a neutral prior:
+#   (PRIOR + s) / (2 * PRIOR + s + f)
+# where s / f are success / failure evidence and older evidence is discounted by
+# EVIDENCE_DECAY on every new observation. One correct answer gives 0.67, three
+# independent ones ~0.78; hinted successes count HINTED_WEIGHT of an independent one.
+PRIOR = 1.0
+EVIDENCE_DECAY = float(os.environ.get("OMA_MASTERY_EVIDENCE_DECAY", "0.85"))
+HINTED_WEIGHT = 0.5
+
+
+def score_from_evidence(s: float, f: float) -> float:
+    return (PRIOR + s) / (2 * PRIOR + s + f)
+
+
+def _evidence(ss: dict) -> tuple[float, float]:
+    if "evidence_success" in ss:
+        return float(ss.get("evidence_success") or 0.0), float(ss.get("evidence_fail") or 0.0)
+    # Rows written before the evidence model: rebuild from raw counters.
+    return float(ss.get("successes", 0) or 0), float(ss.get("struggles", 0) or 0)
 
 
 class ConceptMasteryStore(SemanticStoreBase):
@@ -105,66 +116,65 @@ class ConceptMasteryStore(SemanticStoreBase):
         namespace: str,
         concept_id: str,
         concept_name: str,
-        outcome: str,  # success | struggle | neutral
+        outcome: str,  # success | struggle | mistake | neutral
         lesson_id: Optional[str] = None,
+        hinted: bool = False,
     ) -> MemoryItem:
         """Apply a single piece of evidence to this concept's mastery row.
         Creates the row on first touch, updates in place thereafter."""
+        if outcome == "mistake":
+            outcome = "struggle"
         existing = self._find_by_concept(namespace, concept_id)
         ts = now_iso()
-        outcome_val = _outcome_value(outcome)
-
         if existing is None:
-            ss = {
-                "concept_id": concept_id,
-                "concept_name": concept_name,
-                "mastery_score": outcome_val,  # first point IS the score
-                "confidence": 1 / CONFIDENCE_CAP_N,
-                "successes": 1 if outcome == "success" else 0,
-                "struggles": 1 if outcome == "struggle" else 0,
-                "neutral_touches": 1 if outcome == "neutral" else 0,
-                "first_seen": ts,
-                "last_seen": ts,
-                "last_strengthened": ts if outcome == "success" else None,
-                "last_struggle": ts if outcome == "struggle" else None,
-                "related_lesson_ids": [lesson_id] if lesson_id else [],
-            }
-            sync_mastery_tier(ss)
-            item = MemoryItem(
+            existing = MemoryItem(
                 id=new_item_id("mast"),
                 namespace=namespace,
                 store=self.STORE_NAME,
-                content=self._summary_text(concept_name, ss),
+                content="",
                 entities=[concept_id, concept_name],
-                tags=[ss["mastery_tier"], self._mastery_tag(ss["mastery_score"])],
                 importance=0.6,
-                store_specific=ss,
+                store_specific={
+                    "concept_id": concept_id,
+                    "concept_name": concept_name,
+                    "successes": 0,
+                    "struggles": 0,
+                    "neutral_touches": 0,
+                    "hinted_successes": 0,
+                    "evidence_success": 0.0,
+                    "evidence_fail": 0.0,
+                    "first_seen": ts,
+                    "last_strengthened": None,
+                    "last_struggle": None,
+                    "related_lesson_ids": [],
+                },
             )
-            self._insert(item)
-            return item
 
         ss = dict(existing.store_specific or {})
-        old_score = float(ss.get("mastery_score", 0.5))
-        new_score = EMA_ALPHA * outcome_val + (1 - EMA_ALPHA) * old_score
-        n = ss.get("successes", 0) + ss.get("struggles", 0) + ss.get("neutral_touches", 0) + 1
-
-        ss["mastery_score"] = max(0.0, min(1.0, new_score))
-        ss["confidence"] = min(1.0, n / CONFIDENCE_CAP_N)
+        s, f = _evidence(ss)
+        if outcome in ("success", "struggle"):
+            s, f = s * EVIDENCE_DECAY, f * EVIDENCE_DECAY
+            if outcome == "success":
+                s += HINTED_WEIGHT if hinted else 1.0
+            else:
+                f += 1.0
+        ss["evidence_success"], ss["evidence_fail"] = round(s, 4), round(f, 4)
+        ss["mastery_score"] = score_from_evidence(s, f)
         ss["successes"] = ss.get("successes", 0) + (1 if outcome == "success" else 0)
+        ss["hinted_successes"] = ss.get("hinted_successes", 0) + (1 if outcome == "success" and hinted else 0)
         ss["struggles"] = ss.get("struggles", 0) + (1 if outcome == "struggle" else 0)
-        ss["neutral_touches"] = ss.get("neutral_touches", 0) + (1 if outcome == "neutral" else 0)
+        ss["neutral_touches"] = ss.get("neutral_touches", 0) + (1 if outcome not in ("success", "struggle") else 0)
+        n = ss["successes"] + ss["struggles"] + ss["neutral_touches"]
+        ss["confidence"] = min(1.0, n / CONFIDENCE_CAP_N)
         ss["last_seen"] = ts
         if outcome == "success":
             ss["last_strengthened"] = ts
+            if ss["mastery_score"] >= 0.6:
+                ss.pop("last_misconception", None)
         elif outcome == "struggle":
             ss["last_struggle"] = ts
         if lesson_id and lesson_id not in (ss.get("related_lesson_ids") or []):
             ss.setdefault("related_lesson_ids", []).append(lesson_id)
-
-        if outcome == "struggle":
-            ss["last_misconception"] = True
-        elif outcome == "success" and new_score >= 0.6:
-            ss.pop("last_misconception", None)
 
         sync_mastery_tier(ss)
         existing.store_specific = ss
@@ -173,6 +183,76 @@ class ConceptMasteryStore(SemanticStoreBase):
         existing.last_accessed = ts
         self._insert(existing)  # INSERT OR REPLACE
         return existing
+
+    def rebuild(self, namespace: str, concept_id: str, attempts: list[dict]) -> Optional[MemoryItem]:
+        """Recompute a concept's evidence from its valid attempts (EpisodeStore.valid_attempts),
+        exactly as record_evidence would have built it had the withdrawn ones never been
+        recorded. Used when Pedro's own error is withdrawn: subtracting the event afterwards
+        can't undo the decay it applied to older evidence."""
+        existing = self._find_by_concept(namespace, concept_id)
+        if existing is None:
+            return None
+        ss = dict(existing.store_specific or {})
+        s = f = 0.0
+        successes = hinted = struggles = 0
+        last_success = last_struggle = None
+        for a in attempts:
+            s, f = s * EVIDENCE_DECAY, f * EVIDENCE_DECAY
+            if a["outcome"] == "success":
+                s += HINTED_WEIGHT if a.get("hinted") else 1.0
+                successes += 1
+                hinted += bool(a.get("hinted"))
+                last_success = a.get("at")
+            else:
+                f += 1.0
+                struggles += 1
+                last_struggle = a.get("at")
+            s, f = round(s, 4), round(f, 4)  # as record_evidence stores it between updates
+        ss.update(evidence_success=s, evidence_fail=f, mastery_score=score_from_evidence(s, f),
+                  successes=successes, hinted_successes=hinted, struggles=struggles,
+                  last_strengthened=last_success, last_struggle=last_struggle)
+        n = successes + struggles + ss.get("neutral_touches", 0)
+        ss["confidence"] = min(1.0, n / CONFIDENCE_CAP_N)
+        ss.pop("last_misconception", None)
+        sync_mastery_tier(ss)
+        existing.store_specific = ss
+        existing.content = self._summary_text(ss.get("concept_name") or concept_id, ss)
+        existing.tags = [ss["mastery_tier"], self._mastery_tag(ss["mastery_score"])]
+        self._insert(existing)
+        return existing
+
+    def apply_evaluator_verdict(
+        self,
+        namespace: str,
+        concept_id: str,
+        concept_name: str,
+        final_state: str,
+        *,
+        section_index: Optional[int] = None,
+    ) -> Optional[MemoryItem]:
+        """The post-section evaluator's reading of the transcript, kept as a label on the
+        concept (the tier uses it) and never as evidence: the student's graded answers are
+        already recorded, and an interpretation of them is not another answer. A concept
+        with no recorded attempt gets its evidence from evaluator.apply_evaluation."""
+        state = (final_state or "not_touched").lower()
+        item = self.for_concept(namespace, concept_id)
+        if state not in ("mastered", "resolved", "struggling", "misconception") or item is None:
+            return item
+        ss = dict(item.store_specific or {})
+        ss["last_eval_state"] = state
+        ss["last_eval_at"] = now_iso()
+        if section_index is not None:
+            ss["last_eval_section"] = int(section_index)
+        if state == "misconception":
+            ss["last_misconception"] = True
+        elif state in ("mastered", "resolved"):
+            ss.pop("last_misconception", None)
+        sync_mastery_tier(ss)
+        item.store_specific = ss
+        item.content = self._summary_text(concept_name, ss)
+        item.tags = [ss["mastery_tier"], self._mastery_tag(ss["mastery_score"])]
+        self._insert(item)
+        return item
 
     # ── Read ──────────────────────────────────────────────────────
 
@@ -263,6 +343,93 @@ class ConceptMasteryStore(SemanticStoreBase):
             "n_borderline": sum(1 for s in effs if 0.35 < s < 0.75),
             "n_fading": n_fading,
         }
+
+    # ── Alias-ledger read path (virtual aggregation) ──────────────
+
+    def aggregate_for_concept(
+        self,
+        course_namespace: str,
+        content_namespace: str,
+        concept_id: str,
+        resolver,
+    ) -> Optional[dict]:
+        """Virtual mastery row for a canonical concept (all alias IDs combined)."""
+        from ..mastery_aggregate import aggregate_mastery_rows
+
+        canonical = resolver.resolve(content_namespace, concept_id)
+        rows: list[dict] = []
+        name: Optional[str] = None
+        for cid in resolver.ids_for_canonical(content_namespace, canonical):
+            item = self._find_by_concept(course_namespace, cid)
+            if item:
+                ss = dict(item.store_specific or {})
+                rows.append(ss)
+                if not name:
+                    name = ss.get("concept_name")
+        return aggregate_mastery_rows(rows, canonical_id=canonical, canonical_name=name)
+
+    def all_aggregated(self, course_namespace: str, content_namespace: str, resolver) -> list[dict]:
+        from ..mastery_aggregate import aggregate_mastery_rows
+
+        by_canon: dict[str, list[dict]] = {}
+        for it in self.all(course_namespace):
+            ss = it.store_specific or {}
+            cid = ss.get("concept_id")
+            if not cid:
+                continue
+            canon = resolver.resolve(content_namespace, cid)
+            by_canon.setdefault(canon, []).append(dict(ss))
+        out: list[dict] = []
+        for canon, rows in by_canon.items():
+            agg = aggregate_mastery_rows(rows, canonical_id=canon)
+            if agg:
+                out.append(agg)
+        return out
+
+    def weakest_resolved(
+        self, course_namespace: str, content_namespace: str, resolver, k: int = 5, min_n: int = 2,
+    ) -> list[dict]:
+        from ..mastery_aggregate import evidence_count
+
+        filtered = []
+        for agg in self.all_aggregated(course_namespace, content_namespace, resolver):
+            if evidence_count(agg) >= min_n:
+                filtered.append((float(agg.get("effective_score", agg.get("mastery_score", 0))), agg))
+        filtered.sort(key=lambda kv: kv[0])
+        return [a for _, a in filtered[:k]]
+
+    def strongest_resolved(
+        self, course_namespace: str, content_namespace: str, resolver, k: int = 5, min_n: int = 2,
+    ) -> list[dict]:
+        from ..mastery_aggregate import evidence_count
+
+        filtered = []
+        for agg in self.all_aggregated(course_namespace, content_namespace, resolver):
+            if evidence_count(agg) >= min_n:
+                filtered.append((float(agg.get("effective_score", agg.get("mastery_score", 0))), agg))
+        filtered.sort(key=lambda kv: kv[0], reverse=True)
+        return [a for _, a in filtered[:k]]
+
+    def due_for_review_resolved(
+        self,
+        course_namespace: str,
+        content_namespace: str,
+        resolver,
+        k: int = 5,
+        min_raw: float = 0.6,
+        now: Optional[datetime] = None,
+    ) -> list[dict]:
+        out: list[tuple[float, dict]] = []
+        for agg in self.all_aggregated(course_namespace, content_namespace, resolver):
+            raw = float(agg.get("mastery_score", 0.0) or 0.0)
+            if raw < min_raw:
+                continue
+            eff = float(agg.get("effective_score", raw))
+            if eff >= REVIEW_THRESHOLD:
+                continue
+            out.append((raw - eff, agg))
+        out.sort(key=lambda kv: kv[0], reverse=True)
+        return [a for _, a in out[:k]]
 
     # ── Merge (concept dedup support) ─────────────────────────────
 

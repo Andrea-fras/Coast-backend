@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-import random
+import secrets
 import re
 import string
 from datetime import datetime, timedelta, timezone
@@ -53,7 +53,7 @@ def validate_email_address(email: str, *, strict: bool | None = None) -> tuple[b
 
 
 def generate_code() -> str:
-    return "".join(random.choices(string.digits, k=6))
+    return "".join(secrets.choice(string.digits) for _ in range(6))
 
 
 def send_verification_email(email: str, code: str) -> tuple[bool, str]:

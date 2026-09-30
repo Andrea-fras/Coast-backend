@@ -21,6 +21,7 @@ The Coast server.py calls:
 from __future__ import annotations
 
 import logging
+import json
 import os
 import re
 import threading
@@ -52,16 +53,46 @@ def _resolve_rag_provider() -> str:
     return (os.environ.get("RAG_PROVIDER") or "flat").strip().lower()
 
 
+_runtime_rag_provider: str | None = None
+
+
+def get_rag_provider() -> str:
+    if _runtime_rag_provider is not None:
+        return _runtime_rag_provider
+    return _resolve_rag_provider()
+
+
+def set_rag_provider(mode: str) -> dict:
+    global _runtime_rag_provider
+    m = (mode or "flat").strip().lower()
+    if m not in ("flat", "oma", "shadow"):
+        m = "flat"
+    _runtime_rag_provider = m
+    logger.info("content provider → %s", m)
+    return content_provider_status()
+
+
+def content_provider_status() -> dict:
+    p = get_rag_provider()
+    student = _env_truthy(os.environ.get("STUDENT_OMA_ENABLED")) or p in ("oma", "shadow")
+    return {
+        "provider": p,
+        "oma_enabled": p in ("oma", "shadow"),
+        "student_oma_enabled": student,
+        "label": "Content OMA" if p in ("oma", "shadow") else "RAG",
+    }
+
+
 def _resolve_data_path(env_key: str, local_default: str, render_default: str) -> Path:
     raw = os.environ.get(env_key)
-    if raw:
-        return Path(raw).resolve()
-    if _ON_RENDER_DISK:
-        return Path(render_default).resolve()
-    return Path(local_default).resolve()
+    path = Path(raw) if raw else Path(render_default if _ON_RENDER_DISK else local_default)
+    # CLI scripts and the server must resolve relative paths to the same data.
+    if not path.is_absolute():
+        path = Path(__file__).resolve().parent / path
+    return path.resolve()
 
 
-RAG_PROVIDER = _resolve_rag_provider()
+RAG_PROVIDER = get_rag_provider()
 STUDENT_OMA_ENABLED = _env_truthy(os.environ.get("STUDENT_OMA_ENABLED")) or RAG_PROVIDER in ("oma", "shadow")
 
 OMA_DB_PATH = _resolve_data_path("OMA_DB_PATH", "./oma_data/oma.db", "/data/oma_data/oma.db")
@@ -81,12 +112,51 @@ def _current_capture() -> dict | None:
 # Track background OMA ingests so outline generation can wait for them.
 _ingest_lock = threading.Lock()
 _ingest_active: dict[str, int] = {}
-_ingest_slots = 1 if _ON_RENDER_DISK else 2
+_ingest_source_active: set[str] = set()
+_ingest_timings: dict[str, list[dict]] = {}
+_ingest_timing_t0: dict[str, float] = {}
+_ingest_slots = max(1, min(4, int(os.getenv("OMA_DOCUMENT_CONCURRENCY", "2"))))
 _ingest_semaphore = threading.Semaphore(_ingest_slots)  # limit parallel PDF ingests (LLM-heavy)
 
 
 def _ingest_key(user_id: int | str, folder: str) -> str:
     return f"{user_id}:{folder}"
+
+
+def record_ingest_timing(user_id: int | str, folder: str, phase: str, **meta) -> None:
+    """Append a timestamped ingest phase entry (inspect via /oma-ingest or server logs)."""
+    key = _ingest_key(user_id, folder)
+    now = time.time()
+    with _ingest_lock:
+        if key not in _ingest_timing_t0:
+            _ingest_timing_t0[key] = now
+        t0 = _ingest_timing_t0[key]
+        entry = {
+            "phase": phase,
+            "elapsed_ms": int((now - t0) * 1000),
+            **meta,
+        }
+        _ingest_timings.setdefault(key, []).append(entry)
+    logger.info("[oma-timing] folder=%s phase=%s elapsed_ms=%d %s", folder, phase, entry["elapsed_ms"], meta)
+
+
+def get_ingest_timings(user_id: int | str, folder: str) -> list[dict]:
+    key = _ingest_key(user_id, folder)
+    with _ingest_lock:
+        return list(_ingest_timings.get(key, []))
+
+
+def clear_ingest_timings(user_id: int | str, folder: str) -> None:
+    key = _ingest_key(user_id, folder)
+    with _ingest_lock:
+        _ingest_timings.pop(key, None)
+        _ingest_timing_t0.pop(key, None)
+
+
+def make_ingest_timing_callback(user_id: int | str, folder: str):
+    def on_timing(phase: str, meta: dict) -> None:
+        record_ingest_timing(user_id, folder, phase, **(meta or {}))
+    return on_timing
 
 
 def reset_content_retrieval_log() -> dict:
@@ -106,6 +176,181 @@ def _image_has_description(content: str, store_specific: dict | None) -> bool:
         return False
     desc = (content or "").strip()
     return bool(desc) and desc not in ("(no description)", "(no description yet)")
+
+
+def _priority_pages_limit() -> int:
+    return int(os.environ.get("OMA_PRIORITY_PAGES", "12"))
+
+
+def _image_needs_vision(it) -> bool:
+    ss = it.store_specific or {}
+    if ss.get("_pending_vision"):
+        return True
+    body = (it.content or "").strip()
+    return bool(ss.get("file_path")) and (not body or body == "(no description)")
+
+
+def _count_pending_vision(orch, ns, *, priority_only: bool = False) -> tuple[int, int]:
+    """Return (priority_pending, background_pending) image counts."""
+    limit = _priority_pages_limit()
+    priority = 0
+    background = 0
+    for it in orch.images.all(ns):
+        if not _image_needs_vision(it):
+            continue
+        pn = int((it.store_specific or {}).get("page_number") or 0)
+        if pn <= limit:
+            priority += 1
+        else:
+            background += 1
+    if priority_only:
+        return priority, background
+    return priority, background
+
+
+def _priority_vision_complete(orch, ns) -> bool:
+    if _env_truthy(os.environ.get("OMA_SKIP_IMAGES", "false")):
+        return True
+    limit = _priority_pages_limit()
+    for it in orch.images.all(ns):
+        ss = it.store_specific or {}
+        pn = int(ss.get("page_number") or 0)
+        if pn > limit:
+            continue
+        if _image_needs_vision(it):
+            return False
+    return True
+
+
+def pages_for_outline_section(orch, ns: str, section: dict) -> set[int]:
+    """Best-effort page numbers for an outline section from OMA content metadata."""
+    key_topics = [str(t).lower() for t in (section.get("key_topics") or [])]
+    source_nbs = [str(s).lower() for s in (section.get("source_notebooks") or [])]
+    pages: set[int] = set()
+    for it in orch.content.all(ns):
+        ss = it.store_specific or {}
+        pn = ss.get("page_number")
+        if pn is None:
+            continue
+        pn = int(pn)
+        fname = (ss.get("source_filename") or "").lower()
+        sec_title = (ss.get("section_title") or "").lower()
+        summary = (it.content or "")[:800].lower()
+        if source_nbs and any(sn in fname for sn in source_nbs):
+            pages.add(pn)
+        if key_topics and any(kt in sec_title or kt in summary for kt in key_topics):
+            pages.add(pn)
+    if not pages:
+        limit = _priority_pages_limit()
+        by_source: dict[str, list[int]] = {}
+        for it in orch.content.all(ns):
+            ss = it.store_specific or {}
+            pn = ss.get("page_number")
+            if pn is None:
+                continue
+            fname = ss.get("source_filename") or "?"
+            by_source.setdefault(fname, []).append(int(pn))
+        for pnums in by_source.values():
+            for pn in sorted(set(pnums))[:limit]:
+                pages.add(pn)
+    return pages
+
+
+def section_page_priority(outline_sections: list[dict], orch, ns: str) -> list[int]:
+    """Flat page order: section 0 pages first, then section 1, etc."""
+    seen: set[int] = set()
+    order: list[int] = []
+    for sec in outline_sections:
+        for pn in sorted(pages_for_outline_section(orch, ns, sec)):
+            if pn not in seen:
+                seen.add(pn)
+                order.append(pn)
+    return order
+
+
+def is_section_content_ready(
+    user_id: int | str,
+    folder: str,
+    section_index: int,
+    outline_sections: list[dict] | None = None,
+) -> bool:
+    """True when the student can start/advance — priority figures only.
+
+    Background-deferred figures never block; Pedro teaches from text until they
+    are described (orchestrator skips ``_pending_vision`` images).
+    """
+    if outline_sections and 0 <= section_index < len(outline_sections) and outline_sections[section_index].get('preparation_version') == 1:
+        from coast_content_oma import progressive
+        return progressive.status_for_section(user_id,folder,outline_sections[section_index])['ready']
+    if not is_oma_enabled():
+        return True
+    if _env_truthy(os.environ.get("OMA_SKIP_IMAGES", "false")):
+        return True
+    from coast_content_oma.stores import make_namespace
+
+    ns = make_namespace(user_id, folder)
+    orch = _content_orchestrator()
+    return _priority_vision_complete(orch, ns)
+
+
+_background_vision_started: set[str] = set()
+_consolidation_active: set[str] = set()
+_consolidation_pending: set[str] = set()
+
+
+def kickoff_background_vision_async(
+    user_id: int | str,
+    folder: str,
+    page_order: list[int] | None = None,
+) -> bool:
+    """Describe deferred figures in a background thread (section-ordered when possible)."""
+    if not is_oma_enabled():
+        return False
+    if _env_truthy(os.environ.get("OMA_SKIP_IMAGES", "false")):
+        return False
+    if not _env_truthy(os.environ.get("OMA_DESCRIBE_IMAGES", "true")):
+        return False
+
+    key = _ingest_key(user_id, folder)
+    with _ingest_lock:
+        if key in _background_vision_started:
+            return False
+        _background_vision_started.add(key)
+
+    def _run() -> None:
+        try:
+            from coast_content_oma.stores import make_namespace
+
+            ns = make_namespace(user_id, folder)
+            orch = _content_orchestrator()
+            priority_pending, background_pending = _count_pending_vision(orch, ns)
+            if priority_pending + background_pending == 0:
+                return
+            logger.info(
+                "background vision starting folder=%s (priority=%d background=%d)",
+                folder, priority_pending, background_pending,
+            )
+            pipeline = _content_ingest_pipeline()
+            with _ingest_lock:
+                ingesting = {"doc_" + sid for sid in _ingest_source_active}
+            result = pipeline.describe_pending_images(
+                ns,
+                progress=lambda m: logger.info(f"OMA background vision: {m}"),
+                page_order=page_order,
+                skip_doc_ids=ingesting,
+            )
+            logger.info(
+                "background vision done folder=%s described=%d",
+                folder, result.get("described", 0),
+            )
+        except Exception:
+            logger.exception("background vision failed folder=%s", folder)
+        finally:
+            with _ingest_lock:
+                _background_vision_started.discard(key)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return True
 
 
 def _record_retrieved_images(image_chunks) -> None:
@@ -224,11 +469,11 @@ def summarize_content_retrieval(assistant_reply: str | None = None, capture: dic
 
 
 def is_oma_enabled() -> bool:
-    return RAG_PROVIDER in ("oma", "shadow")
+    return get_rag_provider() in ("oma", "shadow")
 
 
 def is_student_enabled() -> bool:
-    return STUDENT_OMA_ENABLED
+    return _env_truthy(os.environ.get("STUDENT_OMA_ENABLED")) or get_rag_provider() in ("oma", "shadow")
 
 
 # ── Lazy singletons ──────────────────────────────────────────────────
@@ -276,62 +521,372 @@ def _content_ingest_pipeline():
     if _content_pipeline is None:
         from coast_content_oma.ingestion import IngestionPipeline
         orch = _content_orchestrator()
+        # Vision on critical path — batched multi-image keeps latency manageable.
         describe = _env_truthy(os.environ.get("OMA_DESCRIBE_IMAGES", "true"))
-        if _ON_RENDER_DISK:
-            # Vision + parallel page work can OOM a small Render instance.
-            describe = _env_truthy(os.environ.get("OMA_DESCRIBE_IMAGES", "false"))
-        workers = int(os.environ.get("OMA_INGEST_WORKERS", "1" if _ON_RENDER_DISK else "4"))
+        workers = int(os.environ.get("OMA_INGEST_WORKERS", "2" if _ON_RENDER_DISK else "4"))
         skip_images = _env_truthy(os.environ.get("OMA_SKIP_IMAGES", "false"))
+        classify_workers = int(os.environ.get(
+            "OMA_CLASSIFY_WORKERS", "3" if _ON_RENDER_DISK else "6",
+        ))
+        vision_workers = int(os.environ.get(
+            "OMA_VISION_WORKERS", "2" if _ON_RENDER_DISK else "3",
+        ))
         _content_pipeline = IngestionPipeline(
             orch.concept, orch.content, orch.images, OMA_IMAGE_DIR,
             max_workers=max(1, workers),
             describe_images=describe,
             skip_images=skip_images,
+            classify_workers=classify_workers,
+            vision_workers=vision_workers,
         )
         logger.info(
-            "OMA ingest pipeline: workers=%d describe_images=%s skip_images=%s",
-            workers, describe, skip_images,
+            "OMA ingest pipeline: workers=%d classify=%d vision=%d describe=%s skip_images=%s",
+            workers, classify_workers, vision_workers, describe, skip_images,
         )
     return _content_pipeline
 
 
+_folder_concept_locks: dict[str, threading.Lock] = {}
+_folder_concept_pass_active: set[str] = set()
+_background_concept_refine_started: set[str] = set()
+_tier_b_pending: set[str] = set()
+
+
+def _folder_concept_lock(key: str) -> threading.Lock:
+    with _ingest_lock:
+        lock = _folder_concept_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _folder_concept_locks[key] = lock
+        return lock
+
+
+def _names_for_pdf_source(src: dict) -> set[str]:
+    names: set[str] = set()
+    if src.get("filename"):
+        names.add(src["filename"])
+    path = src.get("path")
+    if path:
+        names.add(Path(path).name)
+    sid = src.get("source_id")
+    if sid:
+        names.add(f"{sid}.pdf")
+    return names
+
+
+def _pages_for_pdf_source(src: dict, content_items: list) -> int:
+    names = _names_for_pdf_source(src)
+    if not names:
+        return 0
+    pages: set = set()
+    for it in content_items:
+        ss = it.store_specific or {}
+        if ss.get("source_filename") in names:
+            pn = ss.get("page_number")
+            pages.add(pn if pn is not None else it.id)
+    return len(pages)
+
+
+def _source_page_gap_ok(have: int, need: int) -> bool:
+    if have >= need:
+        return True
+    if need <= 1:
+        return have >= 1
+    return have >= need - max(2, int(need * 0.05))
+
+
+def _folder_pages_and_vision_ready(
+    pdf_sources: list[dict],
+    orch,
+    ns: str,
+    *,
+    trust_content_indexed: bool = False,
+) -> bool:
+    if trust_content_indexed and orch.content.count(ns) > 0:
+        return True
+    if not _priority_vision_complete(orch, ns):
+        return False
+
+    items = orch.content.all(ns)
+    if not items:
+        return False
+    gaps = 0
+    for src in pdf_sources:
+        need = max(1, int(src.get("page_count") or 0))
+        if not _source_page_gap_ok(_pages_for_pdf_source(src, items), need):
+            gaps += 1
+    if gaps:
+        total_have = sum(_pages_for_pdf_source(s, items) for s in pdf_sources)
+        total_need = sum(max(1, int(s.get("page_count") or 0)) for s in pdf_sources)
+        if total_have < max(1, int(total_need * 0.97)):
+            return False
+    return True
+
+
+def _all_sources_content_indexed(pdf_sources: list[dict]) -> bool:
+    from coast_content_oma import ingest_status as ist
+
+    for src in pdf_sources:
+        sid = src.get("source_id") or ""
+        st = ist.get_status(sid) if sid else ist.STATUS_PENDING
+        if st not in ist.CONTENT_DONE:
+            return False
+    return True
+
+
+def _promote_content_indexed_sources_to_ready(pdf_sources: list[dict]) -> None:
+    from coast_content_oma import ingest_status as ist
+
+    for src in pdf_sources:
+        sid = src.get("source_id")
+        if not sid:
+            continue
+        if ist.get_status(sid) == ist.STATUS_CONTENT_INDEXED:
+            ist.set_status(sid, ist.STATUS_READY)
+
+
+def maybe_finalize_folder_concepts(
+    user_id: int | str,
+    folder: str,
+    pdf_sources: list[dict] | None = None,
+) -> bool:
+    """Tier A folder concept pass once every PDF is content-indexed. Unlocks roadmap."""
+    if not is_oma_enabled():
+        return False
+    from coast_content_oma import ingest_status as ist
+    from coast_content_oma.stores import make_namespace
+
+    sources = pdf_sources or load_folder_pdf_sources(user_id, folder)
+    if not sources:
+        return False
+
+    key = _ingest_key(user_id, folder)
+    with _ingest_lock:
+        if _ingest_active.get(key, 0) > 0:
+            return False
+        if key in _folder_concept_pass_active:
+            return False
+        _folder_concept_pass_active.add(key)
+
+    try:
+        for src in sources:
+            sid = src.get("source_id") or ""
+            st = ist.get_status(sid) if sid else ist.STATUS_PENDING
+            if st in (ist.STATUS_INGESTING, ist.STATUS_PENDING, ist.STATUS_FAILED):
+                return False
+
+        if not _all_sources_content_indexed(sources):
+            return False
+
+        ns = make_namespace(user_id, folder)
+        orch = _content_orchestrator()
+        if not _folder_pages_and_vision_ready(
+            sources, orch, ns, trust_content_indexed=True,
+        ):
+            return False
+
+        with _folder_concept_lock(key):
+            if orch.concept.count(ns) == 0:
+                logger.info(
+                    "folder concept Tier A starting folder=%s (%d PDFs)",
+                    folder, len(sources),
+                )
+                pipeline = _content_ingest_pipeline()
+                pipeline.run_folder_concept_pass(
+                    ns,
+                    tier="A",
+                    progress=lambda m: logger.info(f"OMA folder concepts: {m}"),
+                    on_timing=make_ingest_timing_callback(user_id, folder),
+                )
+            _promote_content_indexed_sources_to_ready(sources)
+
+        ready = orch.concept.count(ns) > 0 or orch.content.count(ns) <= 2
+        if ready:
+            kickoff_background_concept_refinement_async(user_id, folder)
+        return ready
+    finally:
+        with _ingest_lock:
+            _folder_concept_pass_active.discard(key)
+
+
+# Refinement writes many concept rows; serialize it across folders so startup
+# recovery cannot flood the provider queue and SQLite writer simultaneously.
+_concept_refine_semaphore = threading.Semaphore(1)
+
+
+def kickoff_background_concept_refinement_async(
+    user_id: int | str,
+    folder: str,
+) -> bool:
+    """Tier B: LLM definitions + prerequisite graph (upgrades provisional concepts)."""
+    if not is_oma_enabled():
+        return False
+    if _env_truthy(os.environ.get("OMA_SKIP_CONCEPT_REFINE", "false")):
+        return False
+
+    key = _ingest_key(user_id, folder)
+    with _ingest_lock:
+        if key in _background_concept_refine_started:
+            _tier_b_pending.add(key)
+            return False
+        _background_concept_refine_started.add(key)
+
+    def _run() -> None:
+        rerun = False
+        try:
+            with _concept_refine_semaphore:
+                from coast_content_oma.stores import make_namespace
+
+                ns = make_namespace(user_id, folder)
+                logger.info("folder concept Tier B starting folder=%s", folder)
+                record_ingest_timing(user_id, folder, "concepts_tier_b_start")
+                pipeline = _content_ingest_pipeline()
+                import hashlib
+                from coast_content_oma.stores.db import connect_db
+                mentions=pipeline.collect_concept_mentions(ns,content_store=pipeline.content,image_store=pipeline.images)
+                signature=hashlib.sha256(json.dumps(sorted((name,sorted(ids)) for name,ids in mentions.items())).encode()).hexdigest()
+                with connect_db(OMA_DB_PATH) as conn:
+                    conn.execute('CREATE TABLE IF NOT EXISTS concept_refinement_receipts (namespace TEXT PRIMARY KEY, fingerprint TEXT NOT NULL)')
+                    previous=conn.execute('SELECT fingerprint FROM concept_refinement_receipts WHERE namespace=?',(ns,)).fetchone()
+                if previous and previous[0]==signature:
+                    return
+                result = pipeline.run_folder_concept_pass(
+                    ns, tier="B", mentions=mentions,
+                    progress=lambda m: logger.info(f"OMA concept refine: {m}"),
+                    on_timing=make_ingest_timing_callback(user_id, folder),
+                )
+                if not mentions or result.get('concepts',0)>0:
+                    with connect_db(OMA_DB_PATH) as conn:
+                        conn.execute('INSERT OR REPLACE INTO concept_refinement_receipts VALUES (?,?)',(ns,signature))
+                record_ingest_timing(
+                    user_id, folder, "concepts_tier_b_done",
+                    concepts_new=result.get("concepts_new", 0),
+                )
+                logger.info(
+                    "folder concept Tier B done folder=%s (new=%d merged=%d)",
+                    folder,
+                    result.get("concepts_new", 0),
+                    result.get("concepts_merged", 0),
+                )
+        except Exception:
+            logger.exception("folder concept Tier B failed folder=%s", folder)
+        finally:
+            with _ingest_lock:
+                _background_concept_refine_started.discard(key)
+                rerun = key in _tier_b_pending
+                if rerun:
+                    _tier_b_pending.discard(key)
+            if rerun:
+                kickoff_background_concept_refinement_async(user_id, folder)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return True
+
+
 # ── Upload-time: ingest a single PDF into Content OMA ────────────────
 
-def ingest_pdf_into_oma(user_id: int | str, folder: str, pdf_path: str | Path) -> None:
-    """Run synchronously (callers should put this in a background thread).
-    Ingestion of one PDF: text extraction + page classification + concept
-    canonicalization for the new lecture, blended into any existing course
-    namespace."""
+def ingest_pdf_into_oma(
+    user_id: int | str,
+    folder: str,
+    pdf_path: str | Path,
+    source_id: Optional[str] = None,
+) -> None:
+    """Run synchronously (callers should put this in a background thread)."""
     if not is_oma_enabled():
         return
-    from coast_content_oma.stores import make_namespace
-    ns = make_namespace(user_id, folder)
+    from coast_content_oma import ingest_status as ist
+
     pdf_path = Path(pdf_path)
     if not pdf_path.exists():
         logger.warning(f"OMA ingest skipped — file missing: {pdf_path}")
         return
+
+    source_reserved = False
+    if source_id:
+        with _ingest_lock:
+            if source_id in _ingest_source_active:
+                logger.info("OMA ingest skipped — in-process for %s", source_id)
+                return
+            _ingest_source_active.add(source_id)
+            source_reserved = True
+        st = ist.get_status(source_id)
+        if st in ist.CONTENT_DONE:
+            logger.info("OMA ingest skipped — already %s for %s", st, source_id)
+            with _ingest_lock:
+                _ingest_source_active.discard(source_id)
+            return
+        if st != ist.STATUS_INGESTING and not ist.try_claim(source_id):
+            logger.info("OMA ingest claim failed for %s (status=%s)", source_id, st)
+            with _ingest_lock:
+                _ingest_source_active.discard(source_id)
+            return
+
+    from coast_content_oma.stores import make_namespace
+    ns = make_namespace(user_id, folder)
     key = _ingest_key(user_id, folder)
     with _ingest_lock:
         _ingest_active[key] = _ingest_active.get(key, 0) + 1
+        if key not in _ingest_timing_t0:
+            _ingest_timing_t0[key] = time.time()
+    record_ingest_timing(user_id, folder, "ingest_thread_start", pdf=pdf_path.name)
     pipeline = _content_ingest_pipeline()
     try:
         with _ingest_semaphore:
-            stats = pipeline.ingest_folder(ns, [pdf_path], progress=lambda m: logger.info(f"OMA ingest: {m}"))
+            sid_map: dict[str, str] = {}
+            if source_id:
+                sid_map[str(pdf_path)] = source_id
+                sid_map[pdf_path.name] = source_id
+            stats = pipeline.ingest_folder(
+                ns, [pdf_path],
+                progress=lambda m: logger.info(f"OMA ingest: {m}"),
+                on_timing=make_ingest_timing_callback(user_id, folder),
+                source_ids=sid_map,
+                defer_concepts=True,
+            )
+        if stats.errors or not stats.content_items:
+            raise RuntimeError("; ".join(stats.errors) or "No content was indexed")
         logger.info(f"OMA ingest complete for {pdf_path.name}: {stats.to_dict()}")
-    except Exception:
+        record_ingest_timing(user_id, folder, "ingest_thread_done", pdf=pdf_path.name)
+        if source_id:
+            from database import FolderSource, SessionLocal
+            from coast_content_oma.stores.db import connect_db
+            with SessionLocal() as db:
+                source = db.query(FolderSource).filter_by(source_id=source_id, user_id=int(user_id)).first()
+                label = source.filename if source else None
+            if label:
+                with connect_db(OMA_DB_PATH) as conn:
+                    for table in ('content_items', 'image_items'):
+                        conn.execute(f"UPDATE {table} SET store_specific=json_set(COALESCE(store_specific,'{{}}'), '$.source_filename', ?) WHERE namespace=? AND source_doc_id=?", (label, ns, 'doc_' + source_id))
+            ist.set_status(source_id, ist.STATUS_CONTENT_INDEXED)
+        kickoff_background_vision_async(user_id, folder)
+    except Exception as exc:
         logger.exception(f"OMA ingest failed for {pdf_path}")
+        if source_id:
+            ist.set_status(source_id, ist.STATUS_FAILED, error=str(exc))
     finally:
+        should_finalize = False
         with _ingest_lock:
             _ingest_active[key] = max(0, _ingest_active.get(key, 1) - 1)
+            should_finalize = _ingest_active.get(key, 0) == 0
+            if source_id and source_reserved:
+                _ingest_source_active.discard(source_id)
+        if should_finalize:
+            maybe_finalize_folder_concepts(user_id, folder)
 
 
-def ingest_pdf_async(user_id: int | str, folder: str, pdf_path: str | Path) -> None:
+def ingest_pdf_async(
+    user_id: int | str,
+    folder: str,
+    pdf_path: str | Path,
+    source_id: Optional[str] = None,
+) -> None:
     """Fire-and-forget wrapper for convenience from the upload endpoint."""
     if not is_oma_enabled():
         return
     threading.Thread(
         target=ingest_pdf_into_oma,
         args=(user_id, folder, pdf_path),
+        kwargs={"source_id": source_id},
         daemon=True,
     ).start()
 
@@ -348,10 +903,10 @@ def resolve_source_pdf_path(
     """Resolve on-disk PDF path for a FolderSource row."""
     if file_path:
         p = Path(file_path)
-        if p.is_file() and p.suffix.lower() == ".pdf":
+        if p.is_file() and p.suffix.lower() in (".pdf", ".pptx"):
             return p
     p = _folder_uploads_dir() / f"{source_id}{Path(filename).suffix.lower()}"
-    if p.is_file() and p.suffix.lower() == ".pdf":
+    if p.is_file() and p.suffix.lower() in (".pdf", ".pptx"):
         return p
     return None
 
@@ -380,10 +935,106 @@ def load_folder_pdf_sources(user_id: int | str, folder: str) -> list[dict]:
                 "filename": s.filename or path.name,
                 "page_count": int(s.page_count or 0),
                 "source_id": s.source_id,
+                "oma_ingest_status": getattr(s, "oma_ingest_status", None) or "PENDING",
             })
         return out
     finally:
         db.close()
+
+
+def get_folder_ingest_progress(user_id: int | str, folder: str) -> dict:
+    """Progress snapshot for UI — per-source status + folder readiness."""
+    from coast_content_oma import ingest_status as ist
+    from coast_content_oma.stores import make_namespace
+
+    from coast_content_oma import progressive
+    quick_status = progressive.folder_progress(user_id,folder)
+    if quick_status is not None:
+        return quick_status
+
+    pdf_sources = load_folder_pdf_sources(user_id, folder)
+    ns = make_namespace(user_id, folder)
+    orch = _content_orchestrator()
+
+    pending_priority = 0
+    pending_background = 0
+    for it in orch.images.all(ns):
+        if not _image_needs_vision(it):
+            continue
+        pn = int((it.store_specific or {}).get("page_number") or 0)
+        if pn <= _priority_pages_limit():
+            pending_priority += 1
+        else:
+            pending_background += 1
+    pending_vision = pending_priority + pending_background
+
+    sources_out = []
+    for src in pdf_sources:
+        st = (src.get("oma_ingest_status") or ist.STATUS_PENDING).upper()
+        sources_out.append({
+            "source_id": src.get("source_id"),
+            "filename": src.get("filename"),
+            "page_count": src.get("page_count"),
+            "status": st,
+            "ready": st in ist.TERMINAL_OK,
+        })
+
+    total_pages = sum(max(1, int(s.get("page_count") or 0)) for s in pdf_sources)
+
+    if is_oma_enabled() and pdf_sources:
+        maybe_finalize_folder_concepts(user_id, folder, pdf_sources=pdf_sources)
+
+    ready = False
+    if is_oma_enabled() and pdf_sources:
+        ready = ensure_oma_ready_for_outline(
+            user_id, folder,
+            pdf_sources=pdf_sources,
+            wait_sec=0,
+            allow_sync_ingest=False,
+        )
+
+    key = _ingest_key(user_id, folder)
+    with _ingest_lock:
+        active_threads = _ingest_active.get(key, 0)
+        timings = list(_ingest_timings.get(key, []))
+
+    pages_indexed = orch.content.count(ns)
+    images_indexed = orch.images.count(ns)
+    concepts_count = orch.concept.count(ns)
+    ingesting_n = sum(
+        1 for s in sources_out if s["status"] == ist.STATUS_INGESTING
+    )
+
+    if ready:
+        phase = "ready"
+    elif pending_priority > 0:
+        phase = "vision"
+    elif pages_indexed < max(1, int(total_pages * 0.88)) and (active_threads or ingesting_n):
+        phase = "classifying"
+    elif concepts_count == 0 and pages_indexed >= max(1, int(total_pages * 0.85)):
+        phase = "concepts"
+    elif active_threads or ingesting_n:
+        phase = "classifying" if pages_indexed < max(1, int(total_pages * 0.88)) else "concepts"
+    else:
+        phase = "classifying"
+
+    return {
+        "folder": folder,
+        "oma_enabled": is_oma_enabled(),
+        "phase": phase,
+        "ready_for_roadmap": ready,
+        "ingest_threads_active": active_threads,
+        "pages_indexed": pages_indexed,
+        "pages_expected": total_pages,
+        "concepts": concepts_count,
+        "images_indexed": images_indexed,
+        "pending_vision": pending_vision,
+        "pending_priority_vision": pending_priority,
+        "background_vision_pending": pending_background,
+        "priority_pages": _priority_pages_limit(),
+        "timings": timings,
+        "sources": sources_out,
+    }
 
 
 _backfill_started: set[str] = set()
@@ -494,6 +1145,9 @@ def ensure_oma_ready_for_outline(
 
     if allow_sync_ingest is None:
         allow_sync_ingest = not _ON_RENDER_DISK
+    # Poll-only callers (progress UI) must never block on sync ingest.
+    if wait_sec <= 0:
+        allow_sync_ingest = False
     if _ON_RENDER_DISK:
         wait_sec = min(wait_sec, float(os.environ.get("OMA_OUTLINE_WAIT_SEC", "180")))
 
@@ -509,11 +1163,16 @@ def ensure_oma_ready_for_outline(
     target = max(1, target)
 
     content_cache: list | None = None
+    queued_sids: set[str] = set()
+
+    def _refresh_content_items() -> list:
+        nonlocal content_cache
+        content_cache = orch.content.all(ns)
+        return content_cache
 
     def _content_items():
-        nonlocal content_cache
         if content_cache is None:
-            content_cache = orch.content.all(ns)
+            return _refresh_content_items()
         return content_cache
 
     def _source_gap_ok(have: int, need: int) -> bool:
@@ -544,37 +1203,88 @@ def ensure_oma_ready_for_outline(
         return names
 
     def _pages_for_source(src: dict) -> int:
+        """Distinct indexed pages for a source (ignores duplicate ingest rows)."""
         names = _names_for_source(src)
         if not names:
             return 0
-        n = 0
+        pages: set = set()
         for it in _content_items():
             ss = it.store_specific or {}
             if ss.get("source_filename") in names:
-                n += 1
-        return n
+                pn = ss.get("page_number")
+                pages.add(pn if pn is not None else it.id)
+        return len(pages)
+
+    def _vision_complete() -> bool:
+        return _priority_vision_complete(orch, ns)
+
+    def _concepts_ready() -> bool:
+        n_content = _count()
+        if n_content == 0:
+            return False
+        if orch.concept.count(ns) > 0:
+            return True
+        return n_content <= 2
+
+    def _pages_all_ok() -> bool:
+        if not pdf_sources:
+            return _count() >= target
+        from coast_content_oma import ingest_status as ist
+
+        if _active() == 0:
+            statuses = [
+                ist.get_status(s["source_id"]) if s.get("source_id") else ist.STATUS_PENDING
+                for s in pdf_sources
+            ]
+            if all(st in ist.CONTENT_DONE for st in statuses) and _count() > 0:
+                return True
+
+        gaps = 0
+        for src in pdf_sources:
+            need = max(1, int(src.get("page_count") or 0))
+            if not _source_gap_ok(_pages_for_source(src), need):
+                gaps += 1
+        if gaps == 0:
+            return True
+        total_have = sum(_pages_for_source(s) for s in pdf_sources)
+        total_need = sum(max(1, int(s.get("page_count") or 0)) for s in pdf_sources)
+        return total_have >= max(1, int(total_need * 0.97))
 
     def _kickoff_background_ingests() -> int:
         """Queue async ingest for PDFs still missing — never blocks the web worker."""
+        from coast_content_oma import ingest_status as ist
+
         if not pdf_sources:
             return 0
-        kicked: set[str] = set()
+        with _ingest_lock:
+            if _ingest_active.get(key, 0) > 0:
+                return 0
         queued = 0
         for src in pdf_sources:
             path = src.get("path")
             need = max(1, int(src.get("page_count") or 0))
-            sid = src.get("source_id") or path or ""
-            if sid in kicked:
+            sid = src.get("source_id") or ""
+            if sid in queued_sids:
                 continue
             if not path:
+                continue
+            with _ingest_lock:
+                if sid and sid in _ingest_source_active:
+                    continue
+            st = ist.get_status(sid) if sid else ist.STATUS_PENDING
+            if st in ist.TERMINAL_OK and _source_gap_ok(_pages_for_source(src), need):
+                continue
+            if st == ist.STATUS_INGESTING:
+                continue
+            if st == ist.STATUS_CONTENT_INDEXED:
                 continue
             p = Path(path)
             if not p.is_file():
                 continue
-            if _source_gap_ok(_pages_for_source(src), need):
+            if _source_gap_ok(_pages_for_source(src), need) and _vision_complete() and _concepts_ready():
                 continue
-            kicked.add(sid)
-            ingest_pdf_async(user_id, folder, p)
+            queued_sids.add(sid or path)
+            ingest_pdf_async(user_id, folder, p, source_id=sid or None)
             queued += 1
         if queued:
             logger.info(
@@ -583,35 +1293,59 @@ def ensure_oma_ready_for_outline(
             )
         return queued
 
-    def _is_ready() -> bool:
-        if _active() > 0:
+    def _is_ready(*, refresh: bool = False) -> bool:
+        from coast_content_oma import ingest_status as ist
+
+        if refresh:
+            _refresh_content_items()
+
+        if pdf_sources and _active() == 0:
+            maybe_finalize_folder_concepts(user_id, folder, pdf_sources=pdf_sources)
+            if refresh:
+                _refresh_content_items()
+
+        if pdf_sources:
+            statuses = [
+                ist.get_status(s["source_id"]) if s.get("source_id") else ist.STATUS_PENDING
+                for s in pdf_sources
+            ]
+            if all(st in ist.TERMINAL_OK for st in statuses):
+                if _vision_complete() and _concepts_ready():
+                    return True
+
+        if not _pages_all_ok():
             return False
-        if not pdf_sources:
-            return _count() >= target
-        total_have = 0
-        total_need = 0
-        gaps = 0
-        for src in pdf_sources:
-            need = max(1, int(src.get("page_count") or 0))
-            have = _pages_for_source(src)
-            total_have += have
-            total_need += need
-            if not _source_gap_ok(have, need):
-                gaps += 1
-        if gaps == 0:
+        if not _vision_complete():
+            return False
+        if not _concepts_ready():
+            return False
+
+        if pdf_sources:
+            statuses = [
+                (s.get("oma_ingest_status") or ist.STATUS_PENDING).upper()
+                for s in pdf_sources
+            ]
+            if all(st in ist.TERMINAL_OK for st in statuses):
+                return True
+            if _active() > 0:
+                return False
             return True
-        return total_have >= max(1, int(total_need * 0.97))
+
+        return _active() == 0
 
     if wait_sec == 600 and target > 80 and allow_sync_ingest:
         wait_sec = min(2400, 120 + target * 3)
 
-    if _is_ready():
+    if _is_ready(refresh=True):
+        logger.info("outline: Content OMA already ready folder=%s (%d pages)", folder, _count())
+        kickoff_background_vision_async(user_id, folder)
         return True
 
     _kickoff_background_ingests()
 
     # Log why we're waiting when total page count already looks complete.
     if pdf_sources and _count() >= target and _active() == 0:
+        _refresh_content_items()
         for src in pdf_sources:
             need = max(1, int(src.get("page_count") or 0))
             have = _pages_for_source(src)
@@ -627,8 +1361,9 @@ def ensure_oma_ready_for_outline(
     )
     deadline = time.time() + wait_sec
     while time.time() < deadline:
-        if _is_ready():
+        if _is_ready(refresh=_active() == 0):
             logger.info("outline: Content OMA ready folder=%s (%d pages)", folder, _count())
+            kickoff_background_vision_async(user_id, folder)
             return True
         if _active() == 0:
             _kickoff_background_ingests()
@@ -639,10 +1374,12 @@ def ensure_oma_ready_for_outline(
             "outline: Content OMA not ready after %.0fs (background ingest continues) folder=%s",
             wait_sec, folder,
         )
-        return _is_ready()
+        return _is_ready(refresh=True)
 
     # Local dev only — sync ingest (too heavy for Render web workers).
+    _refresh_content_items()
     to_ingest: list[Path] = []
+    sid_map: dict[str, str] = {}
     for src in pdf_sources or []:
         path = src.get("path")
         need = max(1, int(src.get("page_count") or 0))
@@ -651,29 +1388,53 @@ def ensure_oma_ready_for_outline(
         p = Path(path)
         if not p.is_file():
             continue
-        if _pages_for_source(src) < need and not _source_gap_ok(_pages_for_source(src), need):
+        have = _pages_for_source(src)
+        if not _source_gap_ok(have, need):
             to_ingest.append(p)
+            sid = src.get("source_id")
+            if sid:
+                sid_map[str(p)] = sid
+                sid_map[p.name] = sid
 
     if to_ingest:
+        with _ingest_lock:
+            if _ingest_active.get(key, 0) > 0:
+                logger.info(
+                    "outline: skip sync ingest — background ingest active folder=%s",
+                    folder,
+                )
+                return _is_ready(refresh=True)
         logger.info(
             "outline: sync ingesting %d PDF(s) for folder=%s (have %d/%d pages)",
             len(to_ingest), folder, _count(), target,
         )
         try:
-            pipeline = _content_ingest_pipeline()
-            pipeline.ingest_folder(
-                ns, to_ingest,
-                progress=lambda m: logger.info(f"OMA sync ingest: {m}"),
-            )
+            from coast_content_oma import ingest_status as ist
+
+            for src in pdf_sources or []:
+                path = src.get("path")
+                if not path:
+                    continue
+                p = Path(path)
+                if p not in to_ingest and str(p) not in {str(x) for x in to_ingest}:
+                    continue
+                sid = src.get("source_id")
+                st = ist.get_status(sid) if sid else ist.STATUS_PENDING
+                if sid and st in ist.TERMINAL_OK:
+                    continue
+                ingest_pdf_into_oma(user_id, folder, p, source_id=sid)
         except Exception:
             logger.exception("OMA sync ingest failed during outline for folder=%s", folder)
+        _refresh_content_items()
 
-    ready = _is_ready()
+    ready = _is_ready(refresh=True)
     logger.info(
         "outline: Content OMA %s folder=%s (%d/%d pages)",
         "ready" if ready else "not ready",
         folder, _count(), target,
     )
+    if ready:
+        kickoff_background_vision_async(user_id, folder)
     return ready
 
 
@@ -689,19 +1450,37 @@ def kickoff_folder_oma_ingest(user_id: int | str, folder: str) -> int:
     ns = make_namespace(user_id, folder)
     orch = _content_orchestrator()
     items = orch.content.all(ns)
+    from coast_content_oma import ingest_status as ist
+
     kicked: set[str] = set()
     queued = 0
+    folder_key = _ingest_key(user_id, folder)
+    with _ingest_lock:
+        if _ingest_active.get(folder_key, 0) > 0:
+            return 0
     for src in pdf_sources:
         path = src.get("path")
-        sid = src.get("source_id") or path or ""
-        if sid in kicked or not path:
+        sid = src.get("source_id") or ""
+        kick_key = sid or path or ""
+        if kick_key in kicked or not path:
+            continue
+        with _ingest_lock:
+            if sid and sid in _ingest_source_active:
+                continue
+        st = ist.get_status(sid) if sid else ist.STATUS_PENDING
+        if st in ist.TERMINAL_OK:
+            continue
+        if st == ist.STATUS_CONTENT_INDEXED:
+            maybe_finalize_folder_concepts(user_id, folder, pdf_sources=pdf_sources)
+            continue
+        if st == ist.STATUS_INGESTING:
             continue
         p = Path(path)
         if not p.is_file():
             continue
         names = {src.get("filename") or p.name, p.name}
-        if src.get("source_id"):
-            names.add(f"{src['source_id']}.pdf")
+        if sid:
+            names.add(f"{sid}.pdf")
         have = sum(
             1 for it in items
             if (it.store_specific or {}).get("source_filename") in names
@@ -709,8 +1488,8 @@ def kickoff_folder_oma_ingest(user_id: int | str, folder: str) -> int:
         need = max(1, int(src.get("page_count") or 0))
         if have >= need or (need > 1 and have >= need - max(2, int(need * 0.05))):
             continue
-        kicked.add(sid)
-        ingest_pdf_async(user_id, folder, p)
+        kicked.add(kick_key)
+        ingest_pdf_async(user_id, folder, p, source_id=sid or None)
         queued += 1
     if queued:
         logger.info("kickoff: queued OMA ingest for %d PDF(s) folder=%s", queued, folder)
@@ -830,7 +1609,7 @@ def resolve_folder_content(
     oma_pages = oma_content_page_count(user_id, folder) if is_oma_enabled() else 0
     _set_oma_meta(
         oma_enabled=is_oma_enabled(),
-        rag_provider=RAG_PROVIDER,
+        rag_provider=get_rag_provider(),
         student_oma_enabled=is_student_enabled(),
         oma_pages=oma_pages,
     )
@@ -1119,24 +1898,14 @@ def build_student_analysis(user_id: int | str, folder: str) -> dict:
 
     nodes: list[dict] = []
     touched: dict[str, dict] = {}
+    struggling_ids = {t["concept_id"] for t in profile["struggling_topics"]}
     for it in student_orch.mastery.all(course_ns):
         ss = it.store_specific or {}
         cid = ss.get("concept_id")
         if not cid:
             continue
         score = float(ss.get("mastery_score", 0.5))
-        successes = int(ss.get("successes", 0) or 0)
-        from coast_content_oma.student.mastery_tier import is_topic_struggling
-        mistake_n = 0
-        for ep in student_orch.episodes.all(course_ns):
-            ess = ep.store_specific or {}
-            if ess.get("episode_type") != "exercise_attempt":
-                continue
-            if ess.get("outcome") not in ("mistake", "struggle"):
-                continue
-            if cid in (ess.get("concept_ids") or []):
-                mistake_n += 1
-        if is_topic_struggling(successes, mistake_n):
+        if cid in struggling_ids:
             status = "struggling"
         elif score >= 0.75:
             status = "mastered"
@@ -1328,6 +2097,7 @@ def build_student_global_mindmap(user_id: int | str) -> dict:
 def get_global_student_profile_block(
     user_id: int | str,
     max_chars: int = 1600,
+    query: str = "",
 ) -> str:
     """Cross-course profile for global Pedro chat — aggregates every
     folder/course the student has history in."""
@@ -1336,7 +2106,9 @@ def get_global_student_profile_block(
     try:
         orch = _student_orchestrator()
         profile = orch.build_global_profile(user_id)
-        if not profile.get("courses"):
+        from coast_content_oma.student.recall import recall_memories
+        profile["cross_course_memories"] = recall_memories(orch.episodes.db_path, user_id, query)
+        if not profile.get("courses") and not profile["cross_course_memories"]:
             return ""
         return orch.to_global_prompt_block(profile, max_chars=max_chars)
     except Exception:
@@ -1344,11 +2116,29 @@ def get_global_student_profile_block(
         return ""
 
 
+def _prior_learning(user_id, folder, concept_refs) -> list[dict]:
+    try:
+        from coast_content_oma.student.bridges import related_prior_learning
+        return related_prior_learning(_student_orchestrator(), user_id, folder, concept_refs)
+    except Exception:
+        logger.exception("prior-learning links failed")
+        return []
+
+
+def _refs_for_ids(user_id, folder, concept_ids) -> list[dict]:
+    if not concept_ids:
+        return []
+    items = _content_orchestrator().concept.get_many(list(concept_ids))
+    return [{"concept_id": it.id, "concept_name": (it.store_specific or {}).get("name") or it.content[:60]}
+            for it in items]
+
+
 def get_student_profile_block(
     user_id: int | str,
     folder: str,
     current_concept_ids: Optional[list[str]] = None,
     max_chars: int = 1200,
+    query: str = "",
 ) -> str:
     """Returns the personalized profile block for Pedro. Empty string
     if the student has no recorded history yet or the system is disabled."""
@@ -1357,17 +2147,227 @@ def get_student_profile_block(
     try:
         orch = _student_orchestrator()
         profile = orch.build_profile(user_id, folder, current_concept_ids=current_concept_ids)
+        profile['current_query'] = query
+        from coast_content_oma.student.recall import recall_memories
+        from coast_content_oma.student.stores import course_namespace
+        concept_names = " ".join(m.get("name", "") for m in profile.get("focused_mastery") or [])
+        profile["cross_course_memories"] = recall_memories(orch.episodes.db_path, user_id,
+            f"{query} {concept_names}", exclude_namespace=course_namespace(user_id, folder))
         profile["progress_ledger"] = _load_progress_ledger(user_id, folder)
         profile["section_mistakes"] = _load_section_mistakes(user_id, folder)
         profile["struggling_topics"] = _load_struggling_topics(user_id, folder)
+        profile["prior_learning"] = _prior_learning(user_id, folder, _refs_for_ids(user_id, folder, current_concept_ids))
         has_mastery = bool((profile.get("mastery_overview") or {}).get("n_concepts"))
         has_progress = bool(profile.get("progress_ledger", {}).get("completed_sections"))
         has_mistakes = bool(profile.get("section_mistakes"))
-        if not has_mastery and not has_progress and not has_mistakes:
+        has_identity = bool(profile.get("identity_traits"))
+        has_golden = bool(profile.get("golden_moments"))
+        if not (has_mastery or has_progress or has_mistakes or has_identity or has_golden
+                or profile["cross_course_memories"] or profile["prior_learning"]):
             return ""
         return orch.to_prompt_block(profile, max_chars=max_chars)
     except Exception:
         logger.exception("Student profile build failed")
+        return ""
+
+
+def get_course_intro_student_block(
+    user_id: int | str,
+    folder: str,
+    sections: list,
+    max_chars: int = 1100,
+) -> str:
+    """Cross-course Student OMA + onboarding traits for a lesson's first-section intro."""
+    if not is_student_enabled():
+        return ""
+    try:
+        lines: list[str] = []
+        seen: set[str] = set()
+
+        try:
+            import onboarding as onboarding_mod
+            for t in onboarding_mod.get_saved_onboarding_traits(user_id):
+                desc = (t.get("description") or "").strip()
+                if desc and desc not in seen:
+                    seen.add(desc)
+                    lines.append(f"How they learn (from onboarding): {desc}")
+        except Exception:
+            pass
+
+        from coast_content_oma.student.stores import identity_namespace
+
+        ns = identity_namespace(user_id)
+        orch = _student_orchestrator()
+        for it in orch.identity.all_traits(ns, min_confidence=0.0)[:6]:
+            desc = (it.content or "").strip()
+            if not desc or desc in seen:
+                continue
+            seen.add(desc)
+            ttype = (it.store_specific or {}).get("trait_type") or "trait"
+            label = str(ttype).replace("_", " ").title()
+            quote = (it.store_specific or {}).get("evidence_quote")
+            lines.append(f"{label}: {desc}" + (f' (their words: "{quote[:160]}")' if quote else ""))
+
+        for link in _prior_learning(user_id, folder, _section_refs(user_id, folder, 0)):
+            lines.append(f"Builds on {link['course']} ({link['when']}): they worked on {link['concept']} "
+                         f"({link['state']}) — relates to {link['relates_to']} here.")
+
+        course_topics: list[str] = []
+        for sec in sections or []:
+            title = sec.get("title")
+            if title:
+                course_topics.append(str(title))
+            for t in sec.get("key_topics") or []:
+                if t:
+                    course_topics.append(str(t))
+        if course_topics:
+            unique = list(dict.fromkeys(course_topics))[:12]
+            lines.append(f"Course vocabulary (connect traits if relevant): {', '.join(unique)}")
+
+        if not lines:
+            return ""
+
+        block = [
+            "--- STUDENT OMA (course intro — personalize if relevant) ---",
+            *lines,
+            "Teach in their stated learning style from this very first message (do it, don't just announce it). "
+            "If a 'Builds on' link is listed, connect ONE specific idea from that earlier course to this one. "
+            "Do not invent traits or links that are not listed.",
+            "--- END STUDENT OMA ---",
+        ]
+        out = "\n".join(block)
+        if len(out) > max_chars:
+            out = out[:max_chars] + "\n[... truncated ...]"
+        return out
+    except Exception:
+        logger.exception("Course intro student block failed")
+        return ""
+
+
+def get_section_intro_student_block(
+    user_id: int | str,
+    folder: str,
+    section_index: int,
+    key_topics: list | None = None,
+    max_chars: int = 900,
+) -> str:
+    """Student OMA facts for this section — Pedro weaves into the intro when relevant."""
+    if not is_student_enabled():
+        return ""
+    try:
+        import lesson as lesson_mod
+        from coast_content_oma.student.mastery_tier import compute_mastery_tier
+        from coast_content_oma.student.stores import course_namespace
+
+        refs = lesson_mod.get_section_concept_refs(int(user_id), folder, int(section_index))
+        concept_ids = {r["concept_id"] for r in refs if r.get("concept_id")}
+        name_by_id = {
+            r["concept_id"]: r.get("concept_name") or r["concept_id"]
+            for r in refs if r.get("concept_id")
+        }
+        topic_tokens = {str(t).lower() for t in (key_topics or []) if t}
+
+        course_ns = course_namespace(user_id, folder)
+        orch = _student_orchestrator()
+        lines: list[str] = []
+
+        strong: list[str] = []
+        partial: list[str] = []
+        weak: list[str] = []
+        for cid in concept_ids:
+            name = name_by_id.get(cid, cid)
+            it = orch.mastery.for_concept(course_ns, cid)
+            if not it:
+                continue
+            tier = compute_mastery_tier(it.store_specific or {})
+            if tier == "green":
+                strong.append(name)
+            elif tier == "yellow":
+                partial.append(name)
+            else:
+                weak.append(name)
+
+        if strong:
+            lines.append(f"Already confident here: {', '.join(strong[:4])}")
+        if partial:
+            lines.append(f"Partially grasped (reinforce): {', '.join(partial[:4])}")
+        if weak:
+            lines.append(f"Previously struggled with: {', '.join(weak[:4])}")
+
+        mistakes = [
+            m for m in _load_section_mistakes(user_id, folder)
+            if m.get("section_index") == section_index
+        ]
+        if mistakes:
+            snippets = []
+            for m in mistakes[:3]:
+                msg = (m.get("user_message") or "").strip()
+                if msg:
+                    snippets.append(f'"{msg[:70]}"')
+            if snippets:
+                lines.append(f"Prior wrong answers in this section: {'; '.join(snippets)}")
+
+        struggling = [
+            t for t in _load_struggling_topics(user_id, folder)
+            if t.get("concept_id") in concept_ids
+        ]
+        if struggling:
+            names = ", ".join(t.get("name") or "" for t in struggling[:3] if t.get("name"))
+            if names:
+                lines.append(f"Persistently struggling with: {names}")
+
+        due: list[str] = []
+        for it in orch.mastery.due_for_review(course_ns, k=8):
+            ss = it.store_specific or {}
+            cid = ss.get("concept_id")
+            if cid in concept_ids:
+                due.append(ss.get("concept_name") or name_by_id.get(cid, cid))
+        if due:
+            lines.append(f"Due for review: {', '.join(due[:3])}")
+
+        ac = orch.active.snapshot(course_ns)
+        related: list[str] = []
+        for q in (ac.get("open_questions") or [])[:3]:
+            text = (q.get("text") or "").strip()
+            if not text:
+                continue
+            lower = text.lower()
+            if any(t in lower for t in topic_tokens) or any(
+                n.lower() in lower for n in name_by_id.values() if n
+            ):
+                related.append(text[:120])
+        lr = ac.get("last_unresolved") or {}
+        lr_text = (lr.get("text") or "").strip()
+        if lr_text:
+            lower = lr_text.lower()
+            if any(t in lower for t in topic_tokens) or any(
+                n.lower() in lower for n in name_by_id.values() if n
+            ):
+                related.append(lr_text[:120])
+        if related:
+            lines.append("Open from last session: " + " | ".join(related[:2]))
+
+        for link in _prior_learning(user_id, folder, refs):
+            lines.append(f"Builds on {link['course']} ({link['when']}): {link['concept']} ({link['state']}) "
+                         f"→ {link['relates_to']}")
+
+        if not lines:
+            return ""
+
+        block = [
+            "--- STUDENT OMA (this section — mention in intro if relevant) ---",
+            *lines,
+            "If anything above applies, weave ONE brief personalized line into your opening "
+            "(e.g. build on partial mastery, watch for a prior mistake). Do not invent struggles "
+            "or list raw scores. If nothing applies, skip personalization.",
+            "--- END STUDENT OMA ---",
+        ]
+        out = "\n".join(block)
+        if len(out) > max_chars:
+            out = out[:max_chars] + "\n[... truncated ...]"
+        return out
+    except Exception:
+        logger.exception("Section intro student block failed")
         return ""
 
 
@@ -1386,17 +2386,22 @@ def _load_section_mistakes(user_id: int | str, folder: str) -> list[dict]:
         ns = course_namespace(user_id, folder)
         orch = _student_orchestrator()
         out: list[dict] = []
-        for ep in orch.episodes.all(ns):
+        for ep in orch.episodes.by_types(ns, ("exercise_attempt",)):
             ss = ep.store_specific or {}
-            if ss.get("episode_type") != "exercise_attempt":
+            cids = set(ss.get("concept_ids") or [])
+            if ss.get("outcome") == "success":
+                # A later correct answer on the same concept resolves the mistake.
+                out = [m for m in out if not (cids and cids & set(m["concept_ids"]))]
                 continue
             if ss.get("outcome") not in ("mistake", "struggle"):
                 continue
-            idx = ss.get("section_index")
+            if (ss.get("signals") or {}).get("resolved_by_evaluation"):
+                continue
             out.append({
-                "section_index": idx,
+                "section_index": ss.get("section_index"),
                 "user_message": (ss.get("user_message") or "")[:200],
                 "concept_ids": ss.get("concept_ids") or [],
+                "when": (ep.created_at or "")[:10],
             })
         out.sort(key=lambda m: (m.get("section_index") if m.get("section_index") is not None else -1, m.get("user_message") or ""))
         return out
@@ -1405,56 +2410,15 @@ def _load_section_mistakes(user_id: int | str, folder: str) -> list[dict]:
 
 
 def _load_struggling_topics(user_id: int | str, folder: str) -> list[dict]:
-    """Topics where wrong/(wrong+right) > 50% or wrong >= 2."""
+    """Concepts the student is struggling with NOW (recent graded answers)."""
     try:
-        from coast_content_oma.student.mastery_tier import is_topic_struggling
         from coast_content_oma.student.stores import course_namespace
-        ns = course_namespace(user_id, folder)
+        from coast_content_oma.student.struggles import struggling_concepts
         orch = _student_orchestrator()
-
-        mistakes_by_concept: dict[str, int] = {}
-        for ep in orch.episodes.all(ns):
-            ss = ep.store_specific or {}
-            if ss.get("episode_type") != "exercise_attempt":
-                continue
-            if ss.get("outcome") not in ("mistake", "struggle"):
-                continue
-            for cid in ss.get("concept_ids") or []:
-                if cid:
-                    mistakes_by_concept[cid] = mistakes_by_concept.get(cid, 0) + 1
-
-        out: list[dict] = []
-        seen: set[str] = set()
-        for it in orch.mastery.all(ns):
-            ss = it.store_specific or {}
-            cid = ss.get("concept_id")
-            if not cid or cid in seen:
-                continue
-            seen.add(cid)
-            mistakes = mistakes_by_concept.get(cid, 0)
-            successes = int(ss.get("successes", 0) or 0)
-            if not is_topic_struggling(successes, mistakes):
-                continue
-            out.append({
-                "concept_id": cid,
-                "name": ss.get("concept_name") or cid,
-                "mistakes": mistakes,
-                "successes": successes,
-            })
-        for cid, mistakes in mistakes_by_concept.items():
-            if cid in seen:
-                continue
-            if not is_topic_struggling(0, mistakes):
-                continue
-            out.append({
-                "concept_id": cid,
-                "name": _lookup_concept_name(user_id, folder, cid),
-                "mistakes": mistakes,
-                "successes": 0,
-            })
-        out.sort(key=lambda t: (-t["mistakes"], t.get("name") or ""))
-        return out
+        return struggling_concepts(orch.episodes, orch.mastery, course_namespace(user_id, folder),
+                                   name_for=lambda cid: _lookup_concept_name(user_id, folder, cid))
     except Exception:
+        logger.exception("struggling topics failed")
         return []
 
 
@@ -1462,275 +2426,363 @@ def _load_struggling_topics(user_id: int | str, folder: str) -> list[dict]:
 
 TAG_SECTION_COMPLETE = "[SECTION_COMPLETE]"
 TAG_TEST_OUT_PASSED = "[TEST_OUT_PASSED]"
-TAG_ANSWER_WRONG = "[ANSWER_WRONG]"
-TAG_ANSWER_CORRECT = "[ANSWER_CORRECT]"
-_PEDRO_TAGS = (TAG_SECTION_COMPLETE, TAG_TEST_OUT_PASSED, TAG_ANSWER_WRONG, TAG_ANSWER_CORRECT)
+
+# Capture tags — Pedro emits these to grow long-term memory mid-conversation.
+# Format: [REMEMBER: <trait_type>: <short description>]  and  [CLICKED: <what clicked>]
+# They are parsed (written to identity / pattern stores) then stripped from
+# the visible reply. trait_type is constrained by the prompt to:
+#   learning_style, session_pattern, motivation_pattern,
+#   general_strength, general_weakness.
+_REMEMBER_TAG_RE = re.compile(
+    r"\[REMEMBER:\s*([A-Za-z_]+)\s*:\s*([^\]\n]+?)\s*\]",
+    re.IGNORECASE,
+)
+_CLICKED_TAG_RE = re.compile(
+    r"\[CLICKED:\s*([^\]\n]+?)\s*\]",
+    re.IGNORECASE,
+)
+# Combined pattern for stripping without parsing (used by strip_pedro_tags).
+_CAPTURE_TAG_RE = re.compile(
+    r"\[(?:REMEMBER:[^\]\n]*|CLICKED:[^\]\n]*)\]",
+    re.IGNORECASE,
+)
 
 
 def strip_pedro_tags(text: str) -> str:
+    from coast_content_oma.student.grading import strip_ui_tags
+    return _CAPTURE_TAG_RE.sub("", strip_ui_tags(text)).strip()
+
+
+def extract_capture_tags(text: str) -> tuple[list[dict], list[str], str]:
+    """Pull [REMEMBER ...] and [CLICKED ...] tags out of a Pedro reply.
+
+    Returns (remembers, clickeds, cleaned_text) where:
+      remembers  — list of {"trait_type": str, "description": str}
+      clickeds   — list of description strings (what made it click)
+      cleaned    — the reply with the applied capture tags removed (whitespace tidied)
+
+    Only tags in Pedro's own voice count: one shown inside code or a quote is left in
+    the text and never becomes memory. trait_type must be one Coast knows.
+    """
+    from coast_content_oma.student.grading import own_voice
+    from coast_content_oma.student.stores.academic_identity import CANONICAL_TRAIT_TYPES
     out = text or ""
-    for tag in _PEDRO_TAGS:
-        out = out.replace(tag, "")
-    return out.strip()
+    voice = own_voice(out)
+    remembers: list[dict] = []
+    spans: list[tuple[int, int]] = []
+    for m in _REMEMBER_TAG_RE.finditer(voice):
+        trait_type = (m.group(1) or "").strip().lower()
+        desc = out[m.start(2):m.end(2)].strip().strip("\"'")
+        spans.append(m.span())
+        if trait_type in CANONICAL_TRAIT_TYPES and desc:
+            remembers.append({"trait_type": trait_type, "description": desc})
+    clickeds: list[str] = []
+    for m in _CLICKED_TAG_RE.finditer(voice):
+        desc = out[m.start(1):m.end(1)].strip().strip("\"'")
+        spans.append(m.span())
+        if desc:
+            clickeds.append(desc)
+    cleaned = out
+    for start, end in sorted(spans, reverse=True):
+        cleaned = cleaned[:start] + cleaned[end:]
+    # Collapse the blank lines / stray spaces left behind by removed tags.
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return remembers, clickeds, cleaned
 
 
-def _answer_outcome_from_tags(assistant_response: str) -> str | None:
-    """Return struggle/success when Pedro emitted a grading tag, else None."""
-    ar = assistant_response or ""
-    if TAG_ANSWER_WRONG in ar:
-        return "struggle"
-    if TAG_ANSWER_CORRECT in ar:
-        return "success"
-    return None
-
-def _merge_concept_refs(*groups: list[dict]) -> list[dict]:
-    out: list[dict] = []
-    seen: set[str] = set()
-    for group in groups:
-        for c in group or []:
-            cid = c.get("concept_id")
-            if not cid or cid in seen:
-                continue
-            seen.add(cid)
-            out.append({
-                "concept_id": cid,
-                "concept_name": c.get("concept_name") or cid,
-            })
-    return out
-
-
-def _enrich_concept_refs_for_section(
+def apply_capture_tags(
     user_id: int | str,
-    folder: str,
-    section_index: int,
-    concept_refs: list[dict],
-    user_msg: str,
-    assistant_msg: str,
-) -> list[dict]:
-    """Attach section concepts when text inference missed them."""
+    folder: Optional[str],
+    remembers: list[dict],
+    clickeds: list[str],
+    focus_concept_id: Optional[str] = None,
+    section_index: Optional[int] = None,
+    user_message: Optional[str] = None,
+) -> None:
+    """Write parsed capture tags into Student OMA stores.
+
+    [REMEMBER ...] → AcademicIdentityStore (cross-course traits).
+    [CLICKED ...]  → PatternStore as a golden_moment for the current course.
+    Safe no-op when Student OMA is disabled or folder is missing for clickeds.
+    """
+    if not is_student_enabled():
+        return
+    if not remembers and not clickeds:
+        return
+    try:
+        from coast_content_oma.student.stores import (
+            course_namespace,
+            identity_namespace,
+        )
+        orch = _student_orchestrator()
+        id_ns = identity_namespace(user_id)
+
+        for rem in remembers:
+            trait_type = rem["trait_type"]
+            desc = rem["description"]
+            dedupe = f"pedro_tag:{trait_type}:{desc[:60].lower()}"
+            try:
+                orch.identity.upsert_trait(
+                    id_ns,
+                    trait_type,
+                    desc,
+                    confidence=0.7,
+                    evidence_courses=[folder] if folder else [],
+                    derivation="pedro_remember_tag",
+                    dedupe_key=dedupe,
+                    evidence_quote=(user_message or "").strip() or None,
+                )
+            except Exception:
+                logger.exception(
+                    "apply_capture_tags: identity upsert failed trait=%s", trait_type
+                )
+
+        if clickeds and folder:
+            course_ns = course_namespace(user_id, folder)
+            section_refs = _section_refs(user_id, folder, section_index)
+            for desc in clickeds:
+                # Link the analogy to the concept(s) it explains so it returns with them.
+                if focus_concept_id:
+                    related = [focus_concept_id]
+                else:
+                    low = desc.lower()
+                    related = [c["concept_id"] for c in section_refs
+                               if (c.get("concept_name") or "").lower() in low]
+                    related = related or [c["concept_id"] for c in section_refs]
+                dedupe = f"pedro_clicked:{desc[:60].lower()}"
+                try:
+                    orch.patterns.upsert(
+                        course_ns,
+                        "golden_moment",
+                        desc,
+                        confidence=0.85,
+                        evidence_count=1,
+                        related_concept_ids=related,
+                        derivation="pedro_clicked_tag",
+                        dedupe_key=dedupe,
+                    )
+                except Exception:
+                    logger.exception(
+                        "apply_capture_tags: pattern upsert failed desc=%s", desc[:80]
+                    )
+    except Exception:
+        logger.exception("apply_capture_tags failed user=%s folder=%s", user_id, folder)
+
+
+def general_namespace(user_id: int | str) -> str:
+    """Student OMA namespace for conversations not tied to any course."""
+    return f"u{user_id}__general"
+
+
+_CONSOLIDATE_EVERY_N_TURNS = int(os.environ.get("OMA_CONSOLIDATE_EVERY_N_TURNS", "8"))
+_turns_since_consolidation: dict[str, int] = {}
+
+
+def _section_refs(user_id, folder, section_index) -> list[dict]:
+    if section_index is None:
+        return []
     try:
         import lesson as lesson_mod
-
-        section_refs = lesson_mod.get_section_concept_refs(user_id, folder, section_index)
-        if not section_refs:
-            return concept_refs
-
-        text = f"{user_msg} {assistant_msg}".lower()
-        matched: list[dict] = []
-        for c in section_refs:
-            name = (c.get("concept_name") or "").lower()
-            if name and (name in text or (len(name) >= 5 and name in text)):
-                matched.append(c)
-
-        if matched:
-            merged = _merge_concept_refs(concept_refs, matched)
-        else:
-            merged = concept_refs
-
-        struggled = bool(
-            _TUTOR_CORRECTION.search(assistant_msg or "")
-            or _STRUGGLE_HINTS.search(user_msg or "")
-        )
-        if struggled and section_refs:
-            return _merge_concept_refs(merged, section_refs[:4])
-        return merged
+        return lesson_mod.get_section_concept_refs(int(user_id), folder, int(section_index))
     except Exception:
-        return concept_refs
+        return []
 
 
-def _record_graded_mistake(
-    user_id: int | str,
-    folder: str,
-    user_message: str,
-    assistant_response: str,
-    *,
-    section_index: Optional[int] = None,
-    focus_concept_id: Optional[str] = None,
-    duration_sec: Optional[int] = None,
-) -> None:
-    """Log a one-off wrong answer. Does not update mastery — Pedro re-teaches."""
-    rec = _student_recorder_singleton()
-    clean_response = strip_pedro_tags(assistant_response)
-    concept_refs = _concept_refs_for_graded_turn(
-        user_id, folder, section_index, focus_concept_id,
-    )
-    rec.record_episode(
-        user_id,
-        folder,
-        "exercise_attempt",
-        summary=user_message[:200],
-        outcome="mistake",
-        concept_refs=concept_refs,
-        user_message=user_message[:1500],
-        assistant_response=clean_response[:1500],
-        duration_sec=duration_sec,
-        signals={"tutor_corrected": True},
-        section_index=section_index,
-        source="chat",
-    )
-
-
-def _record_practice_success(
-    user_id: int | str,
-    folder: str,
-    *,
-    section_index: Optional[int] = None,
-    focus_concept_id: Optional[str] = None,
-    user_message: str = "",
-) -> None:
-    """Correct practice answer — updates mastery only, no episode (keeps log lean)."""
-    from coast_content_oma.student.stores import course_namespace
-    rec = _student_recorder_singleton()
-    ns = course_namespace(user_id, folder)
-    concept_refs = _concept_refs_for_graded_turn(
-        user_id, folder, section_index, focus_concept_id,
-    )
-    for c in concept_refs:
-        rec.mastery.record_evidence(
-            ns,
-            concept_id=c["concept_id"],
-            concept_name=c["concept_name"],
-            outcome="success",
-        )
-
-
-def _concept_refs_for_graded_turn(
-    user_id: int | str,
-    folder: str,
-    section_index: Optional[int],
-    focus_concept_id: Optional[str],
-) -> list[dict]:
-    concept_refs: list[dict] = []
-    if section_index is not None:
+def _resolve_graded_concept(user_id, folder, grade, section_refs, focus_concept_id) -> list[dict]:
+    """Which concept did this graded answer test? One concept, or none — never the whole section."""
+    from coast_content_oma.student.grading import match_concept
+    if grade.concept:
+        hit = match_concept(grade.concept, section_refs)
+        if hit:
+            return [hit]
         try:
-            import lesson as lesson_mod
-            concept_refs = lesson_mod.get_section_concept_refs(
-                user_id, folder, section_index,
-            )[:4]
+            from coast_content_oma.course_identity import content_namespace_for_student
+            item = _content_orchestrator().concept.find_by_name(content_namespace_for_student(user_id, folder), grade.concept)
+            if item:
+                return [{"concept_id": item.id, "concept_name": (item.store_specific or {}).get("name") or grade.concept}]
         except Exception:
             pass
+        return []
     if focus_concept_id:
-        name = _lookup_concept_name(user_id, folder, focus_concept_id)
-        concept_refs = _merge_concept_refs(
-            concept_refs,
-            [{"concept_id": focus_concept_id, "concept_name": name}],
-        )
-    return concept_refs
+        return [{"concept_id": focus_concept_id, "concept_name": _lookup_concept_name(user_id, folder, focus_concept_id)}]
+    return section_refs[:1] if len(section_refs) == 1 else []
 
 
-def _record_graded_attempt(
+# One ordered writer per process: memory writes never delay Pedro's reply, and
+# turns are applied in the order they happened. A write lost to a crash can be
+# rebuilt from chat_messages (scripts/backfill_student_turns.py is idempotent).
+from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
+
+_student_writer = _ThreadPoolExecutor(max_workers=1, thread_name_prefix="student-oma-writer")
+
+
+def flush_student_writes(timeout: float = 30.0) -> None:
+    """Block until every queued Student OMA write has been applied."""
+    _student_writer.submit(lambda: None).result(timeout=timeout)
+
+
+def record_conversation_turn(*args, **kwargs) -> None:
+    """Queue one Pedro turn for recording (see _record_conversation_turn)."""
+    if not is_student_enabled():
+        return
+    _student_writer.submit(_record_conversation_turn, *args, **kwargs)
+
+
+def _record_conversation_turn(
     user_id: int | str,
-    folder: str,
-    user_message: str,
-    assistant_response: str,
-    outcome: str,
-    *,
-    section_index: Optional[int] = None,
-    focus_concept_id: Optional[str] = None,
-    duration_sec: Optional[int] = None,
-    signals: Optional[dict] = None,
-) -> None:
-    rec = _student_recorder_singleton()
-    clean_response = strip_pedro_tags(assistant_response)
-
-    concept_refs: list[dict] = []
-    if section_index is not None:
-        try:
-            import lesson as lesson_mod
-            concept_refs = lesson_mod.get_section_concept_refs(
-                user_id, folder, section_index,
-            )[:4]
-        except Exception:
-            pass
-    if focus_concept_id:
-        name = _lookup_concept_name(user_id, folder, focus_concept_id)
-        concept_refs = _merge_concept_refs(
-            concept_refs,
-            [{"concept_id": focus_concept_id, "concept_name": name}],
-        )
-
-    sig = dict(signals or {})
-    if outcome == "struggle":
-        sig.setdefault("tutor_corrected", True)
-    elif outcome == "success":
-        sig.setdefault("tutor_affirmed", True)
-
-    rec.record_episode(
-        user_id,
-        folder,
-        "exercise_attempt",
-        summary=user_message[:200],
-        outcome=outcome,
-        concept_refs=concept_refs,
-        user_message=user_message[:1500],
-        assistant_response=clean_response[:1500],
-        duration_sec=duration_sec,
-        signals=sig,
-        section_index=section_index,
-        source="chat",
-    )
-
-
-def record_chat_episode(
-    user_id: int | str,
+    context_type: str,
     folder: Optional[str],
     user_message: str,
     assistant_response: str,
-    concept_ids_touched: Optional[list[str]] = None,
-    duration_sec: Optional[int] = None,
+    *,
+    user_message_id: Optional[int] = None,
+    pedro_message_id: Optional[int] = None,
     section_index: Optional[int] = None,
     focus_concept_id: Optional[str] = None,
 ) -> None:
-    """Record graded practice: wrong → mistake log; correct → mastery only."""
-    if not is_student_enabled():
-        return
-    if not folder:
+    """Record one Pedro turn in Student OMA — every surface (lesson, workshop,
+    folder, general chat).
+
+    Graded answers ([ANSWER_CORRECT: concept] / [ANSWER_WRONG: concept]) become
+    exercise_attempt episodes that update mastery for exactly that concept.
+    Everything else becomes a qa episode carrying behaviour signals. Episodes
+    reference the chat_messages rows (the canonical transcript) instead of
+    copying Pedro's reply.
+    """
+    if not is_student_enabled() or context_type == "onboarding":
         return
     if _is_lesson_intro(user_message):
-        return
-
-    tagged = _answer_outcome_from_tags(assistant_response)
+        return  # automatic section opener — not the student's own words
     try:
-        if tagged == "struggle":
-            _record_graded_mistake(
-                user_id, folder, user_message, assistant_response,
-                section_index=section_index,
-                focus_concept_id=focus_concept_id,
-                duration_sec=duration_sec,
-            )
-        elif tagged == "success":
-            _record_practice_success(
-                user_id, folder,
-                section_index=section_index,
-                focus_concept_id=focus_concept_id,
-                user_message=user_message,
-            )
-    except Exception:
-        logger.exception("Recording chat episode failed")
+        from coast_content_oma.student.grading import parse_grades, parse_tutor_corrections
+        orch = _student_orchestrator()
+        message_ids = [int(i) for i in (user_message_id, pedro_message_id) if i]
+        _, signals = _classify_outcome_and_signals(user_message, assistant_response)
+        signals.pop("tutor_affirmed", None)
+        signals.pop("tutor_corrected", None)
+        source = context_type or "chat"
+        student_text = (user_message or "").strip()
 
+        if not folder:
+            ns = general_namespace(user_id)
+            if pedro_message_id and orch.episodes.has_message(ns, pedro_message_id):
+                return
+            orch.episodes.record(ns, "qa", summary=student_text[:500], signals=signals, source=source,
+                                 chat_message_ids=message_ids)
+            return
 
-def record_section_completed_authoritative(
-    user_id: int | str,
-    folder: str,
-    section_index: int,
-    section_title: str,
-) -> None:
-    """Log section completion from CourseOutline advance — ground truth."""
-    if not is_student_enabled():
-        return
-    try:
+        from coast_content_oma.student.stores import course_namespace
+        ns = course_namespace(user_id, folder)
+        if pedro_message_id and orch.episodes.has_message(ns, pedro_message_id):
+            return
         rec = _student_recorder_singleton()
+        section_refs = _section_refs(user_id, folder, section_index)
+        grades = parse_grades(assistant_response)
+        corrections = parse_tutor_corrections(assistant_response)
+        if corrections:
+            # Pedro corrected an error of his own: the student's answer on that concept that
+            # followed it was not their mistake, and this reply should not mark them wrong either.
+            grades = [g for g in grades if g.correct]
+        from coast_content_oma.student.grading import Grade
+        # Concepts are resolved first (Content OMA reads), so the transaction below stays short.
+        corrected = [(label, [r["concept_id"] for r in _resolve_graded_concept(
+                        user_id, folder, Grade(False, label), section_refs, None)] if label else None)
+                     for label in corrections] if section_index is not None else []
+        graded = [(grade, _resolve_graded_concept(user_id, folder, grade, section_refs, focus_concept_id))
+                  for grade in grades]
+        touched = []
+        if not grades:
+            text = f"{student_text} {assistant_response or ''}".lower()
+            touched = [c for c in section_refs if (c.get("concept_name") or "").lower() in text]
+            if focus_concept_id and not touched:
+                touched = [{"concept_id": focus_concept_id,
+                            "concept_name": _lookup_concept_name(user_id, folder, focus_concept_id)}]
 
-        rec.record_section_completed(
-            user_id, folder,
-            section_title=section_title,
-            section_index=section_index,
-        )
+        from coast_content_oma.stores.db import atomic
+        # One transaction per turn: a failure part-way through leaves nothing behind, so the
+        # message-level duplicate check above never skips a half-recorded turn on retry.
+        with atomic(orch.episodes.db_path):
+            for label, ids in corrected:
+                for cid in orch.episodes.mark_tutor_error(ns, int(section_index), label, ids) or []:
+                    # Recompute from the remaining evidence, as if the withdrawn answer never happened.
+                    orch.mastery.rebuild(ns, cid, orch.episodes.valid_attempts(ns, cid))
+            for grade, refs in graded:
+                rec.record_episode(
+                    user_id, folder, "exercise_attempt",
+                    summary=student_text[:500],
+                    outcome="success" if grade.correct else "mistake",
+                    concept_refs=refs,
+                    user_message=student_text[:300],
+                    # "with help", "on their own" and "remembered later" stay distinct evidence.
+                    signals={**signals, "delayed_recall": True} if grade.recall else signals,
+                    section_index=section_index,
+                    source=source,
+                    chat_message_ids=message_ids,
+                    hinted=grade.hinted,
+                    concept_label=grade.concept,
+                )
+            if not grades:
+                rec.record_episode(
+                    user_id, folder, "qa",
+                    summary=student_text[:500],
+                    outcome="neutral",
+                    concept_refs=touched,
+                    signals=signals,
+                    section_index=section_index,
+                    source=source,
+                    chat_message_ids=message_ids,
+                )
 
-        # Mastery comes only from [ANSWER_CORRECT] during verification — not bulk on advance.
-        _run_course_consolidation(user_id, folder)
+        key = _ingest_key(user_id, folder)
+        with _ingest_lock:
+            n = _turns_since_consolidation.get(key, 0) + 1
+            _turns_since_consolidation[key] = 0 if n >= _CONSOLIDATE_EVERY_N_TURNS else n
+        if n >= _CONSOLIDATE_EVERY_N_TURNS:
+            kickoff_course_consolidation_async(user_id, folder)
     except Exception:
-        logger.exception("Recording authoritative section completion failed")
+        logger.exception("Recording conversation turn failed user=%s folder=%s", user_id, folder)
+
+
+def record_section_completed_authoritative(user_id, folder, section_index, section_title):
+    from learning_jobs import enqueue_committed
+    return enqueue_committed(int(user_id), folder, int(section_index), section_title)
+
+
+def kickoff_post_section_pipeline_async(user_id, folder, section_index, section_title):
+    from learning_jobs import enqueue_committed
+    enqueue_committed(int(user_id), folder, int(section_index), section_title)
+    return True
+
+
+def kickoff_course_consolidation_async(user_id: int | str, folder: str) -> bool:
+    """Derive Student OMA patterns off the request thread so section advance stays fast."""
+    if not is_student_enabled():
+        return False
+    key = _ingest_key(user_id, folder)
+    with _ingest_lock:
+        if key in _consolidation_active:
+            _consolidation_pending.add(key)
+            return False
+        _consolidation_active.add(key)
+
+    def _run() -> None:
+        try:
+            while True:
+                _run_course_consolidation(user_id, folder)
+                with _ingest_lock:
+                    if key not in _consolidation_pending:
+                        break
+                    _consolidation_pending.discard(key)
+        except Exception:
+            logger.exception("Background course consolidation failed folder=%s", folder)
+        finally:
+            with _ingest_lock:
+                _consolidation_active.discard(key)
+                _consolidation_pending.discard(key)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return True
 
 
 def _run_course_consolidation(user_id: int | str, folder: str) -> None:
@@ -1789,13 +2841,24 @@ def dedupe_folder_concepts(
     dry_run: bool = False,
 ) -> dict:
     """Merge near-duplicate concept nodes in a folder's Content OMA
-    namespace, then remap Student OMA mastery rows, episode concept_ids,
-    and content/image entity references so evidence doesn't fragment.
+    namespace.
 
-    Duplicate signal: exact name/alias collision OR embedding cosine
-    >= threshold. Canonical node per group = oldest (first created)."""
+    When the alias ledger is enabled (default), merges append ledger entries
+    and skip destructive Student OMA remaps. When disabled, live merge is
+    refused unless dry_run=True."""
+    from coast_content_oma.concept_identity import alias_ledger_enabled
     from coast_content_oma.stores import make_namespace
+    from coast_content_oma.stores.concept_alias import ConceptAliasStore
     from coast_content_oma.student.stores import course_namespace
+
+    use_ledger = alias_ledger_enabled()
+    if not dry_run and not use_ledger:
+        return {
+            "error": "Live concept merge frozen. Set OMA_ALIAS_LEDGER_ENABLED=true or use dry_run=True.",
+            "concepts": 0,
+            "merged": 0,
+            "groups": [],
+        }
 
     ns = make_namespace(user_id, folder)
     orch = _content_orchestrator()
@@ -1874,15 +2937,22 @@ def dedupe_folder_concepts(
 
     course_ns = course_namespace(user_id, folder)
     student_orch = _student_orchestrator() if is_student_enabled() else None
+    alias_store = ConceptAliasStore(orch.concept.db_path)
     id_map: dict[str, str] = {}
     n_merged = 0
     for root, srcs in groups.items():
         for src in srcs:
-            if orch.concept.merge_into(ns, src, root):
+            if orch.concept.merge_into(
+                ns, src, root,
+                alias_store=alias_store,
+                use_ledger=use_ledger,
+                merge_confidence=threshold,
+                merge_reason="dedupe_folder_concepts",
+            ):
                 id_map[src] = root
                 n_merged += 1
 
-    if id_map:
+    if id_map and not use_ledger:
         _remap_entity_ids(orch, ns, id_map)
         if student_orch is not None:
             from coast_content_oma.student.concept_remap import remap_student_concept_ids

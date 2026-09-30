@@ -32,14 +32,13 @@ def _paths() -> tuple[Path, Path]:
 
 def cmd_ingest(args: list[str]) -> int:
     if len(args) < 3:
-        print("Usage: ingest [--with-vision] [--skip-images] <user_id> <folder_name> <pdf> [<pdf> ...]")
-        print("  By default, images are saved without vision descriptions (fast).")
-        print("  --skip-images: don't extract images at all (fastest, text only).")
-        print("  --with-vision: run vision LLM inline during ingestion (slowest).")
+        print("Usage: ingest [--no-vision] [--skip-images] <user_id> <folder_name> <pdf> [<pdf> ...]")
+        print("  Vision runs by default (batched multi-image). Use --no-vision to defer.")
+        print("  --skip-images: don't extract images at all (text only).")
         return 2
-    with_vision = "--with-vision" in args
+    with_vision = "--no-vision" not in args
     skip_images = "--skip-images" in args
-    args = [a for a in args if a not in ("--with-vision", "--skip-images")]
+    args = [a for a in args if a not in ("--no-vision", "--skip-images", "--with-vision")]
     if len(args) < 3:
         print("error: need <user_id> <folder> <pdf>")
         return 2

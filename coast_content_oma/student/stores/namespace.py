@@ -18,7 +18,8 @@ def _slug(name: str) -> str:
 def course_namespace(user_id: int | str, folder_name: str) -> str:
     """Per-(student, course) namespace for ActiveContext, ConceptMastery,
     Episode and Pattern stores."""
-    return f"u{user_id}__student__{_slug(folder_name)}"
+    from ...course_identity import namespace_key
+    return f"u{user_id}__student__{namespace_key(user_id, folder_name)}"
 
 
 def identity_namespace(user_id: int | str) -> str:
@@ -32,7 +33,8 @@ def parse_course_namespace(ns: str) -> tuple[str | None, str | None]:
     m = re.match(r"^u([^_]+)__student__(.+)$", ns)
     if not m:
         return None, None
-    return m.group(1), m.group(2)
+    from ...course_identity import display_name
+    return m.group(1), display_name(m.group(1), m.group(2))
 
 
 def list_course_namespaces(db_path, user_id: int | str) -> list[str]:
@@ -58,4 +60,6 @@ def list_course_namespaces(db_path, user_id: int | str) -> list[str]:
                     found.add(ns)
             except sqlite3.OperationalError:
                 pass
+    # Onboarding used to be filed under a pseudo-course; it is not a course.
+    found -= {prefix + "coast_profile", course_namespace(user_id, "__coast_profile__")}
     return sorted(found)

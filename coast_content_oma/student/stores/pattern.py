@@ -43,6 +43,8 @@ CANONICAL_PATTERN_TYPES = (
     # Conceptual strengths
     "strong_in_topic",        # area of strength
     "weak_in_topic",          # area of weakness
+    # Pedagogy — what worked for this student
+    "golden_moment",          # analogy/breakthrough Pedro should reuse
 )
 
 
@@ -59,23 +61,30 @@ class PatternStore(SemanticStoreBase):
         related_concept_ids: Optional[list[str]] = None,
         derivation: str = "",
         dedupe_key: Optional[str] = None,
+        concept_name: Optional[str] = None,
+        observed_at: Optional[str] = None,
     ) -> MemoryItem:
         """Insert a new pattern, or update an existing one identified by
         (pattern_type, dedupe_key) — typically dedupe_key is the concept
-        the pattern is about, or a normalized version of the description."""
+        the pattern is about, or a normalized version of the description.
+        observed_at is when its evidence was last seen, when that is older than now:
+        recomputing a pattern from old evidence doesn't make it fresh."""
         existing = self._find_existing(namespace, pattern_type, dedupe_key)
         ts = now_iso()
+        seen = observed_at or ts
 
         ss = {
             "pattern_type": pattern_type,
             "confidence": float(max(0.0, min(1.0, confidence))),
             "evidence_count": int(evidence_count),
-            "first_observed": existing.store_specific["first_observed"] if existing else ts,
-            "last_confirmed": ts,
+            "first_observed": existing.store_specific["first_observed"] if existing else seen,
+            "last_confirmed": seen,
             "related_concept_ids": list(related_concept_ids or []),
             "derivation": derivation,
             "dedupe_key": dedupe_key,
         }
+        if concept_name:
+            ss["concept_name"] = concept_name
         if existing:
             existing.store_specific = ss
             existing.content = description
@@ -113,6 +122,17 @@ class PatternStore(SemanticStoreBase):
             if dedupe_key is None and ss.get("dedupe_key") is None:
                 return it
         return None
+
+    def retire_unconfirmed(self, namespace: str, pattern_type: PatternType, keep_keys: set) -> int:
+        """Delete derived patterns of this type that the latest consolidation
+        no longer supports (e.g. a weakness the student has since overcome)."""
+        n = 0
+        for it in self.all(namespace):
+            ss = it.store_specific or {}
+            if ss.get("pattern_type") == pattern_type and ss.get("dedupe_key") not in keep_keys:
+                self.delete(it.id)
+                n += 1
+        return n
 
     def by_type(self, namespace: str, pattern_type: PatternType) -> list[MemoryItem]:
         return [it for it in self.all(namespace) if pattern_type in it.tags]

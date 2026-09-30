@@ -10,7 +10,7 @@ the teacher view can show "why was this pattern flagged?"
 from __future__ import annotations
 
 import logging
-from collections import Counter, defaultdict
+from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -25,6 +25,17 @@ from .stores import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _topic_key(name: str) -> str:
+    """Normalize a concept name so the same topic matches across courses."""
+    import re
+    return re.sub(r"[^a-z0-9]+", " ", (name or "").lower()).strip()
+
+
+def _newest(entries: list) -> Optional[str]:
+    """When the newest course pattern behind a derived trait was last confirmed."""
+    return max(((it.store_specific or {}).get("last_confirmed") or "" for _, it in entries), default="") or None
 
 
 # ── Course-level consolidator ────────────────────────────────────────
@@ -53,7 +64,8 @@ class CourseConsolidator:
         """Detect whether the student asks for examples, definitions
         first, diagrams, step-by-step etc. Based on signal frequencies."""
         signals = self.episodes.signal_counts(ns, days=days)
-        total = sum(signals.values()) or 1
+        # Ratio per conversation turn, not per signal fired.
+        total = len(self.episodes.by_types(ns, ("qa", "exercise_attempt"), days=days)) or 1
         n_written = 0
 
         mapping = [
@@ -78,60 +90,48 @@ class CourseConsolidator:
                 self.patterns.upsert(
                     ns, pattern_type, description,
                     confidence=conf, evidence_count=count,
-                    derivation=f"signal '{signal_key}' fired in {count}/{total} recent episodes",
+                    derivation=f"signal '{signal_key}' fired in {count}/{total} recent conversation turns",
                     dedupe_key=signal_key,
                 )
                 n_written += 1
         return n_written
 
     def _infer_struggle_clusters(self, ns: str, days: float) -> int:
-        """Concepts the student has struggled on >=2 times in window get
-        flagged. Concepts struggled together (same episode) get grouped
-        into a struggle_cluster pattern."""
+        """Concepts the student is struggling with now (recent graded answers)
+        become weak_in_topic; patterns for concepts they have since recovered
+        on are retired. Concepts repeatedly missed together form clusters."""
+        from .struggles import struggling_concepts
+
         n_written = 0
-        # One-off mistakes don't count — only persistent struggle patterns.
-        struggle_episodes = self.episodes.by_outcome(ns, "struggle", days=days)
-        mistake_episodes = self.episodes.by_outcome(ns, "mistake", days=days)
-        per_concept: Counter[str] = Counter()
-        co_struggle: dict[frozenset, int] = defaultdict(int)
-        for ep in list(struggle_episodes) + list(mistake_episodes):
-            cids = (ep.store_specific or {}).get("concept_ids") or []
-            for c in cids:
-                per_concept[c] += 1
-            if len(cids) >= 2:
-                co_struggle[frozenset(cids)] += 1
-
-        # Lookup concept names from the mastery store (cached there).
-        name_by_id = {}
-        successes_by_id: dict[str, int] = {}
-        for it in self.mastery.all(ns):
-            ss = it.store_specific or {}
-            cid = ss.get("concept_id")
-            if cid:
-                name_by_id[cid] = ss.get("concept_name") or cid
-                successes_by_id[cid] = int(ss.get("successes", 0) or 0)
-
-        from .mastery_tier import is_topic_struggling
-        for cid, n in per_concept.items():
-            successes = successes_by_id.get(cid, 0)
-            if not is_topic_struggling(successes, n):
-                continue
-            cname = name_by_id.get(cid, cid)
+        current = struggling_concepts(self.episodes, self.mastery, ns, days=days)
+        for t in current:
             self.patterns.upsert(
                 ns, "weak_in_topic",
-                f"Struggling with {cname} ({n} wrong / {successes} right in last {int(days)}d)",
-                confidence=min(1.0, 0.4 + 0.15 * n),
-                evidence_count=n,
-                related_concept_ids=[cid],
-                derivation=f"{n} struggle-outcome episodes mentioning concept {cid}",
-                dedupe_key=cid,
+                f"Struggling with {t['name']} ({t['mistakes']} wrong / {t['successes']} right, mostly recent)",
+                confidence=min(1.0, 0.4 + 0.15 * t["mistakes"]),
+                evidence_count=t["mistakes"],
+                related_concept_ids=[t["concept_id"]],
+                derivation=f"recent graded answers on {t['name']}",
+                dedupe_key=t["concept_id"],
+                concept_name=t["name"],
             )
             n_written += 1
+        self.patterns.retire_unconfirmed(ns, "weak_in_topic", {t["concept_id"] for t in current})
 
+        struggling_ids = {t["concept_id"] for t in current}
+        name_by_id = {t["concept_id"]: t["name"] for t in current}
+        co_struggle: dict[frozenset, int] = defaultdict(int)
+        for ep in self.episodes.by_outcome(ns, "mistake", days=days) + self.episodes.by_outcome(ns, "struggle", days=days):
+            cids = frozenset(c for c in (ep.store_specific or {}).get("concept_ids") or [] if c in struggling_ids)
+            if len(cids) >= 2:
+                co_struggle[cids] += 1
+
+        cluster_keys: set = set()
         for cluster, n in co_struggle.items():
             if n < 2 or len(cluster) > 4:
                 continue
-            names = [name_by_id.get(c, c) for c in cluster]
+            cluster_keys.add("|".join(sorted(cluster)))
+            names = [name_by_id[c] for c in cluster]
             self.patterns.upsert(
                 ns, "struggle_cluster",
                 f"Concepts often struggled with together: {', '.join(names)}",
@@ -142,6 +142,7 @@ class CourseConsolidator:
                 dedupe_key="|".join(sorted(cluster)),
             )
             n_written += 1
+        self.patterns.retire_unconfirmed(ns, "struggle_cluster", cluster_keys)
         return n_written
 
     def _infer_session_pace(self, ns: str, days: float) -> int:
@@ -206,22 +207,35 @@ class CourseConsolidator:
         return 0
 
     def _infer_topic_strengths(self, ns: str) -> int:
-        """Surface strong/weak concepts via mastery store directly."""
+        """Surface strong concepts via the mastery store; retire ones that faded. Strength
+        is judged on effective mastery (decayed since the last evidence), and the pattern
+        keeps the date of that evidence: a score from two years ago is history, not a
+        current strength."""
+        from .stores.concept_mastery import effective_mastery
         n = 0
-        for it in self.mastery.strongest(ns, k=3, min_n=3):
+        keep: set = set()
+        for it in self.mastery.strongest(ns, k=5, min_n=3):
             ss = it.store_specific or {}
             cid = ss.get("concept_id")
-            cname = ss.get("concept_name") or cid
+            cname = ss.get("concept_name") or ""
+            current = effective_mastery(ss)
+            if not cid or not cname or current < 0.75:
+                continue
             self.patterns.upsert(
                 ns, "strong_in_topic",
-                f"Confident in {cname} (mastery {ss.get('mastery_score', 0):.2f})",
-                confidence=min(1.0, float(ss.get("mastery_score", 0))),
+                f"Confident in {cname}",
+                confidence=min(1.0, current),
                 evidence_count=ss.get("successes", 0),
-                related_concept_ids=[cid] if cid else [],
-                derivation=f"mastery_score={ss.get('mastery_score'):.2f} over {ss.get('successes', 0)} successes",
+                related_concept_ids=[cid],
+                derivation=f"effective mastery {current:.2f} (raw {ss.get('mastery_score', 0):.2f}) "
+                           f"over {ss.get('successes', 0)} successes",
                 dedupe_key=cid,
+                concept_name=cname,
+                observed_at=ss.get("last_strengthened") or ss.get("last_seen"),
             )
+            keep.add(cid)
             n += 1
+        self.patterns.retire_unconfirmed(ns, "strong_in_topic", keep)
         return n
 
 
@@ -253,13 +267,15 @@ class IdentityConsolidator:
         n_written = 0
         # Learning style — any preference pattern present in >=2 courses
         # becomes an identity trait.
+        # What they did, not who they are: asking for diagrams twice supports offering one,
+        # not a "visual learner" label.
         STYLE_MAP = {
-            "prefers_examples": ("learning_style", "example-led learner"),
-            "prefers_diagrams": ("learning_style", "visual learner — benefits from diagrams"),
-            "prefers_definitions_first": ("learning_style", "definition-first learner"),
-            "asks_followups": ("engagement_pattern", "engaged — frequently asks follow-ups"),
-            "prefers_short_answers": ("learning_style", "prefers concise answers"),
-            "prefers_step_by_step": ("learning_style", "prefers step-by-step explanations"),
+            "prefers_examples": ("learning_style", "often asks for worked examples"),
+            "prefers_diagrams": ("learning_style", "often asks for diagrams or visuals"),
+            "prefers_definitions_first": ("learning_style", "often asks for the definition first"),
+            "asks_followups": ("engagement_pattern", "often asks follow-up questions"),
+            "prefers_short_answers": ("learning_style", "often asks for shorter answers"),
+            "prefers_step_by_step": ("learning_style", "often asks for step-by-step explanations"),
         }
         for pat_type, (trait_type, desc) in STYLE_MAP.items():
             entries = by_type.get(pat_type, [])
@@ -274,6 +290,7 @@ class IdentityConsolidator:
                     evidence_courses=sorted(distinct_courses),
                     derivation=f"present in {len(distinct_courses)} courses",
                     dedupe_key=pat_type,
+                    observed_at=_newest(entries),
                 )
                 n_written += 1
 
@@ -290,6 +307,7 @@ class IdentityConsolidator:
                     evidence_courses=sorted({ns for ns, _ in pace_entries}),
                     derivation=f"derived from {len(descs)} course session-length patterns",
                     dedupe_key="session_pattern",
+                    observed_at=_newest(pace_entries),
                 )
                 n_written += 1
 
@@ -304,31 +322,43 @@ class IdentityConsolidator:
                 evidence_courses=sorted({ns for ns, _ in giveup_entries}),
                 derivation=f"frequent_giveup pattern in {len(giveup_entries)} courses",
                 dedupe_key="giveup_motivation",
+                observed_at=_newest(giveup_entries),
             )
             n_written += 1
 
-        # Strengths / weaknesses summarised by topic
+        # Strengths / weaknesses: the same topic (by name) in 2+ courses.
+        keep: set = set()
         for src_pat_type, trait_type, label in [
             ("strong_in_topic", "general_strength", "Consistently strong in"),
-            ("weak_in_topic", "general_weakness", "Repeatedly weak in"),
+            ("weak_in_topic", "general_weakness", "Repeatedly finds difficult"),
         ]:
-            entries = by_type.get(src_pat_type, [])
-            topic_count: Counter[str] = Counter()
-            for _, it in entries:
-                for cid in it.entities:
-                    topic_count[cid] += 1
-            for cid, n in topic_count.items():
-                if n < 1:
+            courses_by_topic: dict[str, set] = defaultdict(set)
+            display: dict[str, str] = {}
+            entries_by_topic: dict[str, list] = defaultdict(list)
+            for ns, it in by_type.get(src_pat_type, []):
+                name = ((it.store_specific or {}).get("concept_name") or "").strip()
+                key = _topic_key(name)
+                if not key:
                     continue
+                courses_by_topic[key].add(ns)
+                entries_by_topic[key].append((ns, it))
+                display.setdefault(key, name)
+            for key, courses in courses_by_topic.items():
+                if len(courses) < 2:
+                    continue
+                dedupe = f"{src_pat_type}:{key}"
                 self.identity_store.upsert_trait(
                     identity_ns,
                     trait_type=trait_type,
-                    description=f"{label}: {cid}",
-                    confidence=min(1.0, 0.4 + 0.15 * n),
-                    evidence_courses=sorted({ns for ns, _ in entries}),
-                    derivation=f"{src_pat_type} for concept {cid} appeared in {n} course patterns",
-                    dedupe_key=f"{src_pat_type}:{cid}",
+                    description=f"{label} {display[key]} (seen in {len(courses)} courses)",
+                    confidence=min(1.0, 0.4 + 0.15 * len(courses)),
+                    evidence_courses=sorted(courses),
+                    derivation=f"{src_pat_type} for '{display[key]}' in {len(courses)} courses",
+                    dedupe_key=dedupe,
+                    observed_at=_newest(entries_by_topic[key]),
                 )
+                keep.add(dedupe)
                 n_written += 1
+        self.identity_store.retire_derived(identity_ns, ("general_strength", "general_weakness"), keep)
 
         return {"identity_traits_written": n_written}

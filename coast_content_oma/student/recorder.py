@@ -21,6 +21,9 @@ from .stores import (
     EpisodeStore,
     course_namespace,
 )
+from ..stores import make_namespace
+from ..concept_resolve import resolver_for_db, stamp_concept_ids
+from ..stores.db import atomic
 from .stores.episode import ALLOWED_TYPES, ALLOWED_OUTCOMES
 
 logger = logging.getLogger(__name__)
@@ -63,8 +66,12 @@ class StudentRecorder:
         open_question: Optional[str] = None,
         section_title: Optional[str] = None,
         section_index: Optional[int] = None,
+        chat_message_ids: Optional[list[int]] = None,
+        hinted: bool = False,
+        concept_label: Optional[str] = None,
     ) -> dict:
-        """One call writes Episode + updates Mastery + refreshes ActiveContext.
+        """One call writes Episode + updates Mastery + refreshes ActiveContext,
+        atomically.
 
         concept_refs: list of {"concept_id": ..., "concept_name": ...} —
             we need both because ConceptMastery caches the name for
@@ -74,80 +81,99 @@ class StudentRecorder:
             caller can pass to update ActiveContext explicitly. If omitted,
             we infer reasonable defaults from the episode."""
         ns = course_namespace(user_id, folder)
+        from ..course_identity import content_namespace_for_student
+        content_ns = content_namespace_for_student(user_id, folder)
         concept_refs = concept_refs or []
-        concept_ids = [c.get("concept_id") for c in concept_refs if c.get("concept_id")]
+        raw_ids = [c.get("concept_id") for c in concept_refs if c.get("concept_id")]
+        resolver = None
+        try:
+            resolver = resolver_for_db(self.episodes.db_path)
+            matched, resolved = stamp_concept_ids(content_ns, raw_ids, resolver)
+        except Exception:
+            matched, resolved = raw_ids, raw_ids
+        concept_ids = resolved
 
-        # 1. Episode
-        episode = self.episodes.record(
-            ns,
-            episode_type=episode_type,
-            summary=summary,
-            outcome=outcome,
-            concept_ids=concept_ids,
-            lesson_id=lesson_id,
-            user_message=user_message,
-            assistant_response=assistant_response,
-            duration_sec=duration_sec,
-            signals=signals,
-            source=source,
-            section_title=section_title,
-            section_index=section_index,
-        )
+        with atomic(self.episodes.db_path):
+            # 1. Episode
+            episode = self.episodes.record(
+                ns,
+                episode_type=episode_type,
+                summary=summary,
+                outcome=outcome,
+                concept_ids=concept_ids,
+                matched_concept_ids=matched if matched != resolved else None,
+                lesson_id=lesson_id,
+                user_message=user_message,
+                assistant_response=assistant_response,
+                duration_sec=duration_sec,
+                signals=signals,
+                source=source,
+                section_title=section_title,
+                section_index=section_index,
+                chat_message_ids=chat_message_ids,
+                hinted=hinted,
+                concept_label=concept_label,
+            )
 
-        # 2. Mastery — one update per concept involved (skip neutral —
-        # those are intros, transitions, or ambiguous turns that should
-        # not drag scores down).
-        mastery_updates = []
-        if outcome in ("success", "struggle"):
-            for c in concept_refs:
-                cid = c.get("concept_id")
-                cname = c.get("concept_name") or cid
-                if not cid:
-                    continue
-                item = self.mastery.record_evidence(
-                    ns,
-                    concept_id=cid,
-                    concept_name=cname,
-                    outcome=outcome,
-                    lesson_id=lesson_id,
-                )
-                mastery_updates.append(item.id)
+            # 2. Mastery — one update per concept involved (skip neutral —
+            # those are intros, transitions, or ambiguous turns that should
+            # not drag scores down).
+            mastery_updates = []
+            if outcome in ("success", "struggle", "mistake"):
+                for c in concept_refs:
+                    cid = c.get("concept_id")
+                    cname = c.get("concept_name") or cid
+                    if not cid:
+                        continue
+                    try:
+                        write_cid = resolver.resolve(content_ns, cid)
+                    except Exception:
+                        write_cid = cid
+                    item = self.mastery.record_evidence(
+                        ns,
+                        concept_id=write_cid,
+                        concept_name=cname,
+                        outcome=outcome,
+                        lesson_id=lesson_id,
+                        hinted=hinted,
+                    )
+                    mastery_updates.append(item.id)
 
-        # 3. ActiveContext refresh
-        ctx_updates = []
-        if focus_text:
-            ctx_updates.append(self.active.set_fragment(
-                ns, "current_focus", focus_text,
-                concept_ids=concept_ids, lesson_id=lesson_id,
-            ).id)
-        if unresolved_text:
-            ctx_updates.append(self.active.set_fragment(
-                ns, "last_unresolved", unresolved_text,
-                concept_ids=concept_ids, lesson_id=lesson_id,
-            ).id)
-        elif outcome == "success" and not unresolved_text:
-            # Implicitly clear last_unresolved when the student succeeds
-            # on the thing they were stuck on.
-            for prev in self.active.current(ns, fragment_type="last_unresolved"):
-                if set(prev.entities) & set(concept_ids):
-                    self.active.resolve_question(prev.id)
-        if open_question:
-            ctx_updates.append(self.active.add_open_question(
-                ns, open_question, concept_ids=concept_ids,
-            ).id)
-        # Always log a recent_topic when concepts are touched.
-        if concept_refs and episode_type in ("qa", "lesson_started", "lesson_completed", "exercise_attempt"):
-            topic_label = ", ".join(c.get("concept_name") for c in concept_refs[:3] if c.get("concept_name"))
-            if topic_label:
-                ctx_updates.append(self.active.add_recent_topic(
-                    ns, topic_label, concept_ids=concept_ids,
+            # 3. ActiveContext refresh
+            ctx_updates = []
+            if focus_text:
+                ctx_updates.append(self.active.set_fragment(
+                    ns, "current_focus", focus_text,
+                    concept_ids=concept_ids, lesson_id=lesson_id,
                 ).id)
+            if unresolved_text:
+                ctx_updates.append(self.active.set_fragment(
+                    ns, "last_unresolved", unresolved_text,
+                    concept_ids=concept_ids, lesson_id=lesson_id,
+                ).id)
+            elif outcome == "success" and not unresolved_text:
+                # Implicitly clear last_unresolved when the student succeeds
+                # on the thing they were stuck on.
+                for prev in self.active.current(ns, fragment_type="last_unresolved"):
+                    if set(prev.entities) & set(concept_ids):
+                        self.active.resolve_question(prev.id)
+            if open_question:
+                ctx_updates.append(self.active.add_open_question(
+                    ns, open_question, concept_ids=concept_ids,
+                ).id)
+            # Always log a recent_topic when concepts are touched.
+            if concept_refs and episode_type in ("qa", "lesson_started", "lesson_completed", "exercise_attempt"):
+                topic_label = ", ".join(c.get("concept_name") for c in concept_refs[:3] if c.get("concept_name"))
+                if topic_label:
+                    ctx_updates.append(self.active.add_recent_topic(
+                        ns, topic_label, concept_ids=concept_ids,
+                    ).id)
 
-        return {
-            "episode_id": episode.id,
-            "mastery_updates": mastery_updates,
-            "context_updates": ctx_updates,
-        }
+            return {
+                "episode_id": episode.id,
+                "mastery_updates": mastery_updates,
+                "context_updates": ctx_updates,
+            }
 
     # ── Convenience wrappers ──────────────────────────────────────
 
@@ -230,7 +256,7 @@ class StudentRecorder:
         return self.record_episode(
             user_id, folder, "lesson_dropoff",
             summary=f"Dropped off lesson {lesson_title} at section: {at_section}",
-            outcome="struggle",
+            outcome="neutral",  # leaving is not evidence about what they know
             concept_refs=concept_refs,
             lesson_id=lesson_id,
             duration_sec=duration_sec,

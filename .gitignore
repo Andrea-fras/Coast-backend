@@ -41,3 +41,9 @@ past_papers/
 # Local data stores (rebuilt on server)
 chroma_data/
 oma_data/
+eval_runs/
+
+# Generated page caches next to uploaded files, and eval run logs
+*.pdf.pages/
+*.pptx.pages/
+eval_runs*.out

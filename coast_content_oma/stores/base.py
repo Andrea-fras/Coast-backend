@@ -37,8 +37,8 @@ def make_namespace(user_id: int | str, folder_name: str) -> str:
 
     Example: (1, "Linear Algebra") -> "u1__linear_algebra"
     """
-    slug = re.sub(r"[^a-z0-9]+", "_", folder_name.lower()).strip("_")
-    return f"u{user_id}__{slug}"
+    from ..course_identity import namespace_key
+    return f"u{user_id}__{namespace_key(user_id, folder_name)}"
 
 
 @dataclass

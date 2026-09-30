@@ -1,0 +1,66 @@
+{
+  "folder": "pedro-audit",
+  "prior_folder": "pedro-audit-prior",
+  "concepts": [
+    {
+      "id": "audit_con_poisson",
+      "name": "Poisson process",
+      "aliases": ["poisson distribution", "poisson arrivals"],
+      "definition": "A Poisson process models random events arriving at average rate λ per unit time; inter-arrival times are exponential.",
+      "prerequisite_concept_ids": []
+    },
+    {
+      "id": "audit_con_exponential",
+      "name": "exponential distribution",
+      "aliases": ["exponential inter-arrival", "memoryless waiting time"],
+      "definition": "The exponential distribution models memoryless waiting times with rate parameter λ.",
+      "prerequisite_concept_ids": []
+    },
+    {
+      "id": "audit_con_queueing",
+      "name": "M/M/1 queue",
+      "aliases": ["queueing theory", "single-server queue"],
+      "definition": "An M/M/1 queue has Poisson arrivals, exponential service times, one server, and infinite capacity.",
+      "prerequisite_concept_ids": ["audit_con_poisson", "audit_con_exponential"]
+    },
+    {
+      "id": "audit_con_little",
+      "name": "Little's Law",
+      "aliases": ["L = λW", "little law"],
+      "definition": "Little's Law states L = λW: average items in system equals arrival rate times average time in system.",
+      "prerequisite_concept_ids": ["audit_con_queueing"]
+    }
+  ],
+  "content_chunks": [
+    {
+      "id": "audit_cnt_poisson",
+      "concept_id": "audit_con_poisson",
+      "text": "Poisson process: events occur independently at rate λ. The number of events in interval t is Poisson(λt). Coin-flip intuition: many rare Bernoulli trials aggregate to Poisson."
+    },
+    {
+      "id": "audit_cnt_exponential",
+      "concept_id": "audit_con_exponential",
+      "text": "Exponential(λ) waiting times are memoryless: P(T > s+t | T > s) = P(T > t). Mean waiting time is 1/λ."
+    },
+    {
+      "id": "audit_cnt_queueing",
+      "concept_id": "audit_con_queueing",
+      "text": "M/M/1 steady-state: utilization ρ = λ/μ must be < 1. Average customers in system L = ρ/(1-ρ)."
+    },
+    {
+      "id": "audit_cnt_little",
+      "concept_id": "audit_con_little",
+      "text": "Little's Law L = λW applies to stable systems and links inventory, throughput, and flow time."
+    }
+  ],
+  "outline_sections": [
+    {
+      "title": "Poisson and Exponential Foundations",
+      "key_topics": ["Poisson process", "exponential distribution", "memoryless property"]
+    },
+    {
+      "title": "M/M/1 Queueing and Little's Law",
+      "key_topics": ["M/M/1 queue", "utilization", "Little's Law"]
+    }
+  ]
+}

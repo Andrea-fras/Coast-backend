@@ -1,0 +1,307 @@
+{
+  "run_id": "twin_14_overconfident_speedrunner_3b58d7",
+  "user_id": 14,
+  "folder": "Operations",
+  "persona": "overconfident_speedrunner",
+  "sim_model": "gemini-2.5-flash",
+  "started_section": 35,
+  "sections_run": 1,
+  "agent_state": {
+    "persona": "overconfident_speedrunner",
+    "sim_model": "gemini-2.5-flash",
+    "mastery": {
+      "nonlinear programming": 0.65,
+      "queueing theory": 0.35,
+      "discrete time markov chain": 0.4,
+      "aperiodic markov chain": 0.35,
+      "markov decision process": 0.45,
+      "ngb": 0.35,
+      "operations research": 0.35,
+      "constrained optimization": 0.45,
+      "mathematical optimization": 0.5,
+      "birth death process": 0.35,
+      "queueing process": 0.35,
+      "balance equations": 0.35,
+      "continuous time markov chains": 0.35,
+      "poisson process": 0.35,
+      "exponential distribution": 0.35,
+      "transition matrix": 0.35,
+      "state transition": 0.35,
+      "aperiodic state": 0.35,
+      "transition probability": 0.35,
+      "payoffs": 0.35,
+      "state space": 0.35,
+      "action space": 0.35,
+      "markov chain": 0.35,
+      "cost function": 0.35,
+      "mathematical modeling": 0.35,
+      "complementary slackness": 0.45,
+      "lagrange multipliers": 0.4,
+      "kkt conditions": 0.4,
+      "convex program": 0.5,
+      "convex feasible region": 0.5
+    },
+    "misconceptions": [],
+    "frustration": 0.25,
+    "engagement": 0.9,
+    "current_section": 35,
+    "section_log": [
+      {
+        "section_index": 35,
+        "title": "Operations Research Comprehensive Exam Review Part 2",
+        "turns": 4,
+        "frustration_end": 0.25,
+        "engagement_end": 0.9,
+        "concepts": [
+          "nonlinear programming",
+          "queueing theory",
+          "discrete time markov chain",
+          "aperiodic markov chain",
+          "markov decision process",
+          "ngb",
+          "operations research",
+          "constrained optimization",
+          "mathematical optimization",
+          "birth death process",
+          "queueing process",
+          "balance equations",
+          "continuous time markov chains",
+          "poisson process",
+          "exponential distribution",
+          "transition matrix",
+          "state transition",
+          "aperiodic state",
+          "transition probability",
+          "payoffs",
+          "state space",
+          "action space",
+          "markov chain",
+          "cost function",
+          "mathematical modeling"
+        ],
+        "mastery_end": {
+          "nonlinear programming": 0.65,
+          "queueing theory": 0.35,
+          "discrete time markov chain": 0.4,
+          "aperiodic markov chain": 0.35,
+          "markov decision process": 0.45,
+          "ngb": 0.35,
+          "operations research": 0.35,
+          "constrained optimization": 0.45,
+          "mathematical optimization": 0.5,
+          "birth death process": 0.35,
+          "queueing process": 0.35,
+          "balance equations": 0.35,
+          "continuous time markov chains": 0.35,
+          "poisson process": 0.35,
+          "exponential distribution": 0.35,
+          "transition matrix": 0.35,
+          "state transition": 0.35,
+          "aperiodic state": 0.35,
+          "transition probability": 0.35,
+          "payoffs": 0.35,
+          "state space": 0.35,
+          "action space": 0.35,
+          "markov chain": 0.35,
+          "cost function": 0.35,
+          "mathematical modeling": 0.35
+        },
+        "gave_up": false
+      }
+    ],
+    "turn_log": [
+      {
+        "section": 35,
+        "turn": 1,
+        "pedro": "In our previous review, we tackled the deterministic side of operations research\u2014Integer Linear Programming and Network Flow. Now, for this final review, we shift focus to **Nonlinear Programming (NLP)** and **Stochastic Models** (Queueing and Markov processes).\n\nSince you've shown confidence in the Birth-Death process and Markov Chains, we will focus our review on the more complex application of these topics: **KKT conditions** in NLP and **Markov Decision Processes (MDPs)**.\n\n### 1. Nonlinear Programming and KKT Conditions\nIn Linear Programming, the optimal solution is almost always at a cor",
+        "student": "For the KKT question, the multiplier $\\mu_i$ would be zero. The complementary slackness condition means if the constraint isn't binding, the multiplier must be zero.\n\nAn MDP is different from a DTMC because you choose an action at each state, which affects the next state's probabilities and any rewards.",
+        "understanding_delta": 0.1,
+        "frustration": 0.2,
+        "engagement": 0.65,
+        "attempting_exercise": true,
+        "likely_correct": true,
+        "wants_to_end_section": false
+      },
+      {
+        "section": 35,
+        "turn": 2,
+        "pedro": "Spot on, imagetest. You\u2019ve nailed both concepts.\n\nRegarding the KKT conditions, your point about the multiplier being zero is exactly why we call it **Complementary Slackness**. If there is \"slack\" in the constraint ($g_i(x) < b_i$), the \"shadow price\" or importance of that constraint to the objective ($\\mu_i$) must be zero.\n\nSince you have a solid handle on the theory, let's look at a nuance of **Nonlinear Programming** that often trips students up on exams: **Convexity**.\n\nIn Linear Programming, we never worry about \"local\" vs \"global\" optima because the feasible region is a simplex and the ",
+        "student": "The objective function needs to be convex, and the feasible region formed by the constraints must also be convex.",
+        "understanding_delta": 0.0,
+        "frustration": 0.25,
+        "engagement": 0.65,
+        "attempting_exercise": false,
+        "likely_correct": false,
+        "wants_to_end_section": false
+      },
+      {
+        "section": 35,
+        "turn": 3,
+        "pedro": "Actually, there is a small but very important distinction to make here regarding the objective function!\n\nFor a **maximization** problem, the objective function $f(x)$ needs to be **concave** (shaped like an upside-down bowl), not convex. A concave function has the property that any local maximum is also a global maximum.\n\nTo guarantee a global optimum in Nonlinear Programming, we need a **Convex Program**, which requires two things:\n1.  **A Convex Feasible Region:** This is usually achieved if all constraints $g_i(x) \\leq b_i$ are convex functions.\n2.  **The Objective Direction:**\n    *   If ",
+        "student": "True. The intersection of convex sets is always convex.",
+        "understanding_delta": 0.2,
+        "frustration": 0.25,
+        "engagement": 0.8,
+        "attempting_exercise": true,
+        "likely_correct": true,
+        "wants_to_end_section": false
+      },
+      {
+        "section": 35,
+        "turn": 4,
+        "pedro": "That is correct! As your notes emphasize, the intersection of any number of **convex sets** is always a convex set. This is a fundamental property that makes optimization manageable; it's why the feasible region of a Linear Program (an intersection of half-planes) is always convex.\n\nNow, let's look at an \"edge case\" scenario for Nonlinear Programming to see if you can spot a potential issue.\n\nImagine you are using a **Gradient Search** (an unconstrained optimization algorithm) to maximize a function. You start at point $A$, follow the gradient (the direction of steepest ascent), and reach poin",
+        "student": "Point B could be a local maximum, not the global maximum. Gradient search can't guarantee a global optimum without concavity.",
+        "understanding_delta": 0.15,
+        "frustration": 0.25,
+        "engagement": 0.9,
+        "attempting_exercise": true,
+        "likely_correct": true,
+        "wants_to_end_section": false
+      }
+    ]
+  },
+  "transcript": [
+    {
+      "section": 35,
+      "turn": 0,
+      "role": "student",
+      "content": "I'm ready to learn about \"Operations Research Comprehensive Exam Review Part 2\". Please teach me this section.",
+      "elapsed_sec": 18.5,
+      "error": null
+    },
+    {
+      "section": 35,
+      "turn": 0,
+      "role": "pedro",
+      "content": "In our previous review, we tackled the deterministic side of operations research\u2014Integer Linear Programming and Network Flow. Now, for this final review, we shift focus to **Nonlinear Programming (NLP)** and **Stochastic Models** (Queueing and Markov processes).\n\nSince you've shown confidence in the Birth-Death process and Markov Chains, we will focus our review on the more complex application of these topics: **KKT conditions** in NLP and **Markov Decision Processes (MDPs)**.\n\n### 1. Nonlinear Programming and KKT Conditions\nIn Linear Programming, the optimal solution is almost always at a corner point. In **Nonlinear Programming**, the objective function or constraints are curved, meaning the optimum can be anywhere\u2014along a boundary or even in the middle of the feasible region.\n\nTo find these points, we use the **Karush-Kuhn-Tucker (KKT) conditions**. For a problem:\n$$\\text{Maximize } f(x)$$\n$$\\text{subject to } g_i(x) \\leq b_i \\text{ for } i = 1, \\dots, m$$\n\nThe KKT conditions are a set of first-order necessary conditions that an optimal solution $(x^*)$ must satisfy. They are broken into four main categories:\n\n| Condition Category | Mathematical Form | Explanation |\n| :--- | :--- | :--- |\n| **Stationarity** | $\\nabla f(x) - \\sum \\mu_i \\nabla g_i(x) = 0$ | The gradient of the objective must be a linear combination of the constraint gradients. |\n| **Primal Feasibility** | $g_i(x) \\leq b_i$ | The solution must actually satisfy the original constraints. |\n| **Dual Feasibility** | $\\mu_i \\geq 0$ | The Lagrange multipliers (shadow prices) for $\\leq$ constraints must be non-negative. |\n| **Complementary Slackness** | $\\mu_i (g_i(x) - b_i) = 0$ | Either the constraint is \"tight\" ($g_i(x) = b_i$), or its multiplier $\\mu_i$ is zero. |\n\n**Why this matters:** If a problem is **convex** (a concave objective function and a convex feasible set), any point satisfying these KKT conditions is guaranteed to be a global optimum.\n\n### 2. Markov Decision Processes (MDPs)\nYou\u2019ve mastered Markov Chains, where the system evolves based on fixed probabilities. An **MDP** adds a layer of control: at each state, you choose an **action**, which affects both the immediate reward and the probability of the next state.\n\nIn an exam context, you are often asked to evaluate a **Policy ($\\pi$)**.\n*   **Policy Evaluation:** Calculating the expected cost or reward of following a specific rule (e.g., \"Always repair the machine if it's in State 3\").\n*   **Linear Programming Approach:** We can solve MDPs using LP where the decision variables $y_{ik}$ represent the steady-state probability that the system is in state $i$ and we take action $k$.\n\n---\n\n### Check for Understanding\nBefore we jump into the practice problems from your past exams, let's do a quick check on the KKT logic:\n\n**Question:** If you are solving a maximization problem and a specific constraint is **not** binding at the optimal solution (meaning the optimal point is strictly inside the constraint boundary), what must the value of the corresponding KKT multiplier $\\mu_i$ be?\n\nAnd, based on your previous work with Markov Chains, how does an MDP differ from a standard DTMC (Discrete-Time Markov Chain)?",
+      "content_raw": "In our previous review, we tackled the deterministic side of operations research\u2014Integer Linear Programming and Network Flow. Now, for this final review, we shift focus to **Nonlinear Programming (NLP)** and **Stochastic Models** (Queueing and Markov processes).\n\nSince you've shown confidence in the Birth-Death process and Markov Chains, we will focus our review on the more complex application of these topics: **KKT conditions** in NLP and **Markov Decision Processes (MDPs)**.\n\n### 1. Nonlinear Programming and KKT Conditions\nIn Linear Programming, the optimal solution is almost always at a corner point. In **Nonlinear Programming**, the objective function or constraints are curved, meaning the optimum can be anywhere\u2014along a boundary or even in the middle of the feasible region.\n\nTo find these points, we use the **Karush-Kuhn-Tucker (KKT) conditions**. For a problem:\n$$\\text{Maximize } f(x)$$\n$$\\text{subject to } g_i(x) \\leq b_i \\text{ for } i = 1, \\dots, m$$\n\nThe KKT conditions are a set of first-order necessary conditions that an optimal solution $(x^*)$ must satisfy. They are broken into four main categories:\n\n| Condition Category | Mathematical Form | Explanation |\n| :--- | :--- | :--- |\n| **Stationarity** | $\\nabla f(x) - \\sum \\mu_i \\nabla g_i(x) = 0$ | The gradient of the objective must be a linear combination of the constraint gradients. |\n| **Primal Feasibility** | $g_i(x) \\leq b_i$ | The solution must actually satisfy the original constraints. |\n| **Dual Feasibility** | $\\mu_i \\geq 0$ | The Lagrange multipliers (shadow prices) for $\\leq$ constraints must be non-negative. |\n| **Complementary Slackness** | $\\mu_i (g_i(x) - b_i) = 0$ | Either the constraint is \"tight\" ($g_i(x) = b_i$), or its multiplier $\\mu_i$ is zero. |\n\n**Why this matters:** If a problem is **convex** (a concave objective function and a convex feasible set), any point satisfying these KKT conditions is guaranteed to be a global optimum.\n\n### 2. Markov Decision Processes (MDPs)\nYou\u2019ve mastered Markov Chains, where the system evolves based on fixed probabilities. An **MDP** adds a layer of control: at each state, you choose an **action**, which affects both the immediate reward and the probability of the next state.\n\nIn an exam context, you are often asked to evaluate a **Policy ($\\pi$)**.\n*   **Policy Evaluation:** Calculating the expected cost or reward of following a specific rule (e.g., \"Always repair the machine if it's in State 3\").\n*   **Linear Programming Approach:** We can solve MDPs using LP where the decision variables $y_{ik}$ represent the steady-state probability that the system is in state $i$ and we take action $k$.\n\n---\n\n### Check for Understanding\nBefore we jump into the practice problems from your past exams, let's do a quick check on the KKT logic:\n\n**Question:** If you are solving a maximization problem and a specific constraint is **not** binding at the optimal solution (meaning the optimal point is strictly inside the constraint boundary), what must the value of the corresponding KKT multiplier $\\mu_i$ be?\n\nAnd, based on your previous work with Markov Chains, how does an MDP differ from a standard DTMC (Discrete-Time Markov Chain)?",
+      "elapsed_sec": 18.5,
+      "section_complete_tag": false
+    },
+    {
+      "section": 35,
+      "turn": 1,
+      "role": "student",
+      "content": "For the KKT question, the multiplier $\\mu_i$ would be zero. The complementary slackness condition means if the constraint isn't binding, the multiplier must be zero.\n\nAn MDP is different from a DTMC because you choose an action at each state, which affects the next state's probabilities and any rewards.",
+      "state": {
+        "understanding_delta": 0.1,
+        "frustration_delta": 0.0,
+        "engagement_delta": 0.05,
+        "mastery_deltas": {
+          "complementary slackness": 0.1,
+          "lagrange multipliers": 0.05,
+          "markov decision process": 0.1,
+          "discrete time markov chain": 0.05,
+          "nonlinear programming": 0.05,
+          "kkt conditions": 0.05
+        },
+        "misconception_added": null,
+        "attempting_exercise": true,
+        "likely_correct": true,
+        "wants_to_end_section": false,
+        "reply": "For the KKT question, the multiplier $\\mu_i$ would be zero. The complementary slackness condition means if the constraint isn't binding, the multiplier must be zero.\n\nAn MDP is different from a DTMC because you choose an action at each state, which affects the next state's probabilities and any rewards."
+      }
+    },
+    {
+      "section": 35,
+      "turn": 1,
+      "role": "pedro",
+      "content": "Spot on, imagetest. You\u2019ve nailed both concepts.\n\nRegarding the KKT conditions, your point about the multiplier being zero is exactly why we call it **Complementary Slackness**. If there is \"slack\" in the constraint ($g_i(x) < b_i$), the \"shadow price\" or importance of that constraint to the objective ($\\mu_i$) must be zero.\n\nSince you have a solid handle on the theory, let's look at a nuance of **Nonlinear Programming** that often trips students up on exams: **Convexity**.\n\nIn Linear Programming, we never worry about \"local\" vs \"global\" optima because the feasible region is a simplex and the objective is a flat plane\u2014the best corner is the best point, period. In NLP, things are \"messier.\"\n\nLook at this scenario:\nSuppose you are maximizing a function $f(x)$. You find a point $x^*$ that satisfies all the KKT conditions.\n\n**Under what specific condition regarding the shape of the objective function $f(x)$ and the constraints $g_i(x)$ can you definitively state that $x^*$ is the global maximum, rather than just a local peak?**",
+      "content_raw": "Spot on, imagetest. You\u2019ve nailed both concepts.\n\nRegarding the KKT conditions, your point about the multiplier being zero is exactly why we call it **Complementary Slackness**. If there is \"slack\" in the constraint ($g_i(x) < b_i$), the \"shadow price\" or importance of that constraint to the objective ($\\mu_i$) must be zero.\n\nSince you have a solid handle on the theory, let's look at a nuance of **Nonlinear Programming** that often trips students up on exams: **Convexity**.\n\nIn Linear Programming, we never worry about \"local\" vs \"global\" optima because the feasible region is a simplex and the objective is a flat plane\u2014the best corner is the best point, period. In NLP, things are \"messier.\"\n\nLook at this scenario:\nSuppose you are maximizing a function $f(x)$. You find a point $x^*$ that satisfies all the KKT conditions.\n\n**Under what specific condition regarding the shape of the objective function $f(x)$ and the constraints $g_i(x)$ can you definitively state that $x^*$ is the global maximum, rather than just a local peak?**\n\n[ANSWER_CORRECT]",
+      "elapsed_sec": 15.4,
+      "error": null,
+      "section_complete_tag": false
+    },
+    {
+      "section": 35,
+      "turn": 2,
+      "role": "student",
+      "content": "The objective function needs to be convex, and the feasible region formed by the constraints must also be convex.",
+      "state": {
+        "understanding_delta": 0.0,
+        "frustration_delta": 0.05,
+        "engagement_delta": 0.0,
+        "mastery_deltas": {},
+        "misconception_added": null,
+        "attempting_exercise": false,
+        "likely_correct": false,
+        "wants_to_end_section": false,
+        "_state_parse_failed": true,
+        "reply": "The objective function needs to be convex, and the feasible region formed by the constraints must also be convex."
+      }
+    },
+    {
+      "section": 35,
+      "turn": 2,
+      "role": "pedro",
+      "content": "Actually, there is a small but very important distinction to make here regarding the objective function!\n\nFor a **maximization** problem, the objective function $f(x)$ needs to be **concave** (shaped like an upside-down bowl), not convex. A concave function has the property that any local maximum is also a global maximum.\n\nTo guarantee a global optimum in Nonlinear Programming, we need a **Convex Program**, which requires two things:\n1.  **A Convex Feasible Region:** This is usually achieved if all constraints $g_i(x) \\leq b_i$ are convex functions.\n2.  **The Objective Direction:**\n    *   If **maximizing**, the objective $f(x)$ must be **concave**.\n    *   If **minimizing**, the objective $f(x)$ must be **convex**.\n\nIf the objective is \"bending the wrong way\" (e.g., maximizing a convex function), your KKT conditions might lead you to a local peak or even a \"saddle point,\" while the true global maximum could be far away on the boundary.\n\nLet's test this with a quick \"True or False\" regarding the feasible region:\n\n**True or False:** If all your individual constraints are convex (e.g., $x^2 \\leq 10$), the resulting feasible region (the intersection of all constraints) is guaranteed to be a convex set.",
+      "content_raw": "Actually, there is a small but very important distinction to make here regarding the objective function!\n\nFor a **maximization** problem, the objective function $f(x)$ needs to be **concave** (shaped like an upside-down bowl), not convex. A concave function has the property that any local maximum is also a global maximum.\n\nTo guarantee a global optimum in Nonlinear Programming, we need a **Convex Program**, which requires two things:\n1.  **A Convex Feasible Region:** This is usually achieved if all constraints $g_i(x) \\leq b_i$ are convex functions.\n2.  **The Objective Direction:**\n    *   If **maximizing**, the objective $f(x)$ must be **concave**.\n    *   If **minimizing**, the objective $f(x)$ must be **convex**.\n\nIf the objective is \"bending the wrong way\" (e.g., maximizing a convex function), your KKT conditions might lead you to a local peak or even a \"saddle point,\" while the true global maximum could be far away on the boundary.\n\nLet's test this with a quick \"True or False\" regarding the feasible region:\n\n**True or False:** If all your individual constraints are convex (e.g., $x^2 \\leq 10$), the resulting feasible region (the intersection of all constraints) is guaranteed to be a convex set.\n\n[ANSWER_WRONG]",
+      "elapsed_sec": 14.6,
+      "error": null,
+      "section_complete_tag": false
+    },
+    {
+      "section": 35,
+      "turn": 3,
+      "role": "student",
+      "content": "True. The intersection of convex sets is always convex.",
+      "state": {
+        "understanding_delta": 0.2,
+        "frustration_delta": 0.0,
+        "engagement_delta": 0.15,
+        "mastery_deltas": {
+          "nonlinear programming": 0.15,
+          "constrained optimization": 0.1,
+          "mathematical optimization": 0.1,
+          "convex program": 0.15,
+          "convex feasible region": 0.15
+        },
+        "misconception_added": null,
+        "attempting_exercise": true,
+        "likely_correct": true,
+        "wants_to_end_section": false,
+        "reply": "True. The intersection of convex sets is always convex."
+      }
+    },
+    {
+      "section": 35,
+      "turn": 3,
+      "role": "pedro",
+      "content": "That is correct! As your notes emphasize, the intersection of any number of **convex sets** is always a convex set. This is a fundamental property that makes optimization manageable; it's why the feasible region of a Linear Program (an intersection of half-planes) is always convex.\n\nNow, let's look at an \"edge case\" scenario for Nonlinear Programming to see if you can spot a potential issue.\n\nImagine you are using a **Gradient Search** (an unconstrained optimization algorithm) to maximize a function. You start at point $A$, follow the gradient (the direction of steepest ascent), and reach point $B$ where the gradient $\\nabla f(B) = 0$.\n\n**If the function $f(x)$ is NOT concave (for example, it has multiple \"humps\"), what is the danger of stopping at point $B$, and how does this relate to the \"news is... bad\" comment in your lecture notes regarding general NLPs?**",
+      "content_raw": "That is correct! As your notes emphasize, the intersection of any number of **convex sets** is always a convex set. This is a fundamental property that makes optimization manageable; it's why the feasible region of a Linear Program (an intersection of half-planes) is always convex.\n\nNow, let's look at an \"edge case\" scenario for Nonlinear Programming to see if you can spot a potential issue.\n\nImagine you are using a **Gradient Search** (an unconstrained optimization algorithm) to maximize a function. You start at point $A$, follow the gradient (the direction of steepest ascent), and reach point $B$ where the gradient $\\nabla f(B) = 0$.\n\n**If the function $f(x)$ is NOT concave (for example, it has multiple \"humps\"), what is the danger of stopping at point $B$, and how does this relate to the \"news is... bad\" comment in your lecture notes regarding general NLPs?**\n\n[ANSWER_CORRECT]",
+      "elapsed_sec": 13.2,
+      "error": null,
+      "section_complete_tag": false
+    },
+    {
+      "section": 35,
+      "turn": 4,
+      "role": "student",
+      "content": "Point B could be a local maximum, not the global maximum. Gradient search can't guarantee a global optimum without concavity.",
+      "state": {
+        "understanding_delta": 0.15,
+        "frustration_delta": 0.0,
+        "engagement_delta": 0.1,
+        "mastery_deltas": {
+          "nonlinear programming": 0.1,
+          "mathematical optimization": 0.05
+        },
+        "misconception_added": null,
+        "attempting_exercise": true,
+        "likely_correct": true,
+        "wants_to_end_section": false,
+        "reply": "Point B could be a local maximum, not the global maximum. Gradient search can't guarantee a global optimum without concavity."
+      }
+    },
+    {
+      "section": 35,
+      "turn": 4,
+      "role": "pedro",
+      "content": "Exactly. You've hit on the core frustration of NLP: Gradient Search is \"myopic\"\u2014it only looks at the immediate slope around it. Once it reaches a peak where the slope is zero, it stops, having no way of knowing if there's a much higher mountain just across the valley.\n\nAs your notes mention, without special restrictions like **convexity** or **concavity**, we are often \"reliant on some kind of advanced heuristic\" rather than a guaranteed algorithm.\n\nLet's shift gears to the **Markov Decision Process (MDP)** side of your review. This often appears as a policy comparison problem.\n\n**Try this scenario:**\nYou have a machine that can be in two states: **1 (Good)** or **2 (Broken)**.\n- You have two policies:\n    - **Policy A:** Never repair.\n    - **Policy B:** Repair only if in State 2.\n\nIf you are asked to find the **long-run expected cost per unit time** for Policy B, what is the first major step you need to take with the transition probability matrix? (Think back to your mastery of steady-state analysis in Section 1).",
+      "content_raw": "Exactly. You've hit on the core frustration of NLP: Gradient Search is \"myopic\"\u2014it only looks at the immediate slope around it. Once it reaches a peak where the slope is zero, it stops, having no way of knowing if there's a much higher mountain just across the valley.\n\nAs your notes mention, without special restrictions like **convexity** or **concavity**, we are often \"reliant on some kind of advanced heuristic\" rather than a guaranteed algorithm.\n\nLet's shift gears to the **Markov Decision Process (MDP)** side of your review. This often appears as a policy comparison problem.\n\n**Try this scenario:**\nYou have a machine that can be in two states: **1 (Good)** or **2 (Broken)**.\n- You have two policies:\n    - **Policy A:** Never repair.\n    - **Policy B:** Repair only if in State 2.\n\nIf you are asked to find the **long-run expected cost per unit time** for Policy B, what is the first major step you need to take with the transition probability matrix? (Think back to your mastery of steady-state analysis in Section 1).\n\n[ANSWER_CORRECT]",
+      "elapsed_sec": 12.9,
+      "error": null,
+      "section_complete_tag": false
+    }
+  ]
+}

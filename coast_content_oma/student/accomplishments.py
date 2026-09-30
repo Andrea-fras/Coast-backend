@@ -35,7 +35,13 @@ def summarize_accomplishments(
     perfect_rounds: list[str] = []
     lines: list[str] = []
 
-    for ep in episodes.since(namespace, window_days):
+    names: dict[str, str] = {}
+    if mastery is not None:
+        names = {(it.store_specific or {}).get("concept_id"): (it.store_specific or {}).get("concept_name")
+                 for it in mastery.all(namespace)}
+    # Only completions and graded answers matter here — never scan the
+    # (much larger) conversation log.
+    for ep in episodes.by_types(namespace, ("section_completed", "exercise_attempt"), days=window_days):
         ss = ep.store_specific or {}
         etype = ss.get("episode_type", "")
 
@@ -58,12 +64,7 @@ def summarize_accomplishments(
         for cid in cids:
             stats = concept_stats[cid]
             if not stats["name"]:
-                if mastery is not None:
-                    row = mastery.for_concept(namespace, cid)
-                    if row:
-                        stats["name"] = (row.store_specific or {}).get("concept_name") or cid
-                if not stats["name"]:
-                    stats["name"] = cid
+                stats["name"] = names.get(cid) or cid
             stats[outcome if outcome in stats else "neutral"] += 1
 
         if etype == "exercise_attempt" and outcome == "success" and len(cids) == 1:

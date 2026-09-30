@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import provider_capacity
 import re
 import traceback
 from pathlib import Path
@@ -143,7 +144,7 @@ def _get_embeddings(texts: list[str]) -> list[list[float]]:
     """Compute embeddings using OpenAI text-embedding-3-small."""
     from openai import OpenAI
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""), max_retries=0)
-    response = client.embeddings.create(model=EMBEDDING_MODEL, input=texts)
+    response = provider_capacity.call('openai', lambda: client.embeddings.create(model=EMBEDDING_MODEL, input=texts), priority='background')
     return [item.embedding for item in response.data]
 
 
@@ -455,7 +456,7 @@ def generate_study_plan(user_id: int, folder: str, user_name: str) -> str:
         if gemini_key:
             client = genai.Client(api_key=gemini_key)
             try:
-                response = client.models.generate_content(
+                response = provider_capacity.call('gemini', lambda: client.models.generate_content(
                     model="gemini-3.1-pro-preview",
                     contents=context,
                     config={
@@ -464,7 +465,7 @@ def generate_study_plan(user_id: int, folder: str, user_name: str) -> str:
                         "temperature": 0.7,
                         "thinking_config": {"thinking_budget": 1024},
                     },
-                )
+                ), priority='interactive')
                 text = ""
                 if response.candidates and response.candidates[0].content:
                     for part in (response.candidates[0].content.parts or []):
@@ -483,12 +484,12 @@ def generate_study_plan(user_id: int, folder: str, user_name: str) -> str:
                 {"role": "system", "content": system},
                 {"role": "user", "content": context},
             ]
-            resp = client.chat.completions.create(
+            resp = provider_capacity.call('openai', lambda: client.chat.completions.create(
                 model=os.getenv("OPENAI_MODEL", "gpt-4o"),
                 messages=messages,
                 max_tokens=1500,
                 temperature=0.7,
-            )
+            ), priority='interactive')
             text = resp.choices[0].message.content or ""
             if text.strip():
                 return text.strip()

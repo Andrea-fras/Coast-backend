@@ -1,0 +1,141 @@
+{
+  "id": "rich",
+  "user_id": 9103,
+  "email": "audit-rich@coast.test",
+  "name": "Audit Rich",
+  "learning_preferences": {
+    "learning_style": "prefers exercises first with guided walkthroughs, then theory on how it relates",
+    "study_goal": "build intuition for queueing before exams"
+  },
+  "identity_traits": [
+    {
+      "trait_type": "learning_style",
+      "description": "prefers exercises first with guided walkthroughs, then theory on how it relates",
+      "confidence": 0.9,
+      "derivation": "Pedro onboarding conversation"
+    },
+    {
+      "trait_type": "session_pattern",
+      "description": "studies in focused 45-minute blocks with practice problems",
+      "confidence": 0.78,
+      "derivation": "Pedro onboarding conversation"
+    }
+  ],
+  "mastery": [
+    {
+      "concept_id": "audit_con_poisson",
+      "concept_name": "Poisson process",
+      "mastery_score": 0.88,
+      "successes": 6,
+      "struggles": 0,
+      "last_eval_state": "mastered"
+    },
+    {
+      "concept_id": "audit_con_exponential",
+      "concept_name": "exponential distribution",
+      "mastery_score": 0.92,
+      "successes": 5,
+      "struggles": 0,
+      "last_seen_days_ago": 55,
+      "last_strengthened_days_ago": 55
+    },
+    {
+      "concept_id": "audit_con_queueing",
+      "concept_name": "M/M/1 queue",
+      "mastery_score": 0.28,
+      "successes": 1,
+      "struggles": 3,
+      "last_misconception": true,
+      "last_eval_state": "misconception"
+    },
+    {
+      "concept_id": "audit_con_little",
+      "concept_name": "Little's Law",
+      "mastery_score": 0.58,
+      "successes": 2,
+      "struggles": 1,
+      "last_eval_state": "resolved"
+    }
+  ],
+  "episodes": [
+    {
+      "episode_type": "section_completed",
+      "outcome": "success",
+      "section_index": 0,
+      "section_title": "Poisson and Exponential Foundations"
+    },
+    {
+      "episode_type": "section_completed",
+      "outcome": "success",
+      "section_index": 1,
+      "section_title": "M/M/1 Queueing and Little's Law"
+    },
+    {
+      "episode_type": "exercise_attempt",
+      "outcome": "mistake",
+      "section_index": 1,
+      "concept_ids": ["audit_con_queueing"],
+      "user_message": "ρ can be greater than 1 in steady state",
+      "signals": {"provisional": true}
+    },
+    {
+      "episode_type": "section_evaluation",
+      "outcome": "neutral",
+      "section_index": 1,
+      "evaluation": {
+        "concepts": [
+          {"concept_id": "audit_con_queueing", "concept_name": "M/M/1 queue", "final_state": "misconception", "note": "Still confuses utilization bound"},
+          {"concept_id": "audit_con_little", "concept_name": "Little's Law", "final_state": "resolved"}
+        ],
+        "golden_moments": [
+          {
+            "concept_id": "audit_con_poisson",
+            "description": "Coin-flip intuition worked for Poisson",
+            "reuse_hint": "Reuse coin-flip analogy"
+          },
+          {
+            "concept_id": "audit_con_little",
+            "description": "Coffee-shop line analogy for L=λW clicked",
+            "reuse_hint": "Reuse coffee-shop line analogy for Little's Law"
+          }
+        ]
+      }
+    }
+  ],
+  "patterns": [
+    {
+      "pattern_type": "prefers_examples",
+      "description": "Often asks for worked examples before theory",
+      "confidence": 0.8,
+      "evidence_count": 6
+    },
+    {
+      "pattern_type": "misconception",
+      "description": "Confuses utilization ρ with stability condition in M/M/1",
+      "confidence": 0.85,
+      "evidence_count": 2,
+      "related_concept_ids": ["audit_con_queueing"]
+    }
+  ],
+  "golden_moments": [
+    {
+      "concept_id": "audit_con_poisson",
+      "description": "Coin-flip intuition for Poisson clicked → Reuse: coin-flip / many-trials analogy"
+    },
+    {
+      "concept_id": "audit_con_little",
+      "description": "Coffee-shop line analogy for L=λW clicked → Reuse: coffee-shop line for Little's Law"
+    }
+  ],
+  "prior_course": {
+    "folder": "pedro-audit-prior",
+    "sections_completed": ["Intro to Probability", "Random Variables"],
+    "mastery": [
+      {"concept_id": "audit_prior_prob", "concept_name": "conditional probability", "mastery_score": 0.85, "successes": 4, "struggles": 0}
+    ]
+  },
+  "outline_progress": {
+    "current_section": 1,
+    "completed_sections": [0, 1]
+  }
+}

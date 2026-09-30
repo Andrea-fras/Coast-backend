@@ -1,0 +1,201 @@
+{
+  "persona": "anxious_step_by_step",
+  "persona_name": "Maya",
+  "section_index": 5,
+  "section_title": "Complex ILP Modeling and Computational Aspects",
+  "concepts": [
+    "big m method",
+    "logical constraints",
+    "fixed charge problem",
+    "minimum cost flow problem",
+    "capital budgeting",
+    "operations research",
+    "constraint modeling",
+    "binary variables",
+    "basic feasible solution",
+    "linear programming",
+    "linear programming constraints",
+    "simplex method",
+    "optimization constraints",
+    "binary integer programming",
+    "capacity constraints",
+    "network flow",
+    "unit cost",
+    "supply and demand nodes",
+    "arc capacity",
+    "unit shipping cost",
+    "node supply and demand",
+    "flow conservation",
+    "directed graph",
+    "resource allocation",
+    "mathematical modeling",
+    "mathematical optimization"
+  ],
+  "transcript": [
+    {
+      "turn": 0,
+      "role": "student",
+      "content": "I'm ready to learn about \"Complex ILP Modeling and Computational Aspects\". Please teach me this section."
+    },
+    {
+      "turn": 0,
+      "role": "pedro",
+      "content": "In the previous section, we explored how binary variables allow us to make \"either-or\" decisions. Now, we are going to build on that by using the **Big M Method** to model more complex logical relationships, such as \"if-then\" statements and fixed-charge costs.\n\n### 1. The Big M Method\nThe **Big M** is a modeling technique where $M$ represents a very large constant\u2014essentially \"infinity\" relative to the other numbers in your problem. We use it to \"turn constraints on or off\" based on a binary variable.\n\nImagine you have a constraint that should only apply if you decide to build a factory ($y = 1$). If you don't build it ($y = 0$), the constraint should be ignored.\n\n**The Logic:**\nSuppose $x$ is the production amount and $C$ is the maximum capacity.\n$$x \\leq M \\cdot y$$\n\n*   If $y = 0$ (No factory): The constraint becomes $x \\leq 0$, forcing $x$ to be 0.\n*   If $y = 1$ (Build factory): The constraint becomes $x \\leq M$. Since $M$ is huge, $x$ is now free to take any value up to the actual physical limit.\n\n### 2. Fixed-Charge Problems\nThis is a classic application in operations research. Often, there is a **fixed cost** (like renting a machine) that you pay regardless of how much you produce, plus a **variable cost** per unit.\n\nTo model this, your objective function would look like:\n$$\\text{Minimize } Z = (\\text{Fixed Cost} \\cdot y) + (\\text{Variable Cost} \\cdot x)$$\nSubject to:\n$$x \\leq M \\cdot y$$\nWhere $y$ is a binary variable ($0$ or $1$). This ensures that if you produce anything ($x > 0$), the binary variable $y$ must jump to 1, thereby triggering the fixed cost in the objective function.\n\n### 3. Logical \"Either-Or\" Constraints\nSometimes you have two constraints, but you only need to satisfy **at least one** of them.\nFor example:\n1. $f(x) \\leq b_1$\n2. $g(x) \\leq b_2$\n\nUsing Big M and a binary variable $y$, we can write:\n$$f(x) \\leq b_1 + My$$\n$$g(x) \\leq b_2 + M(1-y)$$\n\n*   If $y=0$: The first constraint is active ($f(x) \\leq b_1$), while the second is \"relaxed\" ($g(x) \\leq b_2 + M$).\n*   If $y=1$: The first is relaxed, and the second is active.\n\n---\n\n### Practice: Interpreting the Model\nLet's see if you can spot the logic. Suppose $x_1, x_2,$ and $z$ are continuous variables, and $y$ is a binary variable. Look at these two constraints from your course notes:\n\n1. $z \\leq x_1 + My$\n2. $z \\leq x_2 + M(1-y)$\n\n**If the solver chooses $y = 0$, which variable is $z$ being forced to be less than or equal to?**"
+    },
+    {
+      "turn": 1,
+      "role": "student",
+      "content": "If $y=0$, I think $z$ would be forced to be less than or equal to $x_1$. The other constraint with $M(1-y)$ would become very large, so it wouldn't be the binding one.",
+      "state": {
+        "understanding_delta": 0.25,
+        "frustration_delta": 0.0,
+        "engagement_delta": 0.2,
+        "mastery_deltas": {
+          "big m method": 0.15,
+          "logical constraints": 0.2,
+          "fixed charge problem": 0.05,
+          "binary variables": 0.05,
+          "constraint modeling": 0.05,
+          "optimization constraints": 0.05
+        },
+        "misconception_added": null,
+        "attempting_exercise": true,
+        "likely_correct": true,
+        "wants_to_end_section": false,
+        "reply": "If $y=0$, I think $z$ would be forced to be less than or equal to $x_1$. The other constraint with $M(1-y)$ would become very large, so it wouldn't be the binding one."
+      }
+    },
+    {
+      "turn": 1,
+      "role": "pedro",
+      "content": "Exactly right! When $y = 0$, the second constraint becomes $z \\leq x_2 + M$, which is so large it effectively disappears. That leaves $z \\leq x_1$ as the binding constraint.\n\nNow, let's take it one step further. In those same notes, we also have these two constraints:\n3. $z \\geq x_1$\n4. $z \\geq x_2$\n\nIf we combine these with the two you just analyzed, we get a specific logical relationship.\n\n**Think about the scenario where $y=0$ again:**\n*   From your answer, we know $z \\leq x_1$.\n*   From constraint #3, we know $z \\geq x_1$.\n*   From constraint #4, we know $z \\geq x_2$.\n\nIf $z$ must be exactly $x_1$, but it also must be at least as large as $x_2$, what does that imply about the relationship between $x_1$ and $x_2$ in the case where $y=0$?"
+    },
+    {
+      "turn": 2,
+      "role": "student",
+      "content": "If $z$ has to be equal to $x_1$, and also $z$ must be greater than or equal to $x_2$, then $x_1$ must be greater than or equal to $x_2$.",
+      "state": {
+        "understanding_delta": 0.15,
+        "frustration_delta": 0.0,
+        "engagement_delta": 0.1,
+        "mastery_deltas": {
+          "big m method": 0.05,
+          "logical constraints": 0.1,
+          "binary variables": 0.05
+        },
+        "misconception_added": null,
+        "attempting_exercise": true,
+        "likely_correct": true,
+        "wants_to_end_section": false,
+        "reply": "If $z$ has to be equal to $x_1$, and also $z$ must be greater than or equal to $x_2$, then $x_1$ must be greater than or equal to $x_2$."
+      }
+    },
+    {
+      "turn": 2,
+      "role": "pedro",
+      "content": "Spot on. If $z = x_1$ and $z \\geq x_2$, then logically $x_1 \\geq x_2$.\n\nThis specific set of four constraints is actually a clever way to model the **Maximum** function: $z = \\max(x_1, x_2)$.\n\nBy using the binary variable $y$, the solver \"picks\" which variable is the maximum. If $x_1$ is larger, the solver can set $y=0$ to make $z=x_1$. If $x_2$ is larger, it sets $y=1$ to make $z=x_2$. Because we are usually minimizing or maximizing an objective, the solver will toggle $y$ to whichever state satisfies all four inequalities.\n\nLet's switch gears to a **Fixed-Charge** scenario to see if you can set up the constraints yourself.\n\nImagine you are a production manager. You are considering renting a specialized 3D printer.\n- The printer has a maximum capacity of **500 units**.\n- If you use the printer at all, you must pay a flat **$2,000 fee**.\n- Let $x$ be the number of units produced.\n- Let $y$ be your binary decision variable (1 if you rent, 0 if you don't).\n\n**How would you write the Big M constraint for this production limit? (Try to use the actual capacity value instead of a generic 'M' if you can!)**"
+    },
+    {
+      "turn": 3,
+      "role": "student",
+      "content": "I think the constraint would be $x \\leq 500y$. If $y$ is 0, $x$ has to be 0, and if $y$ is 1, $x$ can go up to 500.",
+      "state": {
+        "understanding_delta": 0.25,
+        "frustration_delta": 0.0,
+        "engagement_delta": 0.2,
+        "mastery_deltas": {
+          "big m method": 0.15,
+          "fixed charge problem": 0.1,
+          "binary variables": 0.1,
+          "constraint modeling": 0.1,
+          "linear programming constraints": 0.05
+        },
+        "misconception_added": null,
+        "attempting_exercise": true,
+        "likely_correct": true,
+        "wants_to_end_section": false,
+        "reply": "I think the constraint would be $x \\leq 500y$. If $y$ is 0, $x$ has to be 0, and if $y$ is 1, $x$ can go up to 500."
+      }
+    },
+    {
+      "turn": 3,
+      "role": "pedro",
+      "content": "Perfect. Using the actual capacity (500) instead of a generic large $M$ is actually a \"best practice\" in ILP because it makes the model computationally tighter and easier for solvers to process.\n\nNow, let's look at the **Objective Function**. Remember, we have a fixed cost of \\$2,000 to rent the printer ($y$) and let's say a variable cost of **\\$15 per unit** produced ($x$).\n\nIf we want to **minimize** the total cost ($Z$), how would you write that objective function using our variables $x$ and $y$?"
+    }
+  ],
+  "agent_state": {
+    "persona": "anxious_step_by_step",
+    "sim_model": "gemini-2.5-flash",
+    "mastery": {
+      "big m method": 0.5,
+      "logical constraints": 0.45,
+      "fixed charge problem": 0.3,
+      "minimum cost flow problem": 0.15,
+      "capital budgeting": 0.15,
+      "operations research": 0.15,
+      "constraint modeling": 0.3,
+      "binary variables": 0.35,
+      "basic feasible solution": 0.15,
+      "linear programming": 0.15,
+      "linear programming constraints": 0.2,
+      "simplex method": 0.15,
+      "optimization constraints": 0.2,
+      "binary integer programming": 0.15,
+      "capacity constraints": 0.15,
+      "network flow": 0.15,
+      "unit cost": 0.15,
+      "supply and demand nodes": 0.15,
+      "arc capacity": 0.15,
+      "unit shipping cost": 0.15,
+      "node supply and demand": 0.15,
+      "flow conservation": 0.15,
+      "directed graph": 0.15,
+      "resource allocation": 0.15,
+      "mathematical modeling": 0.15,
+      "mathematical optimization": 0.15
+    },
+    "misconceptions": [],
+    "frustration": 0.2,
+    "engagement": 1.0,
+    "current_section": 5,
+    "section_log": [],
+    "turn_log": [
+      {
+        "section": 5,
+        "turn": 1,
+        "pedro": "In the previous section, we explored how binary variables allow us to make \"either-or\" decisions. Now, we are going to build on that by using the **Big M Method** to model more complex logical relationships, such as \"if-then\" statements and fixed-charge costs.\n\n### 1. The Big M Method\nThe **Big M** is a modeling technique where $M$ represents a very large constant\u2014essentially \"infinity\" relative to the other numbers in your problem. We use it to \"turn constraints on or off\" based on a binary variable.\n\nImagine you have a constraint that should only apply if you decide to build a factory ($y = ",
+        "student": "If $y=0$, I think $z$ would be forced to be less than or equal to $x_1$. The other constraint with $M(1-y)$ would become very large, so it wouldn't be the binding one.",
+        "understanding_delta": 0.25,
+        "frustration": 0.2,
+        "engagement": 0.8,
+        "attempting_exercise": true,
+        "likely_correct": true,
+        "wants_to_end_section": false
+      },
+      {
+        "section": 5,
+        "turn": 2,
+        "pedro": "Exactly right! When $y = 0$, the second constraint becomes $z \\leq x_2 + M$, which is so large it effectively disappears. That leaves $z \\leq x_1$ as the binding constraint.\n\nNow, let's take it one step further. In those same notes, we also have these two constraints:\n3. $z \\geq x_1$\n4. $z \\geq x_2$\n\nIf we combine these with the two you just analyzed, we get a specific logical relationship.\n\n**Think about the scenario where $y=0$ again:**\n*   From your answer, we know $z \\leq x_1$.\n*   From constraint #3, we know $z \\geq x_1$.\n*   From constraint #4, we know $z \\geq x_2$.\n\nIf $z$ must be exact",
+        "student": "If $z$ has to be equal to $x_1$, and also $z$ must be greater than or equal to $x_2$, then $x_1$ must be greater than or equal to $x_2$.",
+        "understanding_delta": 0.15,
+        "frustration": 0.2,
+        "engagement": 0.9,
+        "attempting_exercise": true,
+        "likely_correct": true,
+        "wants_to_end_section": false
+      },
+      {
+        "section": 5,
+        "turn": 3,
+        "pedro": "Spot on. If $z = x_1$ and $z \\geq x_2$, then logically $x_1 \\geq x_2$.\n\nThis specific set of four constraints is actually a clever way to model the **Maximum** function: $z = \\max(x_1, x_2)$.\n\nBy using the binary variable $y$, the solver \"picks\" which variable is the maximum. If $x_1$ is larger, the solver can set $y=0$ to make $z=x_1$. If $x_2$ is larger, it sets $y=1$ to make $z=x_2$. Because we are usually minimizing or maximizing an objective, the solver will toggle $y$ to whichever state satisfies all four inequalities.\n\nLet's switch gears to a **Fixed-Charge** scenario to see if you can ",
+        "student": "I think the constraint would be $x \\leq 500y$. If $y$ is 0, $x$ has to be 0, and if $y$ is 1, $x$ can go up to 500.",
+        "understanding_delta": 0.25,
+        "frustration": 0.2,
+        "engagement": 1.0,
+        "attempting_exercise": true,
+        "likely_correct": true,
+        "wants_to_end_section": false
+      }
+    ]
+  }
+}

@@ -14,6 +14,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     create_engine,
@@ -34,6 +35,9 @@ def _set_sqlite_wal(dbapi_conn, connection_record):
     cursor = dbapi_conn.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA busy_timeout=5000")
+    # Safe with WAL (a crash can lose only the last commits, never corrupt) and
+    # avoids an fsync on every commit.
+    cursor.execute("PRAGMA synchronous=NORMAL")
     cursor.close()
 
 
@@ -146,6 +150,43 @@ class ChatMessage(Base):
     user = relationship("User", back_populates="chat_messages")
 
 
+class ConversationDigest(Base):
+    """Rolling conversation summary; original messages remain the evidence."""
+    __tablename__ = 'conversation_digests'
+    user_id = Column(Integer, ForeignKey('users.id'), primary_key=True)
+    conversation_id = Column(String(100), primary_key=True)
+    through_message_id = Column(Integer, nullable=False)
+    summary = Column(Text, nullable=False)
+
+
+class SourceSearchIndex(Base):
+    """Page passages and compact vectors; derived from the shared source extraction."""
+    __tablename__ = "source_search_indexes"
+    source_id = Column(String(100), ForeignKey("folder_sources.source_id"), primary_key=True)
+    stamp = Column(String(100), nullable=False)
+    passages_json = Column(Text, nullable=False)
+    vectors = Column(LargeBinary, default=b"")
+    vector_count = Column(Integer, default=0)
+    dimensions = Column(Integer, default=0)
+    embedding_model = Column(String(100), default="")
+    retry_at = Column(Float, default=0)
+
+
+class SourceChatTurn(Base):
+    """Idempotent source questions; answers/citations are separate from learner evidence."""
+    __tablename__ = "source_chat_turns"
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    request_id = Column(String(100), primary_key=True)
+    folder_name = Column(String(100), nullable=False, index=True)
+    conversation_id = Column(String(100), nullable=False, index=True)
+    question_id = Column(Integer, ForeignKey("chat_messages.id"), nullable=False)
+    answer_id = Column(Integer, ForeignKey("chat_messages.id"), nullable=True)
+    status = Column(String(20), default="running")
+    started_at = Column(Float, nullable=False)
+    citations_json = Column(Text, default="[]")
+    coverage_json = Column(Text, default="{}")
+
+
 class TutorMemo(Base):
     """Compact LLM-generated summary of what Pedro knows about a student."""
     __tablename__ = "tutor_memos"
@@ -214,6 +255,8 @@ class StudyFolder(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     name = Column(String(100), nullable=False)
+    # "lesson" or "workshop" — decided when the course is created, before any roadmap.
+    kind = Column(String(20), default="lesson", nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
@@ -231,7 +274,25 @@ class FolderSource(Base):
     page_count = Column(Integer, default=0)
     raw_text = Column(Text, nullable=False)
     file_path = Column(String(500), nullable=True)
+    # OMA ingest lifecycle: PENDING → INGESTING → READY_FOR_ROADMAP → COMPLETE | FAILED
+    oma_ingest_status = Column(String(30), default="PENDING", nullable=False)
+    oma_ingest_error = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class SourceUpload(Base):
+    """A selected file, registered before the browser sends its bytes."""
+    __tablename__ = "source_uploads"
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    folder_name = Column(String(100), primary_key=True)
+    upload_id = Column(String(80), primary_key=True)
+    filename = Column(String(255), nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    status = Column(String(20), nullable=False, default="queued")
+    source_id = Column(String(50), nullable=True)
+    claim = Column(String(80), nullable=True)
+    expires_at = Column(Float, nullable=False)
+    error = Column(Text, nullable=True)
 
 
 class SourceImage(Base):
@@ -286,6 +347,24 @@ class ActivityEvent(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class AiUsage(Base):
+    """One row per AI provider call: who it was for, which feature, and the tokens billed."""
+    __tablename__ = "ai_usage"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    created_at = Column(DateTime, nullable=False, index=True)
+    user_id = Column(Integer, nullable=True, index=True)  # null for shared/background work
+    feature = Column(String(60), nullable=False, default="background")
+    provider = Column(String(20), nullable=False)
+    model = Column(String(80), nullable=False, default="")
+    input_tokens = Column(Integer, default=0)        # all prompt tokens, cached ones included
+    cached_tokens = Column(Integer, default=0)       # prompt tokens read from the provider's cache
+    cache_write_tokens = Column(Integer, default=0)  # Anthropic cache writes (billed above base input)
+    output_tokens = Column(Integer, default=0)       # includes reasoning/thinking tokens
+    latency_ms = Column(Integer, default=0)
+    ok = Column(Boolean, default=True)
+
+
 class CourseOutline(Base):
     """Structured lesson outline generated from folder sources."""
     __tablename__ = "course_outlines"
@@ -302,6 +381,55 @@ class CourseOutline(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class CourseChatEpoch(Base):
+    """Messages at/before this watermark belong to an earlier generated outline."""
+    __tablename__ = 'course_chat_epochs'
+    user_id = Column(Integer, primary_key=True)
+    folder_name = Column(String(255), primary_key=True)
+    through_message_id = Column(Integer, nullable=False, default=0)
+
+
+class CourseIdentity(Base):
+    """A course title can change; its OMA key does not."""
+    __tablename__ = "course_identities"
+    user_id = Column(Integer, primary_key=True)
+    folder_name = Column(String(255), primary_key=True)
+    namespace_key = Column(String(100), nullable=False, index=True)
+
+
+class LearningJob(Base):
+    """Durable completion outbox; payload is immutable once enqueued."""
+    __tablename__ = "learning_jobs"
+    id = Column(String(64), primary_key=True)
+    payload_json = Column(Text, nullable=False)
+    status = Column(String(20), default="queued", nullable=False, index=True)
+    attempts = Column(Integer, default=0, nullable=False)
+    available_at = Column(Float, default=0, nullable=False)
+    lease_until = Column(Float, default=0, nullable=False)
+    lease_token = Column(String(64), nullable=True)
+    last_error = Column(Text, default="")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class PlacementTestSession(Base):
+    """Server-owned placement result bound to the outline assessed by Pedro."""
+    __tablename__ = "placement_test_sessions"
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    conversation_id = Column(String(100), primary_key=True)
+    folder_name = Column(String(100), nullable=False)
+    target_section = Column(Integer, nullable=False)
+    start_section = Column(Integer, nullable=False)
+    outline_digest = Column(String(64), nullable=False)
+    passed = Column(Boolean, default=False, nullable=False)
+    consumed = Column(Boolean, default=False, nullable=False)
+    # Adaptive placement: sections passed so far, evidence since the last pass, finished.
+    passed_count = Column(Integer, default=0, nullable=False)
+    correct_since = Column(Integer, default=0, nullable=False)
+    graded_since = Column(Integer, default=0, nullable=False)
+    done = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class UserMapState(Base):
     """Player position on the exploration map."""
     __tablename__ = "user_map_state"
@@ -309,10 +437,19 @@ class UserMapState(Base):
     user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
     pos_x = Column(Integer, default=32)
     pos_y = Column(Integer, default=32)
+    pos_world = Column(String(16), nullable=True)  # which world pos_x/pos_y are in ("lumen", "neon")
     full_unlock = Column(Boolean, default=False)
     total_xp = Column(Integer, default=0)
     bonus_unlock_points = Column(Integer, default=0)
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class MapSnapshot(Base):
+    """Catalog-normalized, rebuildable map projection; learning records remain authoritative."""
+    __tablename__ = 'map_snapshots'
+    user_id = Column(Integer, ForeignKey('users.id'), primary_key=True)
+    signature = Column(Text, nullable=False)
+    payload = Column(Text, nullable=False)
 
 
 class SectionVerification(Base):
@@ -340,16 +477,25 @@ class SectionRewardClaim(Base):
 
 
 class MapTileProvenance(Base):
-    """Which lesson section unlocked each map tile."""
+    """Which lesson section unlocked each map tile, per map level (world)."""
     __tablename__ = "map_tile_provenance"
 
     user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    map_level = Column(Integer, primary_key=True, default=1)
     x = Column(Integer, primary_key=True)
     y = Column(Integer, primary_key=True)
     folder_name = Column(String(100), nullable=False)
     section_index = Column(Integer, nullable=False)
     section_title = Column(String(255), default="")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class TreasureChallenge(Base):
+    """The exact question/answer rubric presented to this student, across reloads."""
+    __tablename__ = 'treasure_challenges'
+    user_id = Column(Integer, ForeignKey('users.id'), primary_key=True)
+    chest_id = Column(String(32), primary_key=True)
+    challenge_json = Column(Text, nullable=False)
 
 
 class TreasureChestOpen(Base):
@@ -374,6 +520,20 @@ class EmailVerification(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class BetaCode(Base):
+    """Single-use invite codes: creating an account consumes one (see beta_codes.py)."""
+    __tablename__ = "beta_codes"
+
+    code = Column(String(32), primary_key=True)  # compact form, e.g. COAST7KQ4M9XP
+    note = Column(String(255), default="")  # who it was given to
+    created_by = Column(String(255), default="")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    used_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    used_email = Column(String(255), nullable=True)  # kept even if the account is deleted later
+    used_at = Column(DateTime, nullable=True)
+    revoked = Column(Boolean, default=False, nullable=False)
+
+
 def _run_migrations():
     """Add columns that may be missing from existing tables."""
     from sqlalchemy import inspect, text
@@ -383,16 +543,60 @@ def _run_migrations():
         if "file_path" not in cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE folder_sources ADD COLUMN file_path TEXT"))
+        cols = [c["name"] for c in insp.get_columns("folder_sources")]
+        if "oma_ingest_status" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE folder_sources ADD COLUMN oma_ingest_status VARCHAR(30) DEFAULT 'PENDING'"
+                ))
+                conn.execute(text(
+                    "UPDATE folder_sources SET oma_ingest_status = 'PENDING' "
+                    "WHERE oma_ingest_status IS NULL"
+                ))
+        cols = [c["name"] for c in insp.get_columns("folder_sources")]
+        if "oma_ingest_error" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE folder_sources ADD COLUMN oma_ingest_error TEXT"))
     if "session_answers" in insp.get_table_names():
         cols = [c["name"] for c in insp.get_columns("session_answers")]
         if "tags_json" not in cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE session_answers ADD COLUMN tags_json TEXT DEFAULT '[]'"))
+    if "study_folders" in insp.get_table_names():
+        cols = [c["name"] for c in insp.get_columns("study_folders")]
+        if "kind" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE study_folders ADD COLUMN kind VARCHAR(20) NOT NULL DEFAULT 'lesson'"))
+                # Workshops generated before folders had a kind keep being workshops.
+                import json as _json
+                from workshops import decorate_sections, is_workshop
+                rows = conn.execute(text("SELECT user_id, folder_name, outline_json FROM course_outlines")).fetchall()
+                for uid, name, outline_json in rows:
+                    try:
+                        sections = decorate_sections(name, _json.loads(outline_json or "[]"))
+                    except ValueError:
+                        continue
+                    if is_workshop(sections):
+                        conn.execute(text("UPDATE study_folders SET kind='workshop' WHERE user_id=:u AND name=:n"),
+                                     {"u": uid, "n": name})
+    if "placement_test_sessions" in insp.get_table_names():
+        cols = [c["name"] for c in insp.get_columns("placement_test_sessions")]
+        with engine.begin() as conn:
+            for name, ddl in (("passed_count", "INTEGER NOT NULL DEFAULT 0"),
+                              ("correct_since", "INTEGER NOT NULL DEFAULT 0"),
+                              ("graded_since", "INTEGER NOT NULL DEFAULT 0"),
+                              ("done", "BOOLEAN NOT NULL DEFAULT 0")):
+                if name not in cols:
+                    conn.execute(text(f"ALTER TABLE placement_test_sessions ADD COLUMN {name} {ddl}"))
     if "chat_messages" in insp.get_table_names():
         cols = [c["name"] for c in insp.get_columns("chat_messages")]
         if "section_index" not in cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE chat_messages ADD COLUMN section_index INTEGER"))
+        # Section-level recall over years of history ("what did we do in lecture 3?").
+        with engine.begin() as conn:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_chat_user_course_section "
+                              "ON chat_messages(user_id, context_id, section_index, id)"))
     if "users" in insp.get_table_names():
         cols = [c["name"] for c in insp.get_columns("users")]
         if "learning_preferences" not in cols:
@@ -419,6 +623,17 @@ def _run_migrations():
         if "bonus_unlock_points" not in cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE user_map_state ADD COLUMN bonus_unlock_points INTEGER DEFAULT 0"))
+        if "pos_world" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE user_map_state ADD COLUMN pos_world VARCHAR(16)"))
+    if "map_tile_provenance" in insp.get_table_names():
+        cols = [c["name"] for c in insp.get_columns("map_tile_provenance")]
+        if "map_level" not in cols:
+            # A rebuildable projection of reward claims: recreate it with the level in its key.
+            # Map snapshots are keyed on a versioned signature, so they rebuild on next load.
+            with engine.begin() as conn:
+                conn.execute(text("DROP TABLE map_tile_provenance"))
+            MapTileProvenance.__table__.create(engine)
     if "course_outlines" in insp.get_table_names():
         cols = [c["name"] for c in insp.get_columns("course_outlines")]
         if "ever_mastered" not in cols:

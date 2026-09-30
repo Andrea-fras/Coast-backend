@@ -1,0 +1,92 @@
+{
+  "id": "medium",
+  "user_id": 9102,
+  "email": "audit-medium@coast.test",
+  "name": "Audit Medium",
+  "learning_preferences": {
+    "learning_style": "prefers exercises first with guided walkthroughs, then theory on how it relates"
+  },
+  "identity_traits": [
+    {
+      "trait_type": "learning_style",
+      "description": "prefers exercises first with guided walkthroughs, then theory on how it relates",
+      "confidence": 0.88,
+      "derivation": "Pedro onboarding conversation"
+    }
+  ],
+  "mastery": [
+    {
+      "concept_id": "audit_con_poisson",
+      "concept_name": "Poisson process",
+      "mastery_score": 0.82,
+      "successes": 3,
+      "struggles": 0,
+      "last_eval_state": "mastered"
+    },
+    {
+      "concept_id": "audit_con_exponential",
+      "concept_name": "exponential distribution",
+      "mastery_score": 0.64,
+      "successes": 2,
+      "struggles": 1,
+      "last_eval_state": "resolved"
+    }
+  ],
+  "episodes": [
+    {
+      "episode_type": "exercise_attempt",
+      "outcome": "mistake",
+      "section_index": 0,
+      "concept_ids": ["audit_con_exponential"],
+      "user_message": "I think the mean is λ not 1/λ",
+      "signals": {"provisional": true, "resolved_by_evaluation": true}
+    },
+    {
+      "episode_type": "section_completed",
+      "outcome": "success",
+      "section_index": 0,
+      "section_title": "Poisson and Exponential Foundations"
+    },
+    {
+      "episode_type": "section_evaluation",
+      "outcome": "neutral",
+      "section_index": 0,
+      "section_title": "Poisson and Exponential Foundations",
+      "evaluation": {
+        "section_summary": "Student struggled on exponential mean then got it after walkthrough.",
+        "concepts": [
+          {"concept_id": "audit_con_poisson", "concept_name": "Poisson process", "final_state": "mastered"},
+          {"concept_id": "audit_con_exponential", "concept_name": "exponential distribution", "final_state": "resolved"}
+        ],
+        "golden_moments": [
+          {
+            "concept_id": "audit_con_poisson",
+            "concept_name": "Poisson process",
+            "moment_type": "analogy",
+            "description": "Coin-flip intuition for Poisson arrivals clicked",
+            "reuse_hint": "Reuse the coin-flip / many-trials analogy for Poisson"
+          }
+        ]
+      }
+    }
+  ],
+  "patterns": [
+    {
+      "pattern_type": "prefers_step_by_step",
+      "description": "Prefers step-by-step guided walkthroughs when stuck",
+      "confidence": 0.72,
+      "evidence_count": 4
+    }
+  ],
+  "golden_moments": [
+    {
+      "concept_id": "audit_con_poisson",
+      "description": "Coin-flip intuition for Poisson arrivals clicked → Reuse: coin-flip / many-trials analogy for Poisson"
+    }
+  ],
+  "prior_course": null,
+  "outline_progress": {
+    "current_section": 1,
+    "completed_sections": [0]
+  }
+}

@@ -15,6 +15,7 @@ the student's course-level PatternStores and rolls them up.
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -39,6 +40,18 @@ def days_since_confirmed(ss: dict, now: Optional[datetime] = None) -> Optional[f
         return None
     delta = (now or datetime.now()) - last_dt
     return max(0.0, delta.total_seconds() / 86400.0)
+
+
+_RAW_ID_RE = re.compile(r"\b(?:con|ep|pat|mast|ctx|idn)_\d{8}_\d{6}_[0-9a-f]{6}\b")
+
+# Derivations written by Pedro / onboarding — never auto-retired by the consolidator.
+OBSERVED_DERIVATIONS = ("pedro_remember_tag", "Pedro onboarding conversation")
+
+
+def is_displayable_trait(text: str) -> bool:
+    """False for traits that leak internal ids or are empty — never show those to Pedro."""
+    text = (text or "").strip()
+    return bool(text) and not _RAW_ID_RE.search(text)
 
 
 def effective_trait_confidence(ss: dict, now: Optional[datetime] = None) -> float:
@@ -75,22 +88,31 @@ class AcademicIdentityStore(SemanticStoreBase):
         evidence_courses: list[str],
         derivation: str = "",
         dedupe_key: Optional[str] = None,
+        evidence_quote: Optional[str] = None,
+        observed_at: Optional[str] = None,
     ) -> MemoryItem:
         """Insert or update an identity trait. dedupe_key (optional) lets
         the consolidator say "this is the same trait as before" (e.g. by
         normalized topic name) — otherwise (trait_type, content) is the
-        identity."""
+        identity. observed_at is when the evidence behind a derived trait was
+        last seen: recomputing an inference from old patterns is not fresh
+        evidence, so the trait keeps decaying from that date."""
         existing = self._find_existing(identity_namespace, trait_type, dedupe_key, description)
         ts = now_iso()
+        seen = observed_at or ts
         ss = {
             "trait_type": trait_type,
             "confidence": float(max(0.0, min(1.0, confidence))),
             "evidence_courses": list(evidence_courses),
-            "first_observed": existing.store_specific["first_observed"] if existing else ts,
-            "last_confirmed": ts,
+            "first_observed": existing.store_specific["first_observed"] if existing else seen,
+            "last_confirmed": seen,
             "derivation": derivation,
             "dedupe_key": dedupe_key,
         }
+        # The student's own words behind the trait — keeps paraphrases honest.
+        quote = evidence_quote or ((existing.store_specific or {}).get("evidence_quote") if existing else None)
+        if quote:
+            ss["evidence_quote"] = quote[:300]
         if existing:
             existing.store_specific = ss
             existing.content = description
@@ -135,9 +157,26 @@ class AcademicIdentityStore(SemanticStoreBase):
         now = datetime.now()
         scored: list[tuple[float, MemoryItem]] = []
         for it in self.all(identity_namespace):
+            if not is_displayable_trait(it.content):
+                continue
             ss = it.store_specific or {}
             eff = effective_trait_confidence(ss, now)
             if eff >= min_confidence:
                 scored.append((eff, it))
         scored.sort(key=lambda kv: kv[0], reverse=True)
         return [it for _, it in scored]
+
+    def retire_derived(self, identity_namespace: str, trait_types: tuple, keep_keys: set) -> int:
+        """Remove consolidator-derived traits of these types that are no longer
+        supported, plus any malformed trait. Observed traits (Pedro tags,
+        onboarding) are kept."""
+        n = 0
+        for it in self.all(identity_namespace):
+            ss = it.store_specific or {}
+            malformed = not is_displayable_trait(it.content)
+            derived = ss.get("derivation") not in OBSERVED_DERIVATIONS
+            stale = ss.get("trait_type") in trait_types and derived and ss.get("dedupe_key") not in keep_keys
+            if malformed or stale:
+                self.delete(it.id)
+                n += 1
+        return n

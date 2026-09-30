@@ -1,0 +1,43 @@
+{
+  "run_id": "twin_14_overconfident_speedrunner_3b58d7",
+  "persona": "overconfident_speedrunner",
+  "user_id": 14,
+  "folder": "Operations",
+  "sections_run": 1,
+  "total_turns": 4,
+  "mastery_trajectory": [
+    0.378
+  ],
+  "frustration_trajectory": [
+    0.25
+  ],
+  "engagement_trajectory": [
+    0.9
+  ],
+  "give_ups": 0,
+  "exercise_attempts": 3,
+  "claimed_correct_rate": 1.0,
+  "pedro_avg_chars": 1469.4,
+  "student_avg_chars": 141.4,
+  "talk_ratio_pedro_per_student": 10.39,
+  "pedro_emitted_section_complete": 0,
+  "forced_advances": 1,
+  "recall_markers_in_pedro_replies": 1,
+  "capture_writes": {
+    "remember_traits": 1,
+    "clicked_golden_moments": 0,
+    "available": true
+  },
+  "per_section": [
+    {
+      "section_index": 35,
+      "title": "Operations Research Comprehensive Exam Review Part 2",
+      "turns": 4,
+      "frustration_end": 0.25,
+      "engagement_end": 0.9,
+      "avg_mastery_end": 0.378,
+      "gave_up": false,
+      "n_concepts": 25
+    }
+  ]
+}

@@ -3,8 +3,9 @@ services:
     name: coast-api
     runtime: python
     plan: professional
-    buildCommand: apt-get update && apt-get install -y poppler-utils && pip install -r requirements.txt
+    buildCommand: apt-get update && apt-get install -y poppler-utils tesseract-ocr && pip install -r requirements.txt
     startCommand: gunicorn server:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT --timeout 300 --graceful-timeout 300 --workers 1
+    healthCheckPath: /api/health
     disk:
       name: coast-data
       mountPath: /data
@@ -40,8 +41,24 @@ services:
       # User-uploaded PDFs + extracted source images — must survive redeploys
       - key: FOLDER_UPLOADS_DIR
         value: "/data/folder_uploads"
+      # AI admission per process. Pedro's streams hold a slot for the whole answer, so
+      # leave room for every student chatting at once; background prep stays capped.
+      - key: COAST_OPENAI_CONCURRENCY
+        value: "16"
+      - key: COAST_OPENAI_BACKGROUND_CONCURRENCY
+        value: "4"
+      - key: COAST_GEMINI_CONCURRENCY
+        value: "16"
+      - key: COAST_GEMINI_BACKGROUND_CONCURRENCY
+        value: "4"
+      - key: COAST_ANTHROPIC_CONCURRENCY
+        value: "16"
+      - key: COAST_ANTHROPIC_BACKGROUND_CONCURRENCY
+        value: "4"
+      - key: COAST_EXTRACT_CONCURRENCY
+        value: "2"
       - key: PEDRO_PROVIDER
-        value: "gemini"
+        value: "anthropic"
       - key: FRONTEND_URL
         value: "https://app.coast.academy"
       - key: OPENAI_API_KEY
@@ -54,6 +71,9 @@ services:
         sync: false
       - key: GOOGLE_CLIENT_ID
         sync: false
+      # New accounts must prove they own their email (a code sent through Resend).
+      - key: AUTH_EMAIL_VERIFICATION
+        value: "true"
       - key: RESEND_API_KEY
         sync: false
       - key: RESEND_FROM

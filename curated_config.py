@@ -16,6 +16,10 @@ CURATED_FOLDER_NAMES = {
     "Memory Palace",
     "First-Principles Thinking",
     "The Polya Method",
+    # Hands-on workshops that teach from their own contracts and labs (workshop_library).
+    "Build Your Own LLM",
+    "Build a Rocket",
+    "Build a Brain",
 }
 CURATED_CONTENT_DIR = Path(__file__).parent / "curated_content"
 CURATED_USER_ID = 0
@@ -416,6 +420,24 @@ CURATED_STATIC_OUTLINES: dict[str, list[dict]] = {
     ],
 }
 
+# New enrolments use outcome-led wording. Existing outlines remain stored as-is;
+# the lesson read/prompt paths attach the matching practice contracts in memory.
+from workshops import MEMORY_STEPS, decorate_sections
+from workshop_library import LIBRARY, WITHOUT_SOURCES
+for _section, _step in zip(CURATED_STATIC_OUTLINES["Memory Palace"], MEMORY_STEPS):
+    _section.update(title=_step["title"], learning_objectives=list(_step["criteria"]),
+                    key_topics=list(_step["topics"]), estimated_minutes=_step["minutes"])
+CURATED_STATIC_OUTLINES["Memory Palace"] = decorate_sections(
+    "Memory Palace", CURATED_STATIC_OUTLINES["Memory Palace"])
+
+# The workshops written in workshop_library get their roadmap straight from their milestones.
+for _folder in WITHOUT_SOURCES:
+    CURATED_STATIC_OUTLINES[_folder] = decorate_sections(_folder, [
+        {"title": _step["title"], "learning_objectives": list(_step["criteria"]),
+         "key_topics": list(_step["topics"]), "estimated_minutes": _step["minutes"]}
+        for _step in LIBRARY[_folder]["steps"]
+    ])
+
 CURATED_LESSON_STRUCTURES = {
     "Quantitative Methods 1": {
         "description": "This course has THREE distinct parts that MUST be reflected as top-level groupings:",
@@ -758,6 +780,8 @@ def bootstrap_curated_content(folder_name: str, *, force: bool = False) -> dict:
 
     if folder_name not in CURATED_FOLDER_NAMES:
         return {"error": "Not a premade lesson folder."}
+    if folder_name in WITHOUT_SOURCES:
+        return {"ok": True, "folder": folder_name, "skipped": True, "content_ready": True, "sources": 0}
 
     if not force and is_curated_content_ready(folder_name):
         pdf_sources = _curated_pdf_sources(folder_name)
@@ -840,6 +864,8 @@ def prepare_curated_lesson(user_id: int, folder_name: str) -> dict:
 
 def is_curated_content_ready(folder_name: str) -> bool:
     """Read-only check — true when RAG sources exist and Content OMA is indexed."""
+    if folder_name in WITHOUT_SOURCES:
+        return True  # taught from its milestone contracts and labs; nothing to index
     pdf_sources = _curated_pdf_sources(folder_name)
     if not pdf_sources:
         return False
@@ -926,6 +952,7 @@ def ingest_curated_sources():
                             if oma_provider.is_oma_enabled():
                                 oma_provider.ingest_pdf_async(
                                     CURATED_USER_ID, folder_name, file_path,
+                                    source_id=source_id,
                                 )
                                 print(f"  [curated] OMA ingest queued: {file_path.name}")
                         except Exception:
@@ -973,6 +1000,7 @@ def _ensure_oma_for_existing_sources():
                     if path and Path(path).is_file():
                         oma_provider.ingest_pdf_async(
                             CURATED_USER_ID, folder_name, path,
+                            source_id=src.get("source_id"),
                         )
                 print(f"  [curated] OMA background ingest queued for {folder_name}")
         except Exception:

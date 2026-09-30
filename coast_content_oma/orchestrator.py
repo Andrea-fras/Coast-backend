@@ -71,7 +71,10 @@ _PATTERNS: list[tuple[QueryClass, list[str]]] = [
         r"\b(foundation|background) (for|to|needed for)\b",
     ]),
     ("figure", [
-        r"\b(diagram|figure|picture|image|graph|chart|visual)\b",
+        # "graph" alone is usually the subject (graph theory, a graph's degree), not a picture.
+        r"\b(diagram|figure|picture|image|chart|visual|plot)s?\b",
+        r"\b(show|draw|plot|sketch|see)( me)?( a| the| this| that)? graphs?\b",
+        r"\bgraphs? (on|in) (the )?(slide|page|lecture|notes)\b",
         r"\bshow me\b",
     ]),
     ("explanation", [
@@ -120,6 +123,7 @@ class RetrievalResult:
         """
         out: list[str] = []
         out.append(f"--- COURSE MATERIAL (retrieved via Content OMA, query class: {self.query_class}) ---")
+        out.append('Cite explanations and diagrams with their supplied filename and page, e.g. (Lecture 2.pdf, p. 4). Never invent a source or page; omit a citation when metadata is unavailable.')
 
         if self.concept_candidates:
             out.append("\n[Relevant concepts]")
@@ -195,10 +199,12 @@ class ContentOrchestrator:
         concept_store: ConceptStore,
         content_store: ContentStore,
         image_store: ImageStore,
+        resolver=None,
     ):
         self.concept = concept_store
         self.content = content_store
         self.images = image_store
+        self.resolver = resolver
 
     def retrieve(
         self,
@@ -246,7 +252,9 @@ class ContentOrchestrator:
         elif qclass == "prerequisite":
             if concept_candidates:
                 top_concept = concept_candidates[0]
-                pre_chain = self.concept.traverse_prereq_chain(namespace, top_concept.id, max_depth=4)
+                pre_chain = self.concept.traverse_prereq_chain(
+                    namespace, top_concept.id, max_depth=4, resolver=self.resolver,
+                )
                 # Return the prerequisite concepts themselves as the primary result.
                 concept_candidates = [top_concept] + pre_chain
                 # Also pull definitions from ContentStore for each prereq.
@@ -413,8 +421,10 @@ class ContentOrchestrator:
 def build_orchestrator(db_path: Path, image_dir: Path) -> ContentOrchestrator:
     """One-line factory: returns an orchestrator with all three stores
     wired to a single SQLite database."""
+    from .concept_resolve import resolver_for_db
+
     concept = ConceptStore(db_path)
     content = ContentStore(db_path)
     images = ImageStore(db_path)
     image_dir.mkdir(parents=True, exist_ok=True)
-    return ContentOrchestrator(concept, content, images)
+    return ContentOrchestrator(concept, content, images, resolver=resolver_for_db(db_path))

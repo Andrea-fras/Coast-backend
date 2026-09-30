@@ -1,0 +1,26 @@
+{
+  "id": "sparse",
+  "user_id": 9101,
+  "email": "audit-sparse@coast.test",
+  "name": "Audit Sparse",
+  "learning_preferences": {
+    "learning_style": "prefers exercises first with guided walkthroughs, then theory on how it relates"
+  },
+  "identity_traits": [
+    {
+      "trait_type": "learning_style",
+      "description": "prefers exercises first with guided walkthroughs, then theory on how it relates",
+      "confidence": 0.85,
+      "derivation": "Pedro onboarding conversation"
+    }
+  ],
+  "mastery": [],
+  "episodes": [],
+  "patterns": [],
+  "golden_moments": [],
+  "prior_course": null,
+  "outline_progress": {
+    "current_section": 0,
+    "completed_sections": []
+  }
+}

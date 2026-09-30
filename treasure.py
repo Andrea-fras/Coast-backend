@@ -2,20 +2,28 @@
 
 from __future__ import annotations
 
+import provider_capacity
+
 import hashlib
 import json
 import os
 import random
 import re
+from pathlib import Path
+from sqlalchemy import text
+from sqlalchemy.dialects.sqlite import insert
 from datetime import datetime, timezone
 
-from database import CourseOutline, SessionLocal, TreasureChestOpen, UserMapState
+from database import CourseOutline, SessionLocal, TreasureChestOpen, TreasureChallenge, UserMapState, SectionVerification, SectionRewardClaim
 
-# Must match coastWorldMap.js treasure placements (stable ids = "x,y").
-TREASURE_CHESTS = [
-    {"id": "150,115", "x": 150, "y": 115, "name": "Sunken Hoard"},
-    {"id": "128,50", "x": 128, "y": 50, "name": "Hidden Cache"},
-]
+# Exported from the same world generators the browser renders; ids carry the
+# world ("lumen:x,y", "neon:x,y") so they stay unique across levels.
+def _load_chests() -> list[dict]:
+    import map_world
+    return [{**c, 'level': no} for no, lv in sorted(map_world.LEVELS.items()) for c in lv.chests]
+
+
+TREASURE_CHESTS = _load_chests()
 
 XP_REWARD = 40
 MIN_SCORE_TO_PASS = 50
@@ -51,16 +59,7 @@ def _chest_by_id(chest_id: str) -> dict | None:
     for c in TREASURE_CHESTS:
         if c["id"] == chest_id:
             return c
-    try:
-        parts = chest_id.split(",")
-        if len(parts) != 2:
-            return None
-        x, y = int(parts[0]), int(parts[1])
-        if not (0 <= x < 256 and 0 <= y < 256):
-            return None
-        return {"id": chest_id, "x": x, "y": y, "name": "Treasure Chest"}
-    except (ValueError, TypeError):
-        return None
+    return None
 
 
 def _opened_ids(user_id: int) -> set[str]:
@@ -111,7 +110,12 @@ def _concept_pool(user_id: int) -> list[dict]:
             src_uid = _curated_uid(folder) if _curated_uid(folder) is not None else user_id
             sections = json.loads(outline.outline_json or "[]")
             cs = int(outline.current_section or 0)
-            for i in range(min(cs, len(sections))):
+            completed = {i for i in range(min(cs, len(sections)))}
+            completed.update(r.section_index for r in db.query(SectionVerification).filter_by(user_id=user_id, folder_name=folder, is_active=True))
+            completed.update(r.section_index for r in db.query(SectionRewardClaim).filter_by(user_id=user_id, folder_name=folder))
+            for i in sorted(completed):
+                if not 0 <= i < len(sections):
+                    continue
                 sec = sections[i]
                 sec_title = sec.get("title") or f"Section {i + 1}"
                 refs = lesson.get_section_concept_refs(
@@ -143,7 +147,7 @@ def _concept_model_answer(src_uid: int, folder: str, concept_id: str, concept_na
     parts: list[str] = []
 
     concept = orch.concept.get(concept_id)
-    if concept:
+    if concept and concept.namespace == ns:
         ss = concept.store_specific or {}
         definition = (ss.get("definition") or concept.content or "").strip()
         if definition:
@@ -233,6 +237,7 @@ def _grade_answer(question: str, model_answer: str, student_answer: str, concept
             "score": 0,
             "is_correct": False,
             "feedback": "Answer grading is not configured on the server.",
+            "error": "grading_unavailable",
         }
 
     from openai import OpenAI
@@ -247,19 +252,19 @@ def _grade_answer(question: str, model_answer: str, student_answer: str, concept
     )
 
     try:
-        response = client.chat.completions.create(
+        response = provider_capacity.call('openai', lambda: client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=250,
             temperature=0.2,
-        )
+        ), priority='interactive')
         raw = response.choices[0].message.content.strip()
         if raw.startswith("```"):
             lines = raw.split("\n")
             raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
         result = json.loads(raw)
         score = min(max(int(result.get("score", 0)), 0), 100)
-        is_correct = bool(result.get("is_correct", score >= MIN_SCORE_TO_PASS))
+        is_correct = score >= MIN_SCORE_TO_PASS
         return {
             "score": score,
             "is_correct": is_correct,
@@ -270,28 +275,37 @@ def _grade_answer(question: str, model_answer: str, student_answer: str, concept
             "score": 0,
             "is_correct": False,
             "feedback": "Could not grade your answer — please try again.",
+            "error": "grading_unavailable",
         }
 
 
 def build_quiz(user_id: int, chest_id: str) -> dict:
-    challenge = _build_challenge(user_id, chest_id)
-    if challenge.get("error"):
-        return challenge
-
-    return {
-        "chest_id": challenge["chest_id"],
-        "chest_name": challenge["chest_name"],
-        "challenge_id": challenge["challenge_id"],
-        "concept_name": challenge["concept_name"],
-        "folder": challenge["folder"],
-        "section": challenge["section"],
-        "question": challenge["question"],
-        "xp_reward": XP_REWARD,
-    }
+    chest = _chest_by_id(chest_id)
+    if not chest:
+        return {'error': 'Unknown treasure chest'}
+    if chest_id in _opened_ids(user_id):
+        return {'error': 'already_opened', 'already_opened': True}
+    import map_world
+    if not map_world.is_charted(user_id, int(chest.get('level') or 1), chest['x'], chest['y']):
+        return {'error': 'Explore this tile before opening its treasure'}
+    with SessionLocal() as db:
+        row = db.get(TreasureChallenge, (user_id, chest_id))
+        challenge = json.loads(row.challenge_json) if row else None
+    if challenge is None:
+        challenge = _build_challenge(user_id, chest_id)
+        if challenge.get('error'):
+            return challenge
+        with SessionLocal() as db:
+            db.execute(insert(TreasureChallenge).values(user_id=user_id, chest_id=chest_id,
+                challenge_json=json.dumps(challenge)).on_conflict_do_nothing())
+            db.commit()
+            challenge = json.loads(db.get(TreasureChallenge, (user_id, chest_id)).challenge_json)
+    return {key: challenge[key] for key in ('chest_id', 'chest_name', 'challenge_id',
+        'concept_name', 'folder', 'section', 'question')} | {'xp_reward': XP_REWARD}
 
 
 def complete_treasure(user_id: int, chest_id: str, answer: str) -> dict:
-    """Verify typed answer against Content OMA material; open chest once on success."""
+    """Grade the issued question and consume a valid attempt once, whether correct or not."""
     chest = _chest_by_id(chest_id)
     if not chest:
         return {"error": "Unknown treasure chest"}
@@ -306,11 +320,11 @@ def complete_treasure(user_id: int, chest_id: str, answer: str) -> dict:
             "message": "Write a short answer (at least a sentence or two).",
         }
 
-    challenge = _build_challenge(user_id, chest_id)
-    if challenge.get("error") == "already_opened":
-        return challenge
-    if challenge.get("error"):
-        return challenge
+    with SessionLocal() as db:
+        row = db.get(TreasureChallenge, (user_id, chest_id))
+        if row is None:
+            return {'error': 'Open the chest question before submitting an answer'}
+        challenge = json.loads(row.challenge_json)
 
     grade = _grade_answer(
         challenge["question"],
@@ -319,20 +333,13 @@ def complete_treasure(user_id: int, chest_id: str, answer: str) -> dict:
         challenge["concept_name"],
     )
 
-    if not grade["is_correct"]:
-        return {
-            "ok": False,
-            "correct": 0,
-            "required": 1,
-            "score": grade["score"],
-            "feedback": grade["feedback"],
-            "message": grade["feedback"] or "Not quite — review the concept and try again.",
-        }
-
-    xp = XP_REWARD
+    if grade.get('error'):
+        return {'error': grade['error'], 'message': grade['feedback']}
+    xp = XP_REWARD if grade['is_correct'] else 0
 
     db = SessionLocal()
     try:
+        db.execute(text('BEGIN IMMEDIATE'))
         existing = db.query(TreasureChestOpen).filter(
             TreasureChestOpen.user_id == user_id,
             TreasureChestOpen.chest_id == chest_id,
@@ -351,7 +358,7 @@ def complete_treasure(user_id: int, chest_id: str, answer: str) -> dict:
             user_id=user_id,
             chest_id=chest_id,
             xp_gained=xp,
-            correct_count=1,
+            correct_count=int(grade['is_correct']),
             opened_at=datetime.now(timezone.utc),
         ))
         db.commit()
@@ -363,7 +370,8 @@ def complete_treasure(user_id: int, chest_id: str, answer: str) -> dict:
     state = map_world.get_map_state(user_id)
     return {
         "ok": True,
-        "correct": 1,
+        "consumed": True,
+        "correct": int(grade['is_correct']),
         "total_cards": 1,
         "score": grade["score"],
         "feedback": grade["feedback"],

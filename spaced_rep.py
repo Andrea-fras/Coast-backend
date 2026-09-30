@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import provider_capacity
 import os
 import traceback
 from datetime import datetime, timedelta, timezone
@@ -116,7 +117,7 @@ def extract_concepts(notebook_json: dict) -> list[dict]:
         if gemini_key:
             from google import genai
             client = genai.Client(api_key=gemini_key)
-            response = client.models.generate_content(
+            response = provider_capacity.call('gemini', lambda: client.models.generate_content(
                 model="gemini-3.1-pro-preview",
                 contents=notebook_text + "\n\nExtract key reviewable concepts as JSON.",
                 config={
@@ -124,7 +125,7 @@ def extract_concepts(notebook_json: dict) -> list[dict]:
                     "max_output_tokens": 2048,
                     "temperature": 0.3,
                 },
-            )
+            ), priority='background')
             text = ""
             if response.candidates:
                 for part in (response.candidates[0].content.parts or []):
@@ -133,12 +134,12 @@ def extract_concepts(notebook_json: dict) -> list[dict]:
         else:
             from openai import OpenAI
             openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
-            resp = openai_client.chat.completions.create(
+            resp = provider_capacity.call('openai', lambda: openai_client.chat.completions.create(
                 model=os.getenv("OPENAI_MODEL", "gpt-4o"),
                 messages=messages,
                 max_tokens=2048,
                 temperature=0.3,
-            )
+            ), priority='background')
             text = resp.choices[0].message.content or ""
 
         cleaned = text.strip()
@@ -426,7 +427,7 @@ def generate_briefing(user_id: int, user_name: str) -> str:
             from google import genai
             client = genai.Client(api_key=gemini_key)
             try:
-                response = client.models.generate_content(
+                response = provider_capacity.call('gemini', lambda: client.models.generate_content(
                     model="gemini-3.1-pro-preview",
                     contents=context,
                     config={
@@ -435,7 +436,7 @@ def generate_briefing(user_id: int, user_name: str) -> str:
                         "temperature": 0.8,
                         "thinking_config": {"thinking_budget": 1024},
                     },
-                )
+                ), priority='background')
                 text = ""
                 if response.candidates and response.candidates[0].content:
                     for part in (response.candidates[0].content.parts or []):
@@ -450,12 +451,12 @@ def generate_briefing(user_id: int, user_name: str) -> str:
         if openai_key:
             from openai import OpenAI
             openai_client = OpenAI(api_key=openai_key)
-            resp = openai_client.chat.completions.create(
+            resp = provider_capacity.call('openai', lambda: openai_client.chat.completions.create(
                 model=os.getenv("OPENAI_MODEL", "gpt-4o"),
                 messages=messages,
                 max_tokens=500,
                 temperature=0.8,
-            )
+            ), priority='background')
             text = resp.choices[0].message.content or ""
             if text.strip():
                 return text.strip()

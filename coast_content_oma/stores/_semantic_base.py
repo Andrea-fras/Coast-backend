@@ -11,6 +11,10 @@ fixes the store name.
 
 from __future__ import annotations
 
+from .. import embedding_health
+
+import provider_capacity
+
 import json
 import logging
 import os
@@ -53,7 +57,7 @@ class SemanticStoreBase:
 
     def _init_db(self) -> None:
         with connect_db(self.db_path) as conn:
-            conn.executescript(f"""
+            schema = f"""
                 CREATE TABLE IF NOT EXISTS {self.table} (
                     id TEXT PRIMARY KEY,
                     namespace TEXT NOT NULL,
@@ -74,7 +78,11 @@ class SemanticStoreBase:
                 CREATE INDEX IF NOT EXISTS idx_{self.table}_importance ON {self.table}(importance);
                 CREATE VIRTUAL TABLE IF NOT EXISTS {self.fts_table}
                     USING fts5(id UNINDEXED, namespace UNINDEXED, content, entities, tags);
-            """)
+            """
+            for statement in schema.split(';'):
+                if statement.strip():
+                    conn.execute(statement)
+
 
     # ── Write ─────────────────────────────────────────────────────
 
@@ -110,23 +118,24 @@ class SemanticStoreBase:
             item.store = self.STORE_NAME
         self._insert(item)
 
-    def write_items_bulk(self, items: list[MemoryItem], batch_size: int = 200) -> None:
+    def write_items_bulk(self, items: list[MemoryItem], batch_size: int = 200, *, embed: bool = True) -> None:
         """Bulk insert with batched embedding. Much cheaper than per-item."""
         if not items:
             return
         id_to_emb: dict[str, list[float]] = {}
-        if os.environ.get("OPENAI_API_KEY"):
+        if embed and embedding_health.available() and self.STORE_NAME not in ('episode', 'pattern', 'concept_mastery', 'active_context', 'academic_identity') and os.environ.get("OPENAI_API_KEY"):
             try:
                 if self._client is None:
                     from openai import OpenAI
-                    self._client = OpenAI()
+                    self._client = OpenAI(max_retries=0, timeout=20)
                 for start in range(0, len(items), batch_size):
                     chunk = items[start : start + batch_size]
                     texts = [it.content[:8000] for it in chunk]
-                    resp = self._client.embeddings.create(model=EMBED_MODEL, input=texts)
+                    resp = provider_capacity.call('openai', lambda: self._client.embeddings.create(model=EMBED_MODEL, input=texts))
                     for it, data in zip(chunk, resp.data):
                         id_to_emb[it.id] = list(data.embedding)
             except Exception as e:
+                embedding_health.note_error(e)
                 logger.warning(f"bulk embedding failed ({e}); inserting without embeddings.")
                 id_to_emb = {}
 
@@ -149,6 +158,7 @@ class SemanticStoreBase:
                         _pack(emb) if emb else None,
                     ),
                 )
+                conn.execute(f"DELETE FROM {self.fts_table} WHERE id = ?", (it.id,))
                 conn.execute(
                     f"INSERT OR REPLACE INTO {self.fts_table} (id, namespace, content, entities, tags) VALUES (?,?,?,?,?)",
                     (it.id, it.namespace, it.content, " ".join(it.entities), " ".join(it.tags)),
@@ -171,6 +181,7 @@ class SemanticStoreBase:
                     _pack(emb) if emb else None,
                 ),
             )
+            conn.execute(f"DELETE FROM {self.fts_table} WHERE id = ?", (item.id,))
             conn.execute(
                 f"INSERT OR REPLACE INTO {self.fts_table} (id, namespace, content, entities, tags) VALUES (?,?,?,?,?)",
                 (item.id, item.namespace, item.content, " ".join(item.entities), " ".join(item.tags)),
@@ -421,15 +432,20 @@ class SemanticStoreBase:
         return n
 
     def _embed(self, text: str) -> Optional[list[float]]:
-        if not os.environ.get("OPENAI_API_KEY"):
+        # Student recall queries structured evidence; embedding every counter,
+        # episode and pattern added cost without a consumer.
+        if self.STORE_NAME in {"episode", "pattern", "concept_mastery", "active_context", "academic_identity"}:
+            return None
+        if not os.environ.get("OPENAI_API_KEY") or not embedding_health.available():
             return None
         try:
             if self._client is None:
                 from openai import OpenAI
-                self._client = OpenAI()
-            resp = self._client.embeddings.create(model=EMBED_MODEL, input=text[:8000])
+                self._client = OpenAI(max_retries=0, timeout=20)
+            resp = provider_capacity.call('openai', lambda: self._client.embeddings.create(model=EMBED_MODEL, input=text[:8000]))
             return resp.data[0].embedding
         except Exception as e:
+            embedding_health.note_error(e)
             logger.debug(f"embedding failed: {e}")
             return None
 
