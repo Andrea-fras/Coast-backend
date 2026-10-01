@@ -31,7 +31,8 @@ def _state(m):
             'MASTERED': 'RESOLVED'}.get(state, state)
 
 
-_TRAIT_LABEL = {'general_strength': 'Cross-course strength', 'general_weakness': 'Cross-course difficulty'}
+_TRAIT_LABEL = {'general_strength': 'Cross-course strength', 'general_weakness': 'Cross-course difficulty',
+                'study_context': 'Studies', 'goal': 'Goal', 'constraint': 'Constraint'}
 
 
 def _trait_line(trait, limit):

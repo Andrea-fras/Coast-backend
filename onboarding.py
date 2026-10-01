@@ -18,6 +18,9 @@ TRAIT_TYPES = frozenset({
     "motivation_pattern",
     "general_strength",
     "general_weakness",
+    "study_context",
+    "goal",
+    "constraint",
 })
 
 EXTRACT_PROMPT = """You extract durable student profile traits from Pedro's onboarding chat.
@@ -29,7 +32,7 @@ Conversation:
 ---
 
 Return ONLY valid JSON — an array of 0-5 objects:
-[{{"trait_type": "learning_style|session_pattern|motivation_pattern|general_strength|general_weakness", "description": "short phrase Pedro can reuse", "confidence": 0.5-0.95, "evidence": "the student's own words this is based on"}}]
+[{{"trait_type": "learning_style|session_pattern|motivation_pattern|general_strength|general_weakness|study_context|goal|constraint", "description": "short phrase Pedro can reuse", "confidence": 0.5-0.95, "evidence": "the student's own words this is based on"}}]
 
 Rules:
 - Only include what the student explicitly said or clearly implied about how they study.
@@ -37,6 +40,7 @@ Rules:
 - "evidence" is a verbatim quote from a Student line.
 - Descriptions are third-person, concise (under 80 chars), usable by a tutor later.
 - Prefer learning_style for how they like explanations (examples, visuals, step-by-step, concise, etc.).
+- What they study, where and at what level (programme, university, courses) is study_context; an aim, exam or deadline is goal (name the course and keep any date they gave); time, language or accessibility needs are constraint. These are never session_pattern.
 - If nothing substantive was shared, return [].
 """
 
@@ -57,9 +61,11 @@ def is_onboarding_start(message: str) -> bool:
 
 
 def strip_onboarding_tags(text: str) -> str:
-    out = text or ""
-    out = out.replace(TAG_ONBOARDING_COMPLETE, "")
-    return out.strip()
+    """The reply as the student sees it. [REMEMBER]/[CLICKED] aren't applied here: onboarding
+    traits come from the student's own words once the chat ends (finalize_onboarding)."""
+    out = (text or "").replace(TAG_ONBOARDING_COMPLETE, "")
+    out = re.sub(r"\[(?:REMEMBER|CLICKED)\s*:[^\]\n]*\]", "", out)
+    return re.sub(r"\n{3,}", "\n\n", out).strip()
 
 
 def _parse_traits_json(raw: str) -> list[dict]:
@@ -337,11 +343,14 @@ def traits_to_preferences(traits: list[dict]) -> dict:
     prefs: dict = {}
     for t in traits:
         ttype = t.get("trait_type")
-        desc = t.get("description")
-        if ttype == "learning_style" and desc:
-            prefs["learning_style"] = desc
-        elif ttype == "motivation_pattern" and desc:
-            prefs["study_goal"] = desc
-        elif ttype == "session_pattern" and desc:
-            prefs["when_stuck"] = desc
+        desc = (t.get("description") or "").strip()
+        if not desc:
+            continue
+        # Several of one kind are joined, not overwritten by the last.
+        key = ("learning_style" if ttype == "learning_style" else "study_goal" if ttype in ("motivation_pattern", "goal")
+               # A session pattern is only about being stuck when it says so ("four courses at once" isn't).
+               else "when_stuck" if ttype == "session_pattern" and re.search(r"stuck|hint|clue|help", desc, re.I)
+               else None)
+        if key:
+            prefs[key] = f"{prefs[key]}; {desc}" if key in prefs else desc
     return prefs

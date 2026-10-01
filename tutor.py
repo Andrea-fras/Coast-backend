@@ -264,7 +264,7 @@ PERSONALIZATION — use the STUDENT PROFILE block, not just active context. The 
 
 CAPTURE STUDENT CONTEXT — your memory of the student grows beyond onboarding. When the student tells you something durable about how they learn, their goals, or their habits (NOT a one-off question), you may emit a hidden tag at the very end of your reply:
   [REMEMBER: <trait_type>: <short description>]
-where trait_type is one of: learning_style, session_pattern, motivation_pattern, general_strength, general_weakness.
+where trait_type is one of: learning_style, session_pattern, motivation_pattern, general_strength, general_weakness; or, about their studies, study_context (what, where and at what level they study), goal (an aim, exam or deadline, naming the course and any date given), constraint (time, language or accessibility needs).
 - Use sparingly — only when the student clearly reveals a lasting trait, not a temporary preference or a section-specific question.
 - Keep descriptions short, third-person, reusable (e.g. "[REMEMBER: learning_style: benefits from diagrams and visual explanations]").
 - Record ONLY what the student actually said, keeping their meaning exactly — including order words like "first" or "before". Never add preferences they did not state (e.g. do not add "tables" because you happened to use one).
@@ -1375,8 +1375,21 @@ def send_message_stream(
                 yield (reply, None)
                 viz_done = True
 
-        claude_done = False
-        if not viz_done and CHAT_PROVIDER == "anthropic":
+        answered = False  # a model has produced the reply (never restart one the student already sees)
+        answered_by = None  # which model, saved with the reply
+        import openai_chat
+        # Lesson, workshop and global-chat turns (the v2 requests) run on GPT-5.6 luna.
+        if not viz_done and pedro_request is not None and openai_chat.ENABLED:
+            try:
+                for chunk in openai_chat.stream_request(pedro_request.system, pedro_request.messages,
+                                                        cache_key=f"pedro:{user_id}:{conversation_id}"):
+                    full_reply += chunk
+                    yield (chunk, None)
+                answered_by = openai_chat.LUNA_MODEL
+            except openai_chat.OpenAIUnavailable as exc:
+                print(f"[Stream] luna unavailable ({exc}); Claude takes this turn")
+            answered = bool(full_reply)
+        if not viz_done and not answered and CHAT_PROVIDER == "anthropic":
             import claude_chat
             try:
                 chunks = (claude_chat.stream_request(pedro_request.system, pedro_request.messages)
@@ -1385,12 +1398,12 @@ def send_message_stream(
                 for chunk in chunks:
                     full_reply += chunk
                     yield (chunk, None)
-                claude_done = bool(full_reply)
             except claude_chat.ClaudeUnavailable as exc:
                 print(f"[Stream] Claude unavailable ({exc}); failing over to {HELPER_PROVIDER}")
-                claude_done = bool(full_reply)  # never restart a reply the student already sees
+            answered = bool(full_reply)
+            answered_by = claude_chat.PEDRO_MODEL if answered else None
 
-        if not viz_done and not claude_done and HELPER_PROVIDER == "gemini":
+        if not viz_done and not answered and HELPER_PROVIDER == "gemini":
             client = _gemini_client()
             model_name = TUTOR_PROVIDERS["gemini"]["model"]
             parts = []
@@ -1423,6 +1436,7 @@ def send_message_stream(
                             full_reply += chunk.text
                             yield (chunk.text, None)
                     gemini_succeeded = True
+                    answered_by = model_name if full_reply else None
                 except Exception as e:
                     err = str(e)
                     transient = any(code in err for code in ("503", "429", "500", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "INTERNAL"))
@@ -1450,13 +1464,14 @@ def send_message_stream(
                                 full_reply += delta.content
                                 yield (delta.content, None)
                         gemini_succeeded = True
+                        answered_by = oai_model if full_reply else None
                     except Exception as oai_e:
                         print(f"[OpenAI Fallback] Error: {oai_e}")
                         if not full_reply:
                             full_reply = "I'm having a brief technical issue. Could you try asking again?"
                             yield (full_reply, None)
                         gemini_succeeded = True
-        elif not viz_done and not claude_done:
+        elif not viz_done and not answered:
             client, model_name = _get_client(HELPER_PROVIDER)
             try:
                 stream = provider_capacity.stream('openai', lambda: client.chat.completions.create(
@@ -1469,6 +1484,7 @@ def send_message_stream(
                     if delta and delta.content:
                         full_reply += delta.content
                         yield (delta.content, None)
+                answered_by = model_name if full_reply else None
             except Exception as e:
                 print(f"[OpenAI Stream] Error: {e}")
                 if not full_reply:
@@ -1481,9 +1497,7 @@ def send_message_stream(
         onboarding_complete = False
         traits_saved: list = []
         if context_type == "onboarding":
-            if onboarding_mod.TAG_ONBOARDING_COMPLETE in full_reply:
-                onboarding_complete = True
-                traits_saved = onboarding_mod.finalize_onboarding(user_id, conversation_id)
+            onboarding_complete = onboarding_mod.TAG_ONBOARDING_COMPLETE in full_reply
             if not onboarding_start:
                 onboarding_mod.record_onboarding_episode(user_id, message, full_reply)
             full_reply = onboarding_mod.strip_onboarding_tags(full_reply)
@@ -1510,6 +1524,12 @@ def send_message_stream(
                 import traceback as tb
                 tb.print_exc()
 
+        # A slide written without its address, or a lab without its ``` fences, is repaired before
+        # it is saved (and re-read by Pedro).
+        if full_reply and ("![" in full_reply or "widget" in full_reply):
+            import pedro_context as _pedro_context
+            full_reply = _pedro_context.repair_widget_blocks(_pedro_context.repair_slide_embeds(full_reply))
+
         # Lesson turns are filed under the section actually being taught, even when
         # the client did not send an index — recall and evaluation read by section.
         stored_section = lesson_section_idx if context_type == "lesson" else section_index
@@ -1528,13 +1548,16 @@ def send_message_stream(
             user_id=user_id, conversation_id=conversation_id,
             role="pedro", content=full_reply,
             context_type=context_type, context_id=context_id,
-            section_index=stored_section,
+            section_index=stored_section, model=answered_by,
         )
         db.add(pedro_msg)
         db.commit()
         db.refresh(pedro_msg)
         if user_msg is not None:
             db.refresh(user_msg)
+        if onboarding_complete:
+            # Only now, with this turn saved: the student's last answer is often the one that matters.
+            traits_saved = onboarding_mod.finalize_onboarding(user_id, conversation_id)
         if context_type != "onboarding":
             _record_student_turn(user_id, context_type, context_id, locals().get("matched_folder"),
                                  message, full_reply, user_msg, pedro_msg, stored_section, concept_id)

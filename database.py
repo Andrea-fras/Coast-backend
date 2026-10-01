@@ -145,6 +145,7 @@ class ChatMessage(Base):
     context_type = Column(String(20), nullable=False)  # "notebook", "global", "session"
     context_id = Column(String(100), nullable=True)  # notebook_id or session_id
     section_index = Column(Integer, nullable=True)
+    model = Column(String(80), nullable=True)  # the model that wrote a Pedro reply
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="chat_messages")
@@ -593,6 +594,9 @@ def _run_migrations():
         if "section_index" not in cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE chat_messages ADD COLUMN section_index INTEGER"))
+        if "model" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE chat_messages ADD COLUMN model VARCHAR(80)"))
         # Section-level recall over years of history ("what did we do in lecture 3?").
         with engine.begin() as conn:
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_chat_user_course_section "

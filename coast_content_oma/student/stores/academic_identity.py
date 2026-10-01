@@ -73,7 +73,12 @@ CANONICAL_TRAIT_TYPES = (
     "general_strength",       # e.g. "strong in implementation"
     "general_weakness",       # e.g. "weak in abstract proofs"
     "motivation_pattern",     # e.g. "deadline-driven", "consistent steady pace"
+    "study_context",          # e.g. "MSc Data Science and AI at UZH: RL, Network Science"
+    "goal",                   # e.g. "RL exam in January", "aiming for a 5.5"
+    "constraint",             # e.g. "about 30 minutes a day", "English is a second language"
 )
+# About the student rather than how they learn: shown apart, and in lessons only when relevant.
+ABOUT_TYPES = ("study_context", "goal", "constraint")
 
 
 class AcademicIdentityStore(SemanticStoreBase):

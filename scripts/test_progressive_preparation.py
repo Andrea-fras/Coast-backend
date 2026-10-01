@@ -161,6 +161,31 @@ class ProgressiveTests(unittest.TestCase):
                 self.assertEqual(again.content_items,2)
             self.assertEqual(results[0].image_items,2)
 
+    def test_a_figure_heavy_file_is_read_without_describing_every_figure(self):
+        """Past INLINE_FIGURES, a file's figures go to the background sweep (the student's section
+        first) instead of holding up the file, and the next one, until all are described."""
+        with tempfile.TemporaryDirectory() as d:
+            orch=self.stores(Path(d)/'oma.db');ns='u1__inline'
+            pipeline=IngestionPipeline(orch.concept,orch.content,orch.images,Path(d)/'images',classify_workers=1,vision_workers=1)
+            pipeline.VISION_BATCH_SIZE=1;pipeline.INLINE_FIGURES=1
+            saved=[]
+            for page in (1,2):
+                path=Path(d)/f'{page}.png';path.write_bytes(b'fixture')
+                saved.append({'page_number':page,'file_path':str(path),'width':100,'height':100})
+            p.set_priority(ns,[{'source_refs':[{'source_id':'a','pages':[2]}]}],0)  # they're on the section with page 2
+            described=[]
+            def describe(batch):
+                described.append(1)
+                return [{'description':'A useful diagram','image_type':'diagram','concepts':[]}]
+            with patch('coast_content_oma.ingestion.extract_pages',return_value=self.manifest(2)['pages']),patch.object(pipeline,'_save_images_to_disk',return_value=saved),patch.object(pipeline,'_classify_batch',return_value=[]),patch('coast_content_oma.llm.describe_images_batch',side_effect=describe):
+                stats=pipeline.ingest_folder(ns,[Path(d)/'a.pdf'],source_ids={'a.pdf':'a'},defer_concepts=True)
+                self.assertEqual(len(described),1)
+                self.assertEqual(stats.figures_pending,1)
+                self.assertTrue(p.section_status(orch,ns,{'source_refs':[{'source_id':'a','pages':[2]}]})['ready'])
+                self.assertFalse(p.section_status(orch,ns,{'source_refs':[{'source_id':'a','pages':[1]}]})['ready'])
+                pipeline.describe_pending_images(ns)
+            self.assertTrue(p.section_status(orch,ns,{'source_refs':[{'source_id':'a','pages':[1]}]})['ready'])
+
     def test_outline_billing_failure_is_actionable_and_fallback_still_works(self):
         import os,lesson
         from unittest.mock import MagicMock
@@ -267,6 +292,30 @@ class ProgressiveTests(unittest.TestCase):
             item=orch.images.get('stuck')
             self.assertFalse(item.store_specific.get('_pending_vision'))
             self.assertEqual(item.content,'(figure — description unavailable)')
+
+    def test_the_current_sections_figures_are_saved_before_the_rest_are_described(self):
+        """Figures are described in roadmap order and saved chunk by chunk, so the section the
+        student is on stops waiting long before the whole folder's sweep ends."""
+        with tempfile.TemporaryDirectory() as directory:
+            orch=self.stores(Path(directory)/'oma.db');ns='u1__chunked'
+            pipeline=IngestionPipeline(orch.concept,orch.content,orch.images,Path(directory)/'images')
+            chunk=pipeline.VISION_BATCH_SIZE*pipeline.vision_workers
+            for n in range(chunk+2):  # one figure on each page of doc_a
+                f=Path(directory)/f'f{n}.png';f.write_bytes(b'x')
+                orch.images._insert(MemoryItem(id=f'img{n}',namespace=ns,store='image',source_doc_id='doc_a',content='',
+                    store_specific={'_pending_vision':True,'page_number':n+1,'file_path':str(f)}))
+            p.set_priority(ns,[{'source_refs':[{'source_id':'a','pages':[chunk+1,chunk+2]}]}],0)  # the section they're on
+            seen=[]
+            def describe(saved):
+                seen.append([s['page_number'] for s in saved])
+                if len(seen)==2:  # the first chunk is already saved while the rest is still being described
+                    self.assertFalse(orch.images.get(f'img{chunk}').store_specific.get('_pending_vision'))
+                return [{**s,'description':'fig','image_type':'diagram','concepts':[]} for s in saved]
+            with patch.object(pipeline,'_describe_saved_images_batched',side_effect=describe):
+                result=pipeline.describe_pending_images(ns)
+            self.assertEqual(seen[0][:2],[chunk+1,chunk+2])
+            self.assertEqual(len(seen),2)
+            self.assertEqual(result['described'],chunk+2)
 
     def test_page_concept_refs_are_local_and_source_scoped(self):
         with tempfile.TemporaryDirectory() as directory:

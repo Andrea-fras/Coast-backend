@@ -195,6 +195,9 @@ class IngestionPipeline:
     CLUSTER_THRESHOLD = float(os.environ.get("OMA_CLUSTER_THRESHOLD", "0.85"))
     CONCEPT_MERGE_THRESHOLD = float(os.environ.get("OMA_CONCEPT_MERGE_THRESHOLD", "0.90"))
     VISION_BATCH_SIZE = int(os.environ.get("OMA_VISION_BATCH_SIZE", "8"))
+    # Figures a file describes before it counts as read; the rest go to the background sweep, so a
+    # photo-heavy deck (150 figures) doesn't hold up the next file, or the course, for minutes.
+    INLINE_FIGURES = int(os.environ.get("OMA_INLINE_FIGURES", "24"))
     PRIORITY_PAGES = int(os.environ.get("OMA_PRIORITY_PAGES", "12"))
 
     def __init__(
@@ -299,6 +302,9 @@ class IngestionPipeline:
                     vision = None
                     pending_paths = {(it.store_specific or {}).get('file_path') for it in self.images.all(namespace) if it.source_doc_id == source_doc_id and self._image_describe_pending(it)}
                     pending_images = [image for image in saved_images if image['file_path'] in pending_paths]
+                    pending_images.sort(key=lambda image: priority(image['page_number']))  # the student's section first
+                    stats.figures_pending += max(0, len(pending_images) - self.INLINE_FIGURES)
+                    pending_images = pending_images[:self.INLINE_FIGURES]
                     if self.describe_images and pending_images and not self.skip_images:
                         vision = phase_ex.submit(self._describe_saved_images_batched, pending_images, _on_vision_batch, priority)
                     classify.result()
@@ -827,6 +833,29 @@ class IngestionPipeline:
             return not body or body in ("(no description)", "(no description yet)")
         return not body
 
+    def _save_descriptions(self, results: list[dict], by_path: dict) -> int:
+        """Write vision results onto their image items; returns how many were written."""
+        n = 0
+        for res in results:
+            it = by_path.get(res.get("file_path", ""))
+            if not it:
+                continue
+            desc = (res.get("description") or "").strip() or "(figure — description unavailable)"
+            img_type = res.get("image_type") or "figure"
+            concepts = res.get("concepts") or []
+            ss = it.store_specific or {}
+            ss.pop("_pending_vision", None)
+            ss.pop("vision_tier", None)
+            ss["image_type"] = img_type
+            ss["concept_mentions_raw"] = concepts
+            it.content = desc
+            it.tags = [img_type]
+            it.entities = [llm.normalize_concept_name(c) for c in concepts if c]
+            self.images.update_store_specific(it.id, ss)
+            self.images._insert(it)
+            n += 1
+        return n
+
     def describe_pending_images(
         self,
         namespace: str,
@@ -847,6 +876,8 @@ class IngestionPipeline:
         pending = [it for it in all_images
                    if it.source_doc_id not in skip and self._image_describe_pending(it)]
 
+        from . import progressive
+
         def _page_sort_key(it: MemoryItem) -> tuple:
             ss = it.store_specific or {}
             pn = int(ss.get("page_number") or 9999)
@@ -855,7 +886,8 @@ class IngestionPipeline:
                     return (0, page_order.index(pn))
                 except ValueError:
                     return (1, pn)
-            return (0, pn)
+            # The roadmap's order: the section the student is on first (progressive.set_priority).
+            return (0, *progressive.page_rank(namespace, it.source_doc_id, pn))
 
         pending.sort(key=_page_sort_key)
         if limit:
@@ -881,42 +913,26 @@ class IngestionPipeline:
         if not saved:
             return {"described": 0, "pending_total": len(pending)}
 
+        # In chunks, highest-priority pages first, each saved as soon as it is done: a section
+        # waits for its own figures, not for the whole folder's sweep to finish.
         done = 0
-        results: list[dict] = []
-        remaining = saved
-        for attempt in range(self.VISION_ATTEMPTS):
-            batch = self._describe_saved_images_batched(remaining)
-            results += [r for r in batch if not r.get("_pending_vision")]
-            remaining = [s for s, r in zip(remaining, batch) if r.get("_pending_vision")]
-            if not remaining:
-                break
-            log(f"{len(remaining)} figures not described (attempt {attempt + 1}); retrying")
-            time.sleep(5 * (attempt + 1))
-        # Give up on figures that keep failing: the section teaches from text instead
-        # of waiting forever. They keep their file, so a later sweep can be forced.
-        results += [{**s, "description": "", "_gave_up": True} for s in remaining]
-        for res in results:
-            it = by_path.get(res.get("file_path", ""))
-            if not it:
-                continue
-            desc = (res.get("description") or "").strip()
-            if not desc:
-                desc = "(figure — description unavailable)"
-            img_type = res.get("image_type") or "figure"
-            concepts = res.get("concepts") or []
-            ss = it.store_specific or {}
-            ss.pop("_pending_vision", None)
-            ss.pop("vision_tier", None)
-            ss["image_type"] = img_type
-            ss["concept_mentions_raw"] = concepts
-            it.content = desc
-            it.tags = [img_type]
-            it.entities = [llm.normalize_concept_name(c) for c in concepts if c]
-            self.images.update_store_specific(it.id, ss)
-            self.images._insert(it)
-            done += 1
-            if done % 10 == 0:
-                log(f"Described {done}/{len(saved)} images")
+        chunk = max(1, self.VISION_BATCH_SIZE * max(1, self.vision_workers))
+        for start in range(0, len(saved), chunk):
+            results: list[dict] = []
+            remaining = saved[start:start + chunk]
+            for attempt in range(self.VISION_ATTEMPTS):
+                batch = self._describe_saved_images_batched(remaining)
+                results += [r for r in batch if not r.get("_pending_vision")]
+                remaining = [s for s, r in zip(remaining, batch) if r.get("_pending_vision")]
+                if not remaining:
+                    break
+                log(f"{len(remaining)} figures not described (attempt {attempt + 1}); retrying")
+                time.sleep(5 * (attempt + 1))
+            # Give up on figures that keep failing: the section teaches from text instead
+            # of waiting forever. They keep their file, so a later sweep can be forced.
+            results += [{**s, "description": "", "_gave_up": True} for s in remaining]
+            done += self._save_descriptions(results, by_path)
+            log(f"Described {done}/{len(saved)} images")
 
         return {"described": done, "pending_total": len(pending)}
 

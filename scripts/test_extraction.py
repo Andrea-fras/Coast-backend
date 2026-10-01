@@ -110,5 +110,24 @@ class Text(unittest.TestCase):
         doc.close()
 
 
+class ReaderProcess(unittest.TestCase):
+    def test_library_messages_on_stdout_never_reach_the_results(self):
+        """MuPDF prints warnings to stdout from C (a slide with an embedded video: "cannot create
+        appearance stream for Screen annotations"); the upload must still get clean JSON."""
+        import json
+        import subprocess
+        code = ("import os, coast_content_oma.read_upload as r\n"
+                "def noisy(path):\n"
+                "    os.write(1, b'MuPDF error: cannot create appearance stream for Screen annotations\\n')\n"
+                "    print('a stray print')\n"
+                "    return [{'page_number': 1, 'text': 'ok'}]\n"
+                "r.main('slides.pdf', extract=noisy)\n")
+        run = subprocess.run([sys.executable, "-c", code], cwd=Path(__file__).resolve().parents[1],
+                             capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(run.stdout), [{"page_number": 1, "text": "ok"}])
+        self.assertIn("MuPDF error", run.stderr)
+        self.assertIn("a stray print", run.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

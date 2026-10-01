@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Optional
 
 from coast_content_oma.student.grading import defuse_tags
+from workshop_library import WITHOUT_SOURCES
 
 log = logging.getLogger(__name__)
 
@@ -100,7 +101,7 @@ Before you grade an answer, check whether it rests on something you said earlier
 _SLIDES = """# Showing slides and citing them
 The student has the same lectures. Cite pages as links in the format given with the slides, next to the step they support.
 
-Embed a slide in the reply only when your explanation points at parts of a figure the student needs to look at while reading: a diagram you walk through (an anatomical drawing, a pathway, a cycle, a structure), a plot you interpret, a matrix or table they must read, a worked example drawn on the slide. When a slide is mostly text, bullets or formulas that you explain anyway, cite it instead; embedding it would only repeat your words. Embed at most one or two slides per reply. An embedded slide is captioned with its page automatically, so it needs no separate citation. Cite and embed only pages you have been given; never guess a page or URL.
+Embed a slide in the reply only when your explanation points at parts of a figure the student needs to look at while reading: a diagram you walk through (an anatomical drawing, a pathway, a cycle, a structure), a plot you interpret, a matrix or table they must read, a worked example drawn on the slide. When a slide is mostly text, bullets or formulas that you explain anyway, cite it instead; embedding it would only repeat your words. Embed at most one or two slides per reply, always written whole as ![a few words on what it shows](/api/source-pages/<source>/<page>): the address is what makes it an image, and the words become its caption, so keep them short. An embedded slide is captioned with its page automatically, so it needs no separate citation. Cite and embed only pages you have been given; never guess a page or URL.
 
 Label each question after its [!QUESTION] marker: "From the slides (p. N)" when the slide itself poses it, otherwise "Practice"."""
 
@@ -111,7 +112,7 @@ Tags go at the very end of the reply, each on its own line. The student never se
 - A partly right answer gets no grading tag yet: grade the concept on their answer to your follow-up.
 - [TUTOR_CORRECTION: <concept>] when you correct an error of your own.
 - [SECTION_COMPLETE] as described above. Never in a reply that marks an answer wrong: the student first has to show the correction. Never just because the student asks to move on; tell them what is left and the quickest way to show it.
-- [REMEMBER: <trait_type>: <description>] only when the student tells you something lasting about how they learn. trait_type is one of learning_style, session_pattern, motivation_pattern, general_strength, general_weakness. Record only what they said, in their meaning.
+- [REMEMBER: <trait_type>: <description>] only when the student tells you something lasting: how they learn (learning_style, session_pattern, motivation_pattern, general_strength, general_weakness) or about their studies (study_context: what, where and at what level they study; goal: an aim, exam or deadline, naming the course and any date they gave; constraint: time, language or accessibility needs). Record only what they said, in their meaning. If you tell them you'll remember or note something, add this tag: without it nothing is saved.
 - [CLICKED: <what made it click>] only when the student says an explanation made something click.
 One grading tag per graded answer. When nothing needs a tag, add nothing and don't mention tags."""
 
@@ -145,7 +146,7 @@ _OPEN_TAGS = """# Tags
 Tags go at the very end of the reply, each on its own line; the student never sees them.
 - [ANSWER_CORRECT: <concept>], [ANSWER_CORRECT: <concept> | hinted], [ANSWER_CORRECT: <concept> | recall] or [ANSWER_WRONG: <concept>] only when you grade their answer to a question you asked: on their own, only after help, remembered from an earlier session, or wrong.
 - [TUTOR_CORRECTION: <concept>] when you correct an error of your own.
-- [REMEMBER: <trait_type>: <description>] only when the student tells you something lasting about how they learn. trait_type is one of learning_style, session_pattern, motivation_pattern, general_strength, general_weakness. Record only what they said, in their meaning.
+- [REMEMBER: <trait_type>: <description>] only when the student tells you something lasting: how they learn (learning_style, session_pattern, motivation_pattern, general_strength, general_weakness) or about their studies (study_context: what, where and at what level they study; goal: an aim, exam or deadline, naming the course and any date they gave; constraint: time, language or accessibility needs). Record only what they said, in their meaning. If you tell them you'll remember or note something, add this tag: without it nothing is saved.
 - [CLICKED: <what made it click>] only when the student says an explanation made something click.
 When nothing needs a tag, add nothing and don't mention tags."""
 
@@ -154,7 +155,7 @@ _INTRO_WORKSHOP = """You are Pedro, the tutor inside Coast. This is a workshop: 
 _WORKSHOP_FLOW = """# How a workshop runs
 The frame gives the whole workshop and the current milestone's contract: what the student will produce and the evidence that shows it's done. Coach, don't lecture:
 - Open a milestone with the result it builds and why it matters, in two or three sentences, then the first small action.
-- Explain just enough for the next action: a short explanation, or one worked example on a different case. Never the student's own deliverable.
+- Explain enough for the next action: a short explanation, or one worked example on a different case. Never the student's own deliverable.
 - Ask for one action or decision per turn and wait. Their work is the check: there is no separate quiz and no quota of questions.
 - Respond to their work precisely: say what works and why, then the one change that would improve it most. Don't rewrite it for them.
 - When they are stuck, give progressively stronger help: a cue, then a targeted explanation or a worked example on a different case, then a partial step for them to finish. Don't string them along with leading questions.
@@ -165,10 +166,17 @@ The frame gives the whole workshop and the current milestone's contract: what th
 - Background stories and context need no checking; spend the student's effort on the thing they are building.
 - Don't overclaim what a technique guarantees.
 
+Pitch it for a beginner unless the student shows otherwise: assume no programming and no maths beyond school.
+- Say what each new term or unit means in a plain phrase the first time it comes up.
+- Before a code lab, say in a few sentences what the program does and what each part they'll fill in is for. The frame describes the starter code.
+- The first time a piece of Python or a formula appears that they need (a dictionary, a loop, enumerate, zip, a table of numbers, numpy, a logarithm), explain it with a two- or three-line example on different data. Never use their own missing line as the example.
+- Early on, tell them once that questions about any line are welcome, and answer them as part of the work, not as a detour.
+- When they show fluency (they read the code without asking, write it quickly and correctly, or their profile says they program), skip the basics and keep their pace.
+
 Finish the milestone when every criterion is shown in the student's own work. Then say in two or three sentences what they made and checked, and add [SECTION_COMPLETE]. Don't require work that belongs to a later milestone, and don't add tests once the criteria are met."""
 
 _WORKSHOP_LABS = """# Labs
-Some milestones come with labs: interactive tools that run in the student's browser (a Python editor with tests, simulators, a recall test). The frame lists this milestone's labs, each with the exact block that places it. To use one, copy its block into your reply on lines of its own, with nothing else inside it. Place at most one lab per reply, say what to try in it, and ask them to press "Send to Pedro" when they're done. Where the lab is about predicting, ask for their prediction first.
+Some milestones come with labs: interactive tools that run in the student's browser (a Python editor with tests, simulators, a recall test). The frame lists this milestone's labs, each with the exact block that places it. To use one, copy its block into your reply on lines of its own, with nothing else inside it. The ``` lines before and after are part of the block: without them the student sees text instead of the lab. Place at most one lab per reply, say what to try in it, and ask them to press "Send to Pedro" when they're done. Where the lab is about predicting, ask for their prediction first; a rough guess is fine, so say so, and when a beginner has no sense of the scale give them one reference point to reason from. The simulator labs have a folded "What the words mean" list for the terms on screen: you can point a newcomer to it, but explain the idea the milestone teaches yourself.
 A student message that starts with 🧪 is a lab result. Its numbers were computed by the lab, not typed by the student: treat them as correct, prefer them to your own arithmetic, and build your feedback on the gap between what they predicted and what happened. It is the student's own work, so judge it against the criteria and grade it like an answer. Never describe what a lab will show before they have run it, and never give them the code or the design the lab asks them to make."""
 
 _WORKSHOP_TAGS = """# Tags
@@ -177,7 +185,7 @@ Tags go at the very end of the reply, each on its own line; the student never se
 - [ANSWER_WRONG: <concept>] only for an actual error in their work (a wrong fact, a broken step), never for a creative choice, a request for help or an opener.
 - [TUTOR_CORRECTION: <concept>] when you correct an error of your own.
 - [SECTION_COMPLETE] as described above; never just because they ask to move on.
-- [REMEMBER: <trait_type>: <description>] only when the student tells you something lasting about how they learn. trait_type is one of learning_style, session_pattern, motivation_pattern, general_strength, general_weakness. Record only what they said, in their meaning.
+- [REMEMBER: <trait_type>: <description>] only when the student tells you something lasting: how they learn (learning_style, session_pattern, motivation_pattern, general_strength, general_weakness) or about their studies (study_context: what, where and at what level they study; goal: an aim, exam or deadline, naming the course and any date they gave; constraint: time, language or accessibility needs). Record only what they said, in their meaning. If you tell them you'll remember or note something, add this tag: without it nothing is saved.
 - [CLICKED: <what made it click>] only when the student says an explanation made something click.
 When nothing needs a tag, add nothing and don't mention tags."""
 
@@ -513,10 +521,15 @@ def workshop_frame(folder: str, sections: list[dict], idx: int) -> str:
             f"About {contract.get('minutes', 20)} minutes."
             + (f"\nConcept names for grading tags: {'; '.join(contract['topics'])}" if contract.get("topics") else "")
             + ("\n\nLabs for this milestone (place one by copying its block exactly):\n"
-               + "\n".join(f"- {LAB_NAMES.get(t['id'], t['id'])}: {t['use']}\n{_lab_block(t)}" for t in contract["tools"])
+               + "\n".join(f"- {LAB_NAMES.get(t['id'], t['id'])}: {t['use']}"
+                           + (f"\n  Its starter code: {t['code']}" if t.get("code") else "")
+                           + f"\n{_lab_block(t)}" for t in contract["tools"])
                if contract.get("tools") else "")
             + (f"\n\nReference for this milestone (checked facts; lab numbers come from the lab's own simulator):\n"
-               f"{contract['reference']}" if contract.get("reference") else ""))
+               f"{contract['reference']}" if contract.get("reference") else "")
+            + ("\n\nThis workshop has no slides: where this brief mentions slides, read the milestone's reference and "
+               "labs instead. When you go beyond them, say it is general knowledge; never mention slides."
+               if folder in WITHOUT_SOURCES else ""))
 
 
 # ── the student's record ────────────────────────────────────────────────────
@@ -677,11 +690,107 @@ def student_note(db, user, folder: str, sections: list[dict], idx: int) -> list[
     else:
         lines.append("No graded answers yet on this section's topics, so their prior knowledge is unknown: "
                      "their first answers will show where to start.")
-    elsewhere = graded_evidence(db, user.id, _topic_words(sections, idx), limit=3, exclude=folder)
-    if elsewhere:
-        lines += ["Possibly related results from their other courses (matched by wording; connect to one only "
-                  "if it is the same idea):"] + elsewhere
-    return [line for line in lines if line] + _learner_lines(user, folder, _topic_words(sections, idx))
+    bridges = _bridge_lines(user.id, folder, sections, idx)
+    if bridges:
+        lines += ["The same idea in their other courses (connect to it or skip re-explaining the basics if it "
+                  "helps; it doesn't count here, where they still show it themselves):"] + bridges
+    else:  # courses without concept data (curated ones) fall back to matching by wording
+        elsewhere = graded_evidence(db, user.id, _topic_words(sections, idx), limit=3, exclude=folder)
+        if elsewhere:
+            lines += ["Possibly related results from their other courses (matched by wording; connect to one only "
+                      "if it is the same idea):"] + elsewhere
+    lines = [line for line in lines if line] + _learner_lines(user, folder, _topic_words(sections, idx))
+    about = _about_them(user.id, _topic_words(sections, idx), folder, limit=2)
+    if about:
+        lines += ["What they've told you about their studies (context for examples and pace; teach the section "
+                  "as planned):"] + about
+    return lines
+
+
+_BRIDGES: dict[tuple, tuple[float, list[str]]] = {}
+
+
+def _bridge_lines(user_id: int, folder: str, sections: list[dict], idx: int) -> list[str]:
+    """At most three concepts from their other courses that are the idea this section teaches
+    (coast_content_oma.student.bridges), with what they showed there. Cached for ten minutes
+    per section: the note is rebuilt every turn and the links change only as they study."""
+    import time
+    key = (user_id, folder, idx)
+    hit = _BRIDGES.get(key)
+    if hit and time.time() - hit[0] < 600:
+        return hit[1]
+    lines: list[str] = []
+    try:
+        import oma_provider
+        from curated_config import curated_source_uid
+        # Curated courses have no concept data: the lookup would only cost a couple of seconds.
+        if oma_provider.is_student_enabled() and 0 <= idx < len(sections) and curated_source_uid(folder) is None:
+            from datetime import date
+            from coast_content_oma.student.bridges import related_prior_learning
+            sec = sections[idx]
+            topics = " ".join([sec.get("title") or ""] + [str(t) for t in sec.get("key_topics") or []])
+            refs = oma_provider._section_refs(user_id, folder, idx)
+            for link in related_prior_learning(oma_provider._student_orchestrator(), user_id, folder, refs, topics=topics):
+                shown = _grade_counts({"right": link["own"], "recall": 0, "hinted": link["hinted"], "wrong": link["wrong"]})
+                try:
+                    days = (date.today() - date.fromisoformat(link["when"])).days
+                    when = "today" if days < 1 else f"{days} day{'s' * (days != 1)} ago"
+                except ValueError:
+                    when = ""
+                lines.append(f"- {link['concept']} ({link['course']}): {shown or 'seen, not graded'}"
+                             + (f", last {when}" if when else "") + f"; here it is {link['relates_to']}.")
+    except Exception:
+        log.exception("student note: cross-course links failed")
+    _BRIDGES[key] = (time.time(), lines)
+    return lines
+
+
+_ABOUT_LABEL = {"study_context": "Studies", "goal": "Goal", "constraint": "Constraint"}
+
+
+def _about_them(user_id: int, words: Optional[set] = None, course: str = "", limit: int = 4,
+                types: Optional[set] = None) -> list[str]:
+    """What the student has told Pedro about their studies: what and where they study, goals
+    and exams, constraints. Newest first; traits fade unless re-confirmed, so an exam from last
+    term drops out on its own. In a lesson (`words` given) only what names this course or shares
+    a topic word with the section, plus constraints: a couple of lines at most, often none.
+    `types` narrows it further (a workshop only needs their background)."""
+    try:
+        import oma_provider
+        if not oma_provider.is_student_enabled():
+            return []
+        from datetime import datetime
+        from coast_content_oma.student.stores import identity_namespace
+        from coast_content_oma.student.stores.academic_identity import ABOUT_TYPES, OBSERVED_DERIVATIONS
+        items = [it for it in oma_provider._student_orchestrator().identity.all_traits(identity_namespace(user_id))
+                 if (it.store_specific or {}).get("trait_type") in ABOUT_TYPES and (it.content or "").strip()
+                 and (it.store_specific or {}).get("derivation") in OBSERVED_DERIVATIONS  # what they said
+                 and (types is None or (it.store_specific or {}).get("trait_type") in types)]
+        items.sort(key=lambda it: (it.store_specific or {}).get("last_confirmed") or "", reverse=True)
+        if words is not None:
+            key = re.sub(r"[^a-z]", "", (course or "").lower())
+
+            def relevant(it) -> bool:
+                text = it.content or ""
+                return ((it.store_specific or {}).get("trait_type") == "constraint"
+                        or (len(key) >= 4 and key in re.sub(r"[^a-z]", "", text.lower()))
+                        or bool(({_stem(w) for w in _words(text) if len(w) > 2} - _STOP) & words))
+            items = [it for it in items if relevant(it)]
+        lines = []
+        for it in items[:limit]:
+            ss = it.store_specific or {}
+            when = ""
+            if ss.get("trait_type") == "goal" and ss.get("first_observed"):
+                try:
+                    days = (datetime.now() - datetime.fromisoformat(ss["first_observed"][:19])).days
+                    when = f" (told {'today' if days < 1 else f'{days} day' + 's' * (days != 1) + ' ago'})"
+                except ValueError:
+                    pass
+            lines.append(f"- {_ABOUT_LABEL[ss['trait_type']]}: {it.content.strip()[:200]}{when}")
+        return lines
+    except Exception:
+        log.exception("student note: about-them lookup failed")
+        return []
 
 
 def _learner_lines(user, folder: Optional[str], wanted: set) -> list[str]:
@@ -698,6 +807,9 @@ def _learner_lines(user, folder: Optional[str], wanted: set) -> list[str]:
         orch = oma_provider._student_orchestrator()
         traits = [it for it in orch.identity.all_traits(identity_namespace(user.id), min_confidence=0.5)
                   if (it.content or "").strip()]
+        from coast_content_oma.student.stores.academic_identity import ABOUT_TYPES
+        # Facts about their studies are shown apart (_about_them), not as how they learn.
+        traits = [t for t in traits if (t.store_specific or {}).get("trait_type") not in ABOUT_TYPES]
         said = [t for t in traits if (t.store_specific or {}).get("derivation") in OBSERVED_DERIVATIONS][:3]
         # Inferred traits are guesses from behaviour; only the ones about how to teach are worth a line.
         guessed = [t for t in traits if (t.store_specific or {}).get("derivation") not in OBSERVED_DERIVATIONS
@@ -741,6 +853,10 @@ def workshop_note(db, user, folder: str, sections: list[dict], idx: int) -> list
     related = graded_evidence(db, user.id, wanted, limit=4)
     if related:
         lines += ["Related results from their lessons (connect to one if it genuinely helps, e.g. to repair a known gap):"] + related
+    background = _about_them(user.id, limit=2, types={"study_context", "constraint"})
+    if background:
+        lines += ["What they've told you about their studies (a guide to their starting level; their work "
+                  "in this workshop counts for more):"] + background
     return [line for line in lines if line]
 
 
@@ -863,6 +979,41 @@ def matching_pages(src_uid: int, folder: str, message: str, covered: set, source
 
 
 _PAGE_LINK = re.compile(r"(?:#lesson-source|/api/source-pages)/[^/\s)]+/(\d+)")
+_PAGE_REF = re.compile(r"(?:#lesson-source|/api/source-pages)/([A-Za-z0-9_-]+)/(\d+)")
+_LINKLESS_IMAGE = re.compile(r"!\[([^\]\n]{1,400})\](?!\s*\()")
+
+
+def repair_slide_embeds(text: str) -> str:
+    """Pedro shows a slide as ![what it shows](/api/source-pages/<source>/<page>); now and then he
+    writes the description and forgets the address, which shows as raw "![…]" and, left in the
+    history, invites him to repeat it. He cites a page just before embedding it, so that citation
+    says which slide was meant; with none nearby the markup is dropped. (The app repairs what it
+    shows the same way: src/utils/slideEmbeds.js.)"""
+    if not text or "![" not in text:
+        return text
+    text = re.sub(r"(!\[[^\]\n]{1,400}\])\s*\(#lesson-source/", r"\1(/api/source-pages/", text)
+    text = re.sub(r"(!\[[^\]\n]{1,400}\])\s+(\(/api/source-pages/)", r"\1\2", text)
+
+    def fix(m: re.Match) -> str:
+        before = _PAGE_REF.findall(text[max(0, m.start() - 2000):m.start()])
+        after = _PAGE_REF.findall(text[m.end():m.end() + 400])
+        ref = before[-1] if before else after[0] if after else None
+        return f"![{m.group(1)}](/api/source-pages/{ref[0]}/{ref[1]})" if ref else ""
+    return _LINKLESS_IMAGE.sub(fix, text)
+
+
+_BARE_WIDGET = re.compile(r"^[ \t]*widget(?:[ \t]*\n(?:[ \t]*\n)?|[ \t]+)[ \t]*(" + "|".join(LAB_NAMES)
+                          + r")\b[ \t]*(\{[^\n]*\})?[ \t]*$", re.M)
+
+
+def repair_widget_blocks(text: str) -> str:
+    """Pedro places a lab with a ```widget block; now and then he drops the backticks and the
+    student sees "widget neuron {...}" as text instead of the lab, which, left in the history,
+    he then copies. A bare "widget" line followed by a known lab gets its fences back. (The app
+    repairs what it shows the same way: src/widgets/parseWidget.js.)"""
+    if not text or "widget" not in text:
+        return text
+    return _BARE_WIDGET.sub(lambda m: f"```widget\n{m.group(1)}{' ' + m.group(2) if m.group(2) else ''}\n```", text)
 
 
 def _trim(history: list[tuple[str, str]], what: str) -> list[tuple[str, str]]:
@@ -962,7 +1113,8 @@ def lesson_request(user, folder: str, section_index: Optional[int], message: str
             rows = (db.query(ChatMessage.role, ChatMessage.content)
                     .filter(ChatMessage.user_id == user.id, ChatMessage.conversation_id == conversation_id)
                     .order_by(ChatMessage.id).all())
-            history = [(role, content) for role, content in rows if (content or "").strip()]
+            history = [(role, repair_widget_blocks(content) if workshop else content)
+                       for role, content in rows if (content or "").strip()]
         history = _trim(history, "milestone" if workshop else "section")
 
         note = workshop_note(db, user, folder, sections, idx) if workshop else student_note(db, user, folder, sections, idx)
@@ -1104,6 +1256,9 @@ def student_record(db, user) -> str:
     lines = ["# The student's record (from Coast; the student can't see this)",
              "Every course they have, and what their graded answers in lessons show. When they ask about "
              "themselves, their progress or their strengths, answer from this: it is the whole record, not a sample."]
+    about = _about_them(user.id)
+    if about:
+        lines += ["What they've told you about their studies (bring it in when it bears on the question):"] + about
     if not started and not untouched:
         return "\n".join(lines + ["No courses yet."])
     if started:

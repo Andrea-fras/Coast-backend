@@ -242,3 +242,73 @@ def test_section_mastery_can_reach_100_and_reflects_the_latest_answers():
     _turn(uid, folder, "[ANSWER_WRONG: node degree]")
     _turn(uid, folder, "That was my mistake. [TUTOR_CORRECTION: node degree]")
     assert lesson.get_section_mastery_list(uid, folder, sections, 0)[0]["mastery_pct"] == 75
+
+
+def test_onboarding_saves_every_answer_and_shows_no_tags():
+    """The last answer (often the one that matters) reaches the trait extraction, traits land in
+    identity memory and the legacy preferences, each answer is a general episode, and neither
+    [REMEMBER] nor [ONBOARDING_COMPLETE] is stored in the chat history the student sees."""
+    uid = make_student("Ada")
+    seen = []
+
+    def fake_extract(messages):
+        seen.extend(m["content"] for m in messages if m["role"] == "user")
+        return [{"trait_type": "learning_style", "description": "Wants what, how and why before depth",
+                 "confidence": 0.9, "evidence": "what it is, how it's used and why it matters", "stated": True},
+                {"trait_type": "session_pattern", "description": "Wants a quick hint when stuck",
+                 "confidence": 0.9, "evidence": "a quick hint", "stated": True}]
+
+    real = onboarding.extract_traits_from_conversation
+    onboarding.extract_traits_from_conversation = fake_extract
+    try:
+        first = chat(uid, onboarding.ONBOARDING_START, "Hi Ada! What are you studying?", context_type="onboarding")
+        cid = first["conversation_id"]
+        chat(uid, "maths", "How do you like new ideas explained?", context_type="onboarding", conversation_id=cid)
+        chat(uid, "what it is, how it's used and why it matters, then the depth",
+             "Got it. And when you're stuck?\n\n[REMEMBER: learning_style: wants what, how and why first]",
+             context_type="onboarding", conversation_id=cid)
+        done = chat(uid, "a quick hint", "I'll remember: what/how/why first, and a quick hint when stuck.\n\n"
+                    "[ONBOARDING_COMPLETE]", context_type="onboarding", conversation_id=cid)
+    finally:
+        onboarding.extract_traits_from_conversation = real
+
+    assert done["onboarding_complete"] is True
+    assert "a quick hint" in seen, "the final answer must reach the extraction"
+    assert {t["trait_type"] for t in done["traits_saved"]} == {"learning_style", "session_pattern"}
+    assert {t["trait_type"] for t in onboarding.get_saved_onboarding_traits(uid)} == {"learning_style", "session_pattern"}
+    assert onboarding.traits_to_preferences(done["traits_saved"])["when_stuck"] == "Wants a quick hint when stuck"
+    # A session pattern that isn't about being stuck is not "when stuck"; two styles are both kept.
+    prefs = onboarding.traits_to_preferences([
+        {"trait_type": "session_pattern", "description": "Balancing four graduate courses at once"},
+        {"trait_type": "learning_style", "description": "Examples first"},
+        {"trait_type": "learning_style", "description": "Then one on their own"}])
+    assert "when_stuck" not in prefs and prefs["learning_style"] == "Examples first; Then one on their own"
+    with SessionLocal() as db:
+        replies = [m.content for m in db.query(ChatMessage).filter_by(user_id=uid, role="pedro").all()]
+    assert replies and not any("[REMEMBER" in r or "[ONBOARDING_COMPLETE" in r for r in replies)
+    said = [e.content for e in student().episodes.all(oma.general_namespace(uid))]
+    assert {"maths", "a quick hint"} <= set(said)
+
+
+def test_what_they_say_about_their_studies_is_kept_and_shown_only_where_it_bears():
+    """Facts about their studies (what they study, goals and exams, constraints) are saved when
+    they mention them in any chat, shown in the open chat's record, and in a lesson only when they
+    name the course or share a topic word (constraints always); never as "how they learn"."""
+    from types import SimpleNamespace
+    uid = make_student("Mia")
+    chat(uid, "I'm doing an MSc at ETH, mostly reinforcement learning. Exam on 20 January, and I only get about 30 minutes a day.",
+         "Good to know. Let's make every session count.\n\n"
+         "[REMEMBER: study_context: MSc at ETH focusing on Reinforcement Learning]\n"
+         "[REMEMBER: goal: Reinforcement Learning exam on 20 January]\n"
+         "[REMEMBER: constraint: about 30 minutes a day to study]", context_type="global")
+    kinds = {(t.store_specific or {}).get("trait_type") for t in student().identity.all_traits(f"u{uid}__identity")}
+    assert {"study_context", "goal", "constraint"} <= kinds
+    user = SimpleNamespace(id=uid, name="Mia")
+    with SessionLocal() as db:
+        record = pc.student_record(db, user)
+    assert "Studies: MSc at ETH" in record and "Goal: Reinforcement Learning exam on 20 January (told today)" in record
+    assert not any("ETH" in line for line in pc._learner_lines(user, None, set()))
+    rl = pc._about_them(uid, {"q-learning", "reward"}, "Reinforcement Learning", limit=2)
+    assert any("Goal" in l for l in rl) and len(rl) == 2
+    other = pc._about_them(uid, {"degree", "node"}, "Network Science", limit=2)
+    assert other == ["- Constraint: about 30 minutes a day to study"]

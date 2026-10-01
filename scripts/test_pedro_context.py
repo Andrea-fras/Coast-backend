@@ -190,6 +190,39 @@ class CuratedWorkshops(unittest.TestCase):
                     if tool["id"] == "python":
                         self.assertIn(tool["params"]["lab"], python_labs, f"{folder}: unknown Python lab")
 
+    def test_each_python_lab_note_matches_its_starter_code(self):
+        # Pedro never sees the starter code, only this note, so the two must name the same TODOs.
+        import re
+        from workshop_library import LIBRARY
+        labs = (self.FRONTEND / "python" / "labs.js").read_text()
+        for folder, workshop in LIBRARY.items():
+            for step in workshop["steps"]:
+                for tool in step["tools"]:
+                    if tool["id"] != "python":
+                        continue
+                    lab = tool["params"]["lab"]
+                    self.assertTrue(tool.get("code"), f"{folder}: the {lab} lab has no code note")
+                    starter = re.search(rf"^  {lab}: \{{\n(.*?)(?=^  \w+: \{{$|\Z)", labs, re.M | re.S).group(1)
+                    self.assertEqual(set(re.findall(r"TODO (\d)", tool["code"])), set(re.findall(r"TODO (\d)", starter)),
+                                     f"{folder}: the {lab} note and starter name different TODOs")
+
+    def test_a_code_lab_frame_describes_the_starter_for_a_beginner(self):
+        import curated_config
+        frame = pc.workshop_frame("Build Your Own LLM", curated_config.get_static_outline("Build Your Own LLM"), 0)
+        self.assertIn("Its starter code: The starter makes chars", frame)
+        self.assertIn("enumerate", frame)
+        self.assertIn("Pitch it for a beginner", pc.WORKSHOP_CORE)
+
+    def test_a_workshop_knows_their_background_but_not_their_goals(self):
+        from unittest.mock import patch
+        sections = [{"title": "A", "workshop": {"title": "T", "outcome": "O", "criteria": ["C"]}}]
+        user = type("U", (), {"id": 7, "name": "Sam"})()
+        with patch("workshops.prior_work", return_value=""), patch.object(pc, "graded_evidence", return_value=[]), \
+             patch.object(pc, "_about_them", return_value=["- Studies: MSc Computer Science"]) as about:
+            note = pc.workshop_note(None, user, "Build Your Own LLM", sections, 0)
+        self.assertIn("- Studies: MSc Computer Science", note)
+        self.assertEqual(about.call_args.kwargs["types"], {"study_context", "constraint"})
+
     def test_a_milestone_frame_shows_its_labs_and_reference(self):
         import curated_config
         frame = pc.workshop_frame("Build a Rocket", curated_config.get_static_outline("Build a Rocket"), 0)
@@ -295,6 +328,63 @@ class Evidence(unittest.TestCase):
         self.add("[ANSWER_CORRECT: eigenvector centrality | hinted]")
         [line] = pc.graded_evidence(self.db, 1, {"eigenvector", "centrality"}, "NetSci")
         self.assertIn("latest answer needed help", line)
+
+
+class Bridges(unittest.TestCase):
+    """Cross-course links in lessons: the same idea, not the same field (scores from real data)."""
+
+    def test_the_same_idea_links(self):
+        from coast_content_oma.student.bridges import same_idea
+        self.assertTrue(same_idea("shortest path", "shortest path", 0.76))
+        self.assertTrue(same_idea("degree centrality", "node degree", 0.71))
+        self.assertTrue(same_idea("directed edge-labelled graph", "directed graph", 0.65))
+        self.assertTrue(same_idea("connectivity", "graph connectedness", 0.93))  # near-identical meaning
+
+    def test_sharing_only_the_field_does_not(self):
+        from coast_content_oma.student.bridges import same_idea
+        self.assertFalse(same_idea("dense graph", "rdf graph", 0.70))
+        self.assertFalse(same_idea("real-world networks", "complex networks", 0.71))
+        self.assertFalse(same_idea("computational complexity", "computational biology", 0.64))
+        self.assertFalse(same_idea("property graph", "weighted graph", 0.55))
+
+
+class WidgetBlocks(unittest.TestCase):
+    """A lab placed without its ``` fences (seen in a real Build a Brain workshop) still shows the lab."""
+
+    def test_a_bare_widget_line_gets_its_fences_back(self):
+        reply = ("Let's see how close that is to reality.\n\nwidget\nneuron {\"mode\": \"rate\"}\n\n"
+                 "Try a handful of currents.")
+        self.assertEqual(pc.repair_widget_blocks(reply),
+                         "Let's see how close that is to reality.\n\n```widget\nneuron {\"mode\": \"rate\"}\n```\n\n"
+                         "Try a handful of currents.")
+        self.assertEqual(pc.repair_widget_blocks("widget recall"), "```widget\nrecall\n```")
+
+    def test_fenced_blocks_prose_and_unknown_labs_are_left_alone(self):
+        for text in ("```widget\nrocket {\"scene\": \"flight\"}\n```", "Open the widget\nneuron lab below.",
+                     "widget\nbanana {}"):
+            self.assertEqual(pc.repair_widget_blocks(text), text)
+
+    def test_pedro_is_told_the_fences_are_part_of_the_block(self):
+        self.assertIn("The ``` lines before and after are part of the block", pc.WORKSHOP_CORE)
+
+
+class SlideEmbeds(unittest.TestCase):
+    """A slide written without its address (seen in a real lesson) shows the page cited before it."""
+
+    def test_the_page_cited_just_before_supplies_the_address(self):
+        reply = ("The classic example is the map of Australia [01b · p. 20](#lesson-source/src_2a79aec8ca/20):\n\n"
+                 "![Map of Australia and its constraint graph]\n\nThe regions are WA, NT and SA.")
+        self.assertIn("![Map of Australia and its constraint graph](/api/source-pages/src_2a79aec8ca/20)",
+                      pc.repair_slide_embeds(reply))
+
+    def test_good_embeds_are_left_alone_and_near_misses_fixed(self):
+        good = "![Knowledge base](/api/source-pages/src_a/16)\n\nnext"
+        self.assertEqual(pc.repair_slide_embeds(good), good)
+        self.assertEqual(pc.repair_slide_embeds("![Tree](#lesson-source/src_a/23)"), "![Tree](/api/source-pages/src_a/23)")
+        self.assertEqual(pc.repair_slide_embeds("![Tree] (/api/source-pages/src_a/23)"), "![Tree](/api/source-pages/src_a/23)")
+
+    def test_with_nothing_to_point_at_the_markup_is_dropped(self):
+        self.assertEqual(pc.repair_slide_embeds("Intro.\n\n![Some figure]\n\nMore."), "Intro.\n\n\n\nMore.")
 
 
 class Trimming(unittest.TestCase):

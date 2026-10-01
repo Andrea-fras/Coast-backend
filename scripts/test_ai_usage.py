@@ -109,7 +109,7 @@ class UsageTests(unittest.TestCase):
 
     def test_admin_summary(self):
         with SessionLocal() as db:
-            admin = db.query(User).filter_by(email=ADMIN).first() or User(email=ADMIN, name='Admin', password_hash='x')
+            admin = db.query(User).filter_by(email=ADMIN).first() or User(email=ADMIN, name='Admin', password_hash='x', email_verified=True)
             student = db.query(User).filter_by(email='student@example.com').first() or User(email='student@example.com', name='S', password_hash='x')
             db.add_all([admin, student]); db.commit()
             admin_id, student_id = admin.id, student.id
