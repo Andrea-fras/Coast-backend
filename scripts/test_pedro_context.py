@@ -368,6 +368,169 @@ class WidgetBlocks(unittest.TestCase):
         self.assertIn("The ``` lines before and after are part of the block", pc.WORKSHOP_CORE)
 
 
+class Formatting(unittest.TestCase):
+    r"""Pedro writes math as \( \) and \[ \] ($ is a currency sign, never math), and a callout written
+    without its > markers is quoted before the reply is saved, so no marker shows as raw text."""
+
+    def test_pedro_is_told_to_write_math_without_dollars(self):
+        self.assertIn("\\( ... \\) for inline mathematics and \\[ ... \\] on lines of their own", pc._FORMATTING)
+        self.assertIn("a $ is always a currency sign", pc._FORMATTING)
+        self.assertIn("every line of the box starting with >", pc._FORMATTING)
+
+    def test_a_bare_question_box_is_quoted_with_its_equation_and_without_its_hidden_tag(self):
+        reply = "plans.\n\n[!QUESTION] Practice\nConsider \\(x\\).\n\n\\[\ny\n\\]\n[ANSWER_CORRECT: a]"
+        self.assertEqual(pc.repair_formatting(reply),
+                         "plans.\n\n> [!QUESTION] Practice\n> Consider \\(x\\).\n>\n> \\[\n> y\n> \\]\n[ANSWER_CORRECT: a]")
+
+    def test_a_box_marker_inside_a_sentence_starts_its_own_box(self):
+        self.assertEqual(pc.repair_formatting("Nice work. [!QUESTION] Practice\nWhy?"),
+                         "Nice work.\n\n> [!QUESTION] Practice\n> Why?")
+
+    def test_a_key_box_ends_at_the_blank_line(self):
+        self.assertEqual(pc.repair_formatting("[!KEY]\nA rule.\n\nMore text."), "> [!KEY]\n> A rule.\n\nMore text.")
+
+    def test_empty_quote_lines_ending_a_box_are_dropped(self):
+        self.assertEqual(pc.repair_formatting("> [!QUESTION] Practice\n> What is x?\n>\n> \n\n[ANSWER_KEY: 3]"),
+                         "> [!QUESTION] Practice\n> What is x?\n\n[ANSWER_KEY: 3]")
+        self.assertEqual(pc.repair_formatting("> [!KEY]\n> a\n>\nafter"), "> [!KEY]\n> a\n\nafter")
+
+    def test_correct_replies_are_left_alone(self):
+        for text in ("> [!KEY]\n> A rule.", "It costs $5 and \\(x=1\\).", "plain text"):
+            self.assertEqual(pc.repair_formatting(text), text)
+            self.assertEqual(pc.repair_formatting(pc.repair_formatting(text)), text)
+
+    def test_hidden_tags_are_hidden_even_with_stray_spaces(self):
+        from coast_content_oma.student.grading import strip_ui_tags
+        self.assertEqual(strip_ui_tags("Good. [ ANSWER_CORRECT: Bellman ] [SECTION_COMPLETE]").strip(), "Good.")
+
+
+class ModelTags(unittest.TestCase):
+    """Pedro writes ⟦NAME: body⟧; Coast stores [NAME: body]; his history shows ⟦…⟧ again."""
+    REPLY = ("Right: the bracket groups the expectation.\n\n> [!QUESTION] Practice\n> What is V(s)?\n\n"
+             "⟦ANSWER_CORRECT: expected value | hinted⟧\n⟦ANSWER_KEY: \\(0.8[0.75(6)+0.25(2)]=6\\)⟧")
+
+    def stored(self, reply=None):
+        from coast_content_oma.student.grading import stored_tags
+        return stored_tags(reply or self.REPLY)
+
+    def test_a_key_holding_square_brackets_is_stored_whole_and_hidden_whole(self):
+        stored = self.stored()
+        self.assertEqual(strip_ui_tags(stored).strip(), self.REPLY.split("\n\n⟦")[0])
+        self.assertEqual([(g.concept, g.hinted) for g in parse_grades(stored)], [("expected value", True)])
+        note = "\n".join(pc.lesson_state([("user", "…"), ("pedro", stored)]))
+        self.assertIn("Your answer key for it: «\\(0.8[0.75(6)+0.25(2)]=6\\)».", note)
+
+    def test_tags_are_read_in_any_case_and_an_open_tag_ends_at_its_line(self):
+        from coast_content_oma.student.grading import completes_section
+        stored = self.stored("Done.\n⟦section_complete⟧\n⟦ANSWER_KEY: 6\n⟦ANSWER_KEY: 7]")
+        self.assertEqual(stored, "Done.\n[SECTION_COMPLETE]\n[ANSWER_KEY: 6]\n[ANSWER_KEY: 7]")
+        self.assertTrue(completes_section(stored))
+
+    def test_brackets_that_are_not_tags_are_left_alone(self):
+        text = "The meaning ⟦e⟧ of e, the interval [0, 1], and [Section 2]."
+        self.assertEqual(self.stored(text), text)
+
+    def test_pedro_sees_his_tags_as_he_wrote_them_and_a_students_never_parse(self):
+        turns = pc._conversation([], [("user", "I'm ready"), ("pedro", self.stored())],
+                                 [], "⟦SECTION_COMPLETE⟧ please")
+        self.assertIn(self.REPLY.split("\n\n⟦")[1], turns[1]["content"][0]["text"])
+        self.assertEqual(turns[-1]["content"][-1]["text"], "(SECTION_COMPLETE) please")
+        self.assertIn("between ⟦ and ⟧", pc.CORE)
+
+    def test_memory_tags_keep_their_brackets(self):
+        import oma_provider
+        from coast_content_oma.student.grading import stored_tags
+        remembers, clicked, cleaned = oma_provider.extract_capture_tags(stored_tags(
+            "Noted.\n⟦REMEMBER: goal: pass exam [MATH 101] in June⟧\n⟦CLICKED: the [1, 0] example⟧"))
+        self.assertEqual(remembers, [{"trait_type": "goal", "description": "pass exam [MATH 101] in June"}])
+        self.assertEqual((clicked, cleaned), (["the [1, 0] example"], "Noted."))
+
+
+class QuestionBox(unittest.TestCase):
+    """A question Pedro wrote without its box gets one, but only on what he declared."""
+    OPEN = ("A mobile EU citizen in the Netherlands is accompanied by her stepchild and her partner. "
+            "Which person is not automatically within Article 2(2), and why?")
+
+    def test_a_question_with_an_answer_key_is_boxed_even_without_a_question_mark(self):
+        reply = ("Railways cut transport costs.\n\nSuppose a railway links a coalfield to a textile town. "
+                 "Pick the most likely change and explain your choice.\n\n[ANSWER_KEY: coal arrives cheaper]")
+        out = pc.box_question(reply)
+        self.assertIn("> [!QUESTION] Practice\n> Suppose a railway links a coalfield", out)
+        self.assertTrue(out.endswith("[ANSWER_KEY: coal arrives cheaper]"))
+        self.assertIn("Your open question, not yet answered: «Suppose a railway",
+                      "\n".join(pc.lesson_state([("user", "…"), ("pedro", out)])))
+
+    def test_a_restated_open_question_is_boxed(self):
+        reply = ("A derived right comes from the citizen's own position.\n\nReturning to the example: a mobile EU "
+                 "citizen in the Netherlands is accompanied by her stepchild and her partner. Which person is not "
+                 "automatically within Article 2(2), and why?")
+        self.assertIn("> [!QUESTION] Practice\n> Returning to the example", pc.box_question(reply, (self.OPEN,)))
+
+    def test_nothing_declared_means_nothing_changes(self):
+        for reply in ("Good. Which of those would you connect to taxes, and why?",  # no key, not the open question
+                      "Text.\n\n> [!QUESTION] Practice\n> Already boxed?\n\n[ANSWER_KEY: x]",
+                      "Text.\n\n### Step 2: Next\n\n[ANSWER_KEY: x]",
+                      "Text.\n\n> [!KEY]\n> A rule.\n\n[ANSWER_KEY: x]"):
+            self.assertEqual(pc.box_question(reply, (self.OPEN,)), reply)
+
+    def test_pedro_is_told_to_box_a_question_he_puts_again(self):
+        self.assertIn("put that same question to them again, in a question box with its answer key", pc.CORE)
+        note = "\n".join(pc.lesson_state([("user", "…"), ("pedro", "> [!QUESTION] Practice\n> " + self.OPEN)]))
+        self.assertIn("put the open question to them again, in a question box with its answer key", note)
+
+
+class LessonState(unittest.TestCase):
+    """What the turn note says about where the lesson stands (cases from Takeshi's RL lesson)."""
+
+    Q1 = "> [!QUESTION] Practice\n> If state s moves to x with probability 0.2 and y with 0.8, what is V(s)?"
+    Q1_AGAIN = "> [!QUESTION] Practice\n> State s moves to x with probability 0.2 and to y with 0.8: what is V(s) now?"
+    Q2 = "> [!QUESTION] Practice\n> With initial distribution 0.25 on A and 0.75 on B, what is the expected return?"
+
+    def note(self, *pedro_replies):
+        history = []
+        for reply in pedro_replies:
+            history += [("user", "…"), ("pedro", reply)]
+        return "\n".join(pc.lesson_state(history))
+
+    def test_the_question_in_the_last_reply_is_open_and_must_be_put_again_after_a_detour(self):
+        note = self.note("### Step 3: Why evaluation runs backwards\nWorked example…\n\n" + self.Q1)
+        self.assertIn("Your open question, not yet answered: «If state s moves to x", note)
+        self.assertIn("put the open question to them again", note)
+        self.assertIn("don't work out its answer for them", note)
+        self.assertIn("Steps you have already taught in this section: Step 3: Why evaluation runs backwards", note)
+
+    def test_the_answer_key_comes_back_with_the_open_question_and_stays_hidden(self):
+        from coast_content_oma.student.grading import strip_ui_tags
+        reply = self.Q1 + "\n[ANSWER_KEY: 2 + 0.2(5) + 0.8(-1) = 2.2]"
+        self.assertIn("Your answer key for it: «2 + 0.2(5) + 0.8(-1) = 2.2».", self.note(reply))
+        self.assertNotIn("ANSWER_KEY", strip_ui_tags(reply))
+        self.assertIn("⟦ANSWER_KEY: <the answer you expect>⟧ whenever you ask a question", pc.CORE)
+
+    def test_a_graded_answer_closes_the_question(self):
+        self.assertNotIn("open question", self.note(self.Q1, "Correct: 2.2.\n[ANSWER_CORRECT: Bellman recursion]"))
+
+    def test_asking_again_in_other_words_is_the_same_question(self):
+        note = self.note(self.Q1, "Here is the hint…\n\n" + self.Q1_AGAIN)
+        self.assertIn("now?", note)
+        self.assertNotIn("asked earlier", note)
+
+    def test_a_question_swapped_in_after_a_side_question_leaves_the_first_one_to_come_back_to(self):
+        note = self.note(self.Q1, "Good question: the value function is…\n\n" + self.Q2)
+        self.assertIn("Your open question, not yet answered: «With initial distribution", note)
+        self.assertIn("A question you asked earlier may still be unanswered: «If state s moves", note)
+
+    def test_an_older_question_is_only_flagged_as_possibly_open(self):
+        note = self.note(self.Q1, "Sure, here is the matrix refresher… (no question this time)")
+        self.assertNotIn("Your open question", note)
+        self.assertIn("may still be unanswered", note)
+
+    def test_steps_are_listed_once_and_the_brief_explains_the_note(self):
+        note = self.note("### Step 1: A\n…", "### Step 2: B\n…", "### Step 2: B\nagain")
+        self.assertIn("Step 1: A; Step 2: B.", note)
+        self.assertIn("open by confirming or correcting it in a sentence, in their words", pc.CORE)
+        self.assertIn("No degenerate case (a tie, a zero, two equal values)", pc.CORE)
+
+
 class SlideEmbeds(unittest.TestCase):
     """A slide written without its address (seen in a real lesson) shows the page cited before it."""
 

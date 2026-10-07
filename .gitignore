@@ -48,3 +48,4 @@ eval_runs/
 *.pptx.pages/
 eval_runs*.out
 *.bak-*
+backups/

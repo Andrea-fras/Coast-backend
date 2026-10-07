@@ -21,7 +21,8 @@ from pydantic import BaseModel
 
 viz_router = APIRouter()
 
-MEDIA_DIR = Path(__file__).parent / "media" / "visualizations"
+# On the persistent disk in production, so a student's visualisations outlive a redeploy.
+MEDIA_DIR = Path(os.getenv("MEDIA_DIR", Path("/data/media") if Path("/data").is_dir() else Path(__file__).parent / "media")) / "visualizations"
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
 def _manim_available() -> bool:

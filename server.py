@@ -354,6 +354,8 @@ def on_startup():
     initialize(oma_provider.OMA_DB_PATH)
     import learning_jobs
     learning_jobs.start()
+    import backups
+    backups.start()
     threading.Thread(target=learning_jobs.recover_sources, name="coast-source-recovery", daemon=True).start()
     if PAPERS_DIR.exists():
         load_papers_from_json(PAPERS_DIR)
@@ -3881,6 +3883,25 @@ def admin_ai_usage(days: int = 7, user: User = Depends(get_current_user)):
     if not is_admin(user):
         raise HTTPException(403, "Admin access only")
     return ai_usage.summary(max(1, min(days, 90)))
+
+
+@app.get("/api/admin/backups")
+def admin_backups(user: User = Depends(get_current_user)):
+    """The last backup's manifest: when, how much, and whether it reached R2."""
+    if not is_admin(user):
+        raise HTTPException(403, "Admin access only")
+    import backups
+    return {"last": backups.last_backup(), "offsite_configured": backups._r2()[0] is not None}
+
+
+@app.post("/api/admin/backups")
+def admin_run_backup(user: User = Depends(get_current_user)):
+    """Start a backup now, in the background (it takes as long as copying the databases)."""
+    if not is_admin(user):
+        raise HTTPException(403, "Admin access only")
+    import backups
+    threading.Thread(target=backups.run_backup, name="coast-backup-now", daemon=True).start()
+    return {"started": True}
 
 
 @app.get("/api/admin/control-center")

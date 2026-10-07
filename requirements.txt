@@ -22,3 +22,4 @@ bleach[css]==6.4.0
 
 httpx>=0.27.0
 anthropic>=0.84.0
+boto3>=1.34  # nightly backups to Cloudflare R2 (backups.py)

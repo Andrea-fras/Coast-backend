@@ -286,7 +286,7 @@ PEDAGOGY — adaptive teaching:
 FORMATTING RULES:
 - Use **bold** for key terms and important concepts when first introduced.
 - Use bullet points or numbered lists for multi-part explanations.
-- Use inline math with $...$ for equations (e.g. $E = mc^2$) and display math with $$...$$ for important formulas.
+- Use inline math with \\( ... \\) for equations (e.g. \\(E = mc^2\\)) and display math with \\[ ... \\] on lines of their own for important formulas. Never use dollar signs for math: a $ is always a currency sign.
 - Use `backticks` for code, variable names, or short technical terms.
 - Mark the one phrase worth remembering with ==double equals== (at most twice per reply).
 - Use a callout box for something the student should not miss: "> [!KEY]" for a definition or key insight, "> [!MISTAKE]" for a common mistake, "> [!TIP]" for a study tip, and "> [!QUESTION]" for a question you want them to answer. The marker goes on the first line of the quote.
@@ -1493,6 +1493,9 @@ def send_message_stream(
 
         if not full_reply:
             full_reply = "I'd love to help with that! Could you rephrase your question?"
+        # Pedro's ⟦…⟧ tags in the [NAME: body] form every reader below expects.
+        from coast_content_oma.student.grading import stored_tags
+        full_reply = stored_tags(full_reply)
 
         onboarding_complete = False
         traits_saved: list = []
@@ -1524,11 +1527,15 @@ def send_message_stream(
                 import traceback as tb
                 tb.print_exc()
 
-        # A slide written without its address, or a lab without its ``` fences, is repaired before
-        # it is saved (and re-read by Pedro).
-        if full_reply and ("![" in full_reply or "widget" in full_reply):
+        # A slide without its address, a lab without its ``` fences, unclosed math or a callout
+        # without its > markers is repaired before the reply is saved (and re-read by Pedro).
+        if full_reply:
             import pedro_context as _pedro_context
-            full_reply = _pedro_context.repair_widget_blocks(_pedro_context.repair_slide_embeds(full_reply))
+            if context_type == "lesson":  # a question written without its box gets one
+                full_reply = _pedro_context.box_question(
+                    full_reply, getattr(pedro_request, "open_questions", ()))
+            full_reply = _pedro_context.repair_formatting(
+                _pedro_context.repair_widget_blocks(_pedro_context.repair_slide_embeds(full_reply)))
 
         # Lesson turns are filed under the section actually being taught, even when
         # the client did not send an index — recall and evaluation read by section.

@@ -32,6 +32,7 @@ AI_PRICES = {
     "gpt-5.6-sol": (4.00, 0.40, 20.00),
     "gpt-5.6-terra": (2.00, 0.20, 12.00),
     "gpt-5.6-luna": (0.20, 0.02, 1.20),
+    "gpt-6-luna": (0.10, 0.01, 0.50),  # cached-input price assumed at a tenth of input, as for 5.6
     "gpt-4o-mini": (0.15, 0.075, 0.60),
     "gpt-4o": (2.50, 1.25, 10.00),
     "text-embedding-3-small": (0.02, 0.02, 0.0),

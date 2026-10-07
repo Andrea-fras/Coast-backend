@@ -60,8 +60,17 @@ OPENAI_TEXT_MODEL = os.environ.get("OMA_OPENAI_MODEL", "gpt-4o-mini")
 OPENAI_VISION_MODEL = os.environ.get("OMA_OPENAI_VISION_MODEL", "gpt-4o-mini")
 
 
+def _openai_limits(model: str, max_tokens: int, temperature: float) -> dict:
+    """Reasoning models (gpt-5 family) take max_completion_tokens, which also covers their
+    reasoning, and only their default temperature."""
+    if model.startswith(("gpt-5", "o")):
+        return {"max_completion_tokens": max_tokens + 2000, "reasoning_effort": "low"}
+    return {"max_tokens": max_tokens, "temperature": temperature}
+
+
 def _gemini_client():
-    if not os.environ.get("GEMINI_API_KEY"):
+    # OMA_READER=openai reads uploads with OpenAI alone (e.g. while Gemini is overloaded).
+    if not os.environ.get("GEMINI_API_KEY") or os.environ.get("OMA_READER", "gemini").lower() == "openai":
         return None
     try:
         from google import genai  # google-genai >= 1.x
@@ -183,8 +192,7 @@ def _openai_text(client, prompt: str, system: Optional[str], max_tokens: int, te
         resp = provider_capacity.call('openai', lambda: client.chat.completions.create(
             model=OPENAI_TEXT_MODEL,
             messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
+            **_openai_limits(OPENAI_TEXT_MODEL, max_tokens, temperature),
         ), priority='background')
         return resp.choices[0].message.content
     except Exception as e:
@@ -277,8 +285,7 @@ def _openai_vision(client, prompt: str, img_bytes: bytes, max_tokens: int) -> Op
                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
                 ],
             }],
-            max_tokens=max_tokens,
-            temperature=0.2,
+            **_openai_limits(OPENAI_VISION_MODEL, max_tokens, 0.2),
         ), priority='background')
         text = resp.choices[0].message.content
         return _parse_json_loose(text) if text else None
@@ -550,8 +557,7 @@ def _openai_vision_multi(client, prompt: str, png_list: list[bytes], max_tokens:
         resp = provider_capacity.call('openai', lambda: client.chat.completions.create(
             model=OPENAI_VISION_MODEL,
             messages=[{"role": "user", "content": content}],
-            max_tokens=max_tokens,
-            temperature=0.2,
+            **_openai_limits(OPENAI_VISION_MODEL, max_tokens, 0.2),
         ), priority='background')
         text = resp.choices[0].message.content
         parsed = _parse_json_loose(text) if text else None

@@ -2464,7 +2464,7 @@ def extract_capture_tags(text: str) -> tuple[list[dict], list[str], str]:
     Only tags in Pedro's own voice count: one shown inside code or a quote is left in
     the text and never becomes memory. trait_type must be one Coast knows.
     """
-    from coast_content_oma.student.grading import own_voice
+    from coast_content_oma.student.grading import own_voice, tag_body
     from coast_content_oma.student.stores.academic_identity import CANONICAL_TRAIT_TYPES
     out = text or ""
     voice = own_voice(out)
@@ -2472,13 +2472,13 @@ def extract_capture_tags(text: str) -> tuple[list[dict], list[str], str]:
     spans: list[tuple[int, int]] = []
     for m in _REMEMBER_TAG_RE.finditer(voice):
         trait_type = (m.group(1) or "").strip().lower()
-        desc = out[m.start(2):m.end(2)].strip().strip("\"'")
+        desc = tag_body(out[m.start(2):m.end(2)]).strip().strip("\"'")
         spans.append(m.span())
         if trait_type in CANONICAL_TRAIT_TYPES and desc:
             remembers.append({"trait_type": trait_type, "description": desc})
     clickeds: list[str] = []
     for m in _CLICKED_TAG_RE.finditer(voice):
-        desc = out[m.start(1):m.end(1)].strip().strip("\"'")
+        desc = tag_body(out[m.start(1):m.end(1)]).strip().strip("\"'")
         spans.append(m.span())
         if desc:
             clickeds.append(desc)
