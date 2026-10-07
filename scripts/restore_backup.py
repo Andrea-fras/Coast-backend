@@ -94,13 +94,18 @@ def check_files(manifest: dict, to: Path, with_files: bool) -> None:
     paths = [p for (p,) in c.execute("select file_path from folder_sources where file_path is not null and file_path != ''")]
     c.close()
     root = manifest["data_root"].rstrip("/") + "/"
-    missing = [p for p in paths if not (to / p[len(root):] if p.startswith(root) else Path(p)).exists()]
+    on_disk = [p for p in paths if p.startswith(root)]
+    # A path outside the data disk (the code folder) was never the disk's to keep: files shipped with
+    # the code, or uploads saved there before the disk existed and lost at the next deploy.
+    elsewhere = len(paths) - len(on_disk)
+    missing = [p for p in on_disk if not (to / p[len(root):]).exists()]
+    note = f"; {elsewhere} named outside the disk, which no backup holds" if elsewhere else ""
     if not with_files:
         print(f"skip files: databases-only restore ({len(paths)} uploads are named in the database)")
     elif missing:
-        sys.exit(f"FAIL files: {len(missing)} of {len(paths)} uploads missing, e.g. {missing[:3]}")
+        sys.exit(f"FAIL files: {len(missing)} of {len(on_disk)} uploads on the disk missing, e.g. {missing[:3]}{note}")
     else:
-        print(f"ok   files: all {len(paths)} uploaded sources named in the database are present")
+        print(f"ok   files: all {len(on_disk)} uploads on the disk are present{note}")
 
 
 APP_CHECK = r'''

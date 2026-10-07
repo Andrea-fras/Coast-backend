@@ -82,8 +82,6 @@ class HttpIntegrity(unittest.TestCase):
             stack.enter_context(patch('server.init_db'))
             stack.enter_context(patch('coast_content_oma.course_identity.initialize'))
             stack.enter_context(patch('learning_jobs.start'))
-            stack.enter_context(patch('server.load_papers_from_json'))
-            stack.enter_context(patch('paper_scanner.load_scanned_into_db'))
             thread = stack.enter_context(patch('server.threading.Thread'))
             server.on_startup()
             self.assertEqual(thread.call_count, 2)

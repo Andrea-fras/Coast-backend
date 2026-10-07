@@ -357,11 +357,7 @@ def on_startup():
     import backups
     backups.start()
     threading.Thread(target=learning_jobs.recover_sources, name="coast-source-recovery", daemon=True).start()
-    if PAPERS_DIR.exists():
-        load_papers_from_json(PAPERS_DIR)
-        print(f"Loaded papers from {PAPERS_DIR}")
-    from paper_scanner import load_scanned_into_db
-    load_scanned_into_db()
+    # Past papers are no longer part of Coast: nothing loads them at startup.
 
     def _bg_curated():
         try:
