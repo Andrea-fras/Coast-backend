@@ -56,14 +56,17 @@ def fetch(args, to: Path) -> dict:
     for name in backups._listing(client, bucket, f"db/{stamp}/"):
         client.download_file(bucket, backups.key(name), str(to / name.split("/")[-1]))
     files = backups._listing(client, bucket, "files/")
-    got = 0
+    listed = json.loads((to / "manifest.json").read_text()).get("file_keys")
+    if listed is not None:  # only the files this backup holds, not everything ever kept
+        files = {f"files/{rel}": files[f"files/{rel}"] for rel in listed if f"files/{rel}" in files}
+    todo = []
     for name, obj in files.items():
         dest = to / name[len("files/"):]
-        if dest.exists() and dest.stat().st_size == obj["Size"]:
-            continue  # resumed run
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        client.download_file(bucket, backups.key(name), str(dest))
-        got += 1
+        if not (dest.exists() and dest.stat().st_size == obj["Size"]):  # else: a resumed run
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            todo.append((name, dest))
+    backups._parallel(lambda item: client.download_file(bucket, backups.key(item[0]), str(item[1])), todo)
+    got = len(todo)
     manifest = json.loads((to / "manifest.json").read_text())
     for rel, canonical in (manifest.get("links") or {}).items():  # one file under two names
         dest, src = to / rel, to / canonical

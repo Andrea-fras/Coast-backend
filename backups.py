@@ -151,7 +151,8 @@ def run_backup() -> dict:
         files, links = _files()
         manifest = {"stamp": stamp, "created_at": datetime.now(timezone.utc).isoformat(), "commit": _commit(),
                     "data_root": str(data_root()), "databases": {}, "files": {"count": len(files),
-                    "bytes": sum(p.stat().st_size for p in files.values())}, "links": links}
+                    "bytes": sum(p.stat().st_size for p in files.values())}, "links": links,
+                    "file_keys": sorted(files)}
         for name, path in databases().items():
             manifest["databases"][name] = {**_snapshot(path, local / f"{name}.gz"), "path": str(path)}
         (local / "manifest.json").write_text(json.dumps(manifest, indent=1))
@@ -183,23 +184,33 @@ def _listing(client, bucket: str, prefix: str) -> dict[str, dict]:
     return out
 
 
+_PARALLEL = 16  # requests at once: one at a time, 3,700 files took ~16 min across the Atlantic
+
+
+def _parallel(fn, items) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(_PARALLEL) as pool:  # boto3 clients are thread-safe
+        list(pool.map(fn, items))
+
+
+def _delete(client, bucket: str, names) -> None:
+    """Remove objects in batches of 1,000 (one request each)."""
+    names = list(names)
+    for i in range(0, len(names), 1000):
+        client.delete_objects(Bucket=bucket, Delete={"Objects": [{"Key": key(n)} for n in names[i:i + 1000]], "Quiet": True})
+
+
 def _sync_files(client, bucket: str, files: dict[str, Path]) -> dict:
     remote = _listing(client, bucket, "files/")
     removed = _listing(client, bucket, "removed/")
-    sent = 0
-    for rel, path in files.items():
-        name = f"files/{rel}"
-        if name not in remote or remote[name]["Size"] != path.stat().st_size:
-            client.upload_file(str(path), bucket, key(name))
-            sent += 1
-        if f"removed/{rel}" in removed:  # back on the disk (restored): no longer due to go
-            client.delete_object(Bucket=bucket, Key=key(f"removed/{rel}"))
-    now = datetime.now(timezone.utc)
-    for name in remote:
-        rel = name[len("files/"):]
-        if rel not in files and f"removed/{rel}" not in removed:
-            client.put_object(Bucket=bucket, Key=key(f"removed/{rel}"), Body=now.isoformat().encode())
-    return {"files_sent": sent, "files_offsite": len(set(remote) | {f"files/{r}" for r in files})}
+    send = [(rel, path) for rel, path in files.items()
+            if f"files/{rel}" not in remote or remote[f"files/{rel}"]["Size"] != path.stat().st_size]
+    _parallel(lambda item: client.upload_file(str(item[1]), bucket, key(f"files/{item[0]}")), send)
+    _delete(client, bucket, [f"removed/{rel}" for rel in files if f"removed/{rel}" in removed])  # back on the disk
+    stamp = datetime.now(timezone.utc).isoformat().encode()
+    gone = [name[len("files/"):] for name in remote if name[len("files/"):] not in files and f"removed/{name[len('files/'):]}" not in removed]
+    _parallel(lambda rel: client.put_object(Bucket=bucket, Key=key(f"removed/{rel}"), Body=stamp), gone)
+    return {"files_sent": len(send), "files_offsite": len(set(remote) | {f"files/{r}" for r in files}), "marked_removed": len(gone)}
 
 
 def _prune_local() -> None:
@@ -213,12 +224,10 @@ def _prune_offsite(client, bucket: str) -> None:
     stamps = sorted({k.split("/")[1] for k in _listing(client, bucket, "db/")})
     for stamp in stamps[:-KEEP_ON_DISK]:  # always keep the newest few, however old
         if datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc) < cutoff:
-            for name in _listing(client, bucket, f"db/{stamp}/"):
-                client.delete_object(Bucket=bucket, Key=key(name))
-    for name, obj in _listing(client, bucket, "removed/").items():
-        if obj["LastModified"] < cutoff:  # gone from the disk for longer than any kept database
-            client.delete_object(Bucket=bucket, Key=key("files/" + name[len("removed/"):]))
-            client.delete_object(Bucket=bucket, Key=key(name))
+            _delete(client, bucket, _listing(client, bucket, f"db/{stamp}/"))
+    expired = [name for name, obj in _listing(client, bucket, "removed/").items() if obj["LastModified"] < cutoff]
+    # gone from the disk for longer than any kept database: the file and its marker go
+    _delete(client, bucket, [f"files/{name[len('removed/'):]}" for name in expired] + expired)
 
 
 def last_backup() -> Optional[dict]:
