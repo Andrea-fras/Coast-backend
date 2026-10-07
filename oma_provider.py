@@ -50,7 +50,9 @@ _ON_RENDER_DISK = bool(os.getenv("RENDER") and _RENDER_DATA.is_dir())
 
 
 def _resolve_rag_provider() -> str:
-    return (os.environ.get("RAG_PROVIDER") or "flat").strip().lower()
+    # OMA is how Coast reads courses and remembers students; "flat" (Chroma) remains only as an
+    # explicit RAG_PROVIDER=flat, never as a silent fallback when the setting is missing.
+    return (os.environ.get("RAG_PROVIDER") or "oma").strip().strip("'\"").lower()
 
 
 _runtime_rag_provider: str | None = None
