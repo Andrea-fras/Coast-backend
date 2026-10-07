@@ -8,14 +8,11 @@ import uuid
 import traceback
 from pathlib import Path
 
+# The premade workshops the app offers (src/data/curatedLessons.json). The premade course library
+# (Quantitative Methods 1, Data Structures & Algorithms, Prismatic System, Science of Cooking,
+# First-Principles Thinking, The Polya Method) is retired: nothing prepares or indexes it any more.
 CURATED_FOLDER_NAMES = {
-    "Quantitative Methods 1",
-    "Data Structures & Algorithms",
-    "Prismatic System",
-    "Science of Cooking",
     "Memory Palace",
-    "First-Principles Thinking",
-    "The Polya Method",
     # Hands-on workshops that teach from their own contracts and labs (workshop_library).
     "Build Your Own LLM",
     "Build a Rocket",
