@@ -64,8 +64,18 @@ def fetch(args, to: Path) -> dict:
         dest.parent.mkdir(parents=True, exist_ok=True)
         client.download_file(bucket, backups.key(name), str(dest))
         got += 1
-    print(f"fetched backup {stamp}: databases and {len(files)} files ({got} downloaded now)")
-    return json.loads((to / "manifest.json").read_text())
+    manifest = json.loads((to / "manifest.json").read_text())
+    for rel, canonical in (manifest.get("links") or {}).items():  # one file under two names
+        dest, src = to / rel, to / canonical
+        if src.exists() and not dest.exists():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                os.link(src, dest)
+            except OSError:
+                shutil.copyfile(src, dest)
+    print(f"fetched backup {stamp}: databases and {len(files)} files ({got} downloaded now), "
+          f"{len(manifest.get('links') or {})} second names relinked")
+    return manifest
 
 
 def unpack(manifest: dict, to: Path) -> dict[str, Path]:

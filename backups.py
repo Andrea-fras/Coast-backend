@@ -111,17 +111,26 @@ def _snapshot(src: Path, dst: Path) -> dict:
     return {"sha256": sha, "rows": rows, "gz_bytes": dst.stat().st_size}
 
 
-def _files() -> dict[str, Path]:
+def _files() -> tuple[dict[str, Path], dict[str, str]]:
+    """The files to keep, each stored once, and the second names of hard-linked ones: a figure
+    lives in the page copy and in OMA's image folder as one file under two names."""
     root = data_root()
-    out = {}
+    out, links, first = {}, {}, {}
     for d in file_dirs():
-        for p in d.rglob("*"):
+        for p in sorted(d.rglob("*")):
             if p.is_file() and not any(part.endswith(_SKIP_SUFFIXES) for part in p.parts):
                 try:
-                    out[str(p.relative_to(root))] = p
+                    rel = str(p.relative_to(root))
                 except ValueError:  # a directory configured outside the data disk
-                    out[str(p)] = p
-    return out
+                    rel = str(p)
+                st = p.stat()
+                inode = (st.st_dev, st.st_ino)
+                if inode in first:
+                    links[rel] = first[inode]
+                else:
+                    first[inode] = rel
+                    out[rel] = p
+    return out, links
 
 
 def _commit() -> str:
@@ -139,10 +148,10 @@ def run_backup() -> dict:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         local = data_root() / "backups" / f"db-{stamp}"
         local.mkdir(parents=True, exist_ok=True)
-        files = _files()
+        files, links = _files()
         manifest = {"stamp": stamp, "created_at": datetime.now(timezone.utc).isoformat(), "commit": _commit(),
                     "data_root": str(data_root()), "databases": {}, "files": {"count": len(files),
-                    "bytes": sum(p.stat().st_size for p in files.values())}}
+                    "bytes": sum(p.stat().st_size for p in files.values())}, "links": links}
         for name, path in databases().items():
             manifest["databases"][name] = {**_snapshot(path, local / f"{name}.gz"), "path": str(path)}
         (local / "manifest.json").write_text(json.dumps(manifest, indent=1))

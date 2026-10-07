@@ -17,6 +17,32 @@ def fingerprint(path):
             h.update(block)
     return h.hexdigest()
 
+# Figures are kept as WebP: an 82-page lecture's 97 figures took 17.7 MB as PNG, 5.4 MB as WebP,
+# with no difference the AI or a student can see. Older caches hold PNG and keep working.
+FIGURE_EXT = "webp"
+FIGURE_QUALITY = 85
+
+
+def save_figure(pil, target):
+    pil.convert("RGB").save(target, "WEBP", quality=FIGURE_QUALITY, method=4)
+
+
+def store_once(source, target):
+    """Give a figure a second name without a second copy: a hard link on the same disk (the
+    page copy and OMA's image folder both live on it), a copy only across disks."""
+    target = Path(target)
+    if target.exists():
+        if target.samefile(source):
+            return target
+        target.unlink()
+    try:
+        os.link(source, target)
+    except OSError:
+        import shutil
+        shutil.copyfile(source, target)
+    return target
+
+
 class LazyImage:
     """A figure saved in the page cache, standing in for a PIL image. Its pixels are read only
     for the moment an operation needs them (a fingerprint, a save), so a file's figures never
@@ -64,8 +90,13 @@ def save_pages(path,pages):
     for page in pages:
         images=[]
         for image in page.get('images') or []:
-            name=f"p{page['page_number']}_i{image['idx']}.png"
-            image['pil_image'].save(directory/name,'PNG')
+            pil=image['pil_image']
+            if isinstance(pil,LazyImage):  # already written by extraction, in its own format
+                name=f"p{page['page_number']}_i{image['idx']}{pil.path.suffix}"
+                store_once(pil.path,directory/name)
+            else:
+                name=f"p{page['page_number']}_i{image['idx']}.{FIGURE_EXT}"
+                save_figure(pil,directory/name)
             images.append({k:v for k,v in image.items() if k!='pil_image'} | {'file':name})
         rows.append({'page_number':page['page_number'],'text':page.get('text',''),'images':images})
     manifest={'version':VERSION,'sha256':fingerprint(path),'pages':rows}
@@ -74,7 +105,7 @@ def save_pages(path,pages):
     os.replace(temporary,directory/'manifest.json')
     # Extraction writes figures as it goes; ones figure selection then dropped are not kept.
     named={image['file'] for row in rows for image in row['images']}
-    for leftover in directory.glob('p*_i*.png'):
+    for leftover in directory.glob('p*_i*.*'):
         if leftover.name not in named:
             leftover.unlink(missing_ok=True)
 

@@ -4,7 +4,9 @@ from contextvars import ContextVar
 from pathlib import Path
 import sqlite3
 
-BUSY_TIMEOUT_MS = 5000
+# Several files are indexed at once, each writing batches of pages and their search entries; a
+# writer waits its turn for up to 30 s instead of failing ("database is locked" at 5 s under load).
+BUSY_TIMEOUT_MS = 30000
 _active = ContextVar('oma_transaction', default=None)
 _wal_ready = set()
 

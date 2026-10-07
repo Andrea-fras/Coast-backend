@@ -202,6 +202,17 @@ def _openai_text(client, prompt: str, system: Optional[str], max_tokens: int, te
         return None
 
 
+def image_mime(data: bytes) -> str:
+    """The media type of image bytes, read from their signature (figures are WebP, older ones PNG)."""
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    return "image/png"
+
+
 def describe_image(pil_image, *, context_hint: str = "", max_tokens: int = 400) -> Optional[dict]:
     """Run vision analysis on a PIL image. Returns a dict like:
         {"description": "...", "image_type": "diagram", "concepts": ["..."]}
@@ -255,7 +266,7 @@ def _gemini_vision(client, prompt: str, img_bytes: bytes, max_tokens: int) -> Op
         from google.genai import types as _types
         parts = [
             _types.Part.from_text(text=prompt),
-            _types.Part.from_bytes(data=img_bytes, mime_type="image/png"),
+            _types.Part.from_bytes(data=img_bytes, mime_type=image_mime(img_bytes)),
         ]
         contents = [_types.Content(role="user", parts=parts)]
         config = _types.GenerateContentConfig(
@@ -282,7 +293,7 @@ def _openai_vision(client, prompt: str, img_bytes: bytes, max_tokens: int) -> Op
                 "role": "user",
                 "content": [
                     {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+                    {"type": "image_url", "image_url": {"url": f"data:{image_mime(img_bytes)};base64,{b64}"}},
                 ],
             }],
             **_openai_limits(OPENAI_VISION_MODEL, max_tokens, 0.2),
@@ -524,7 +535,7 @@ def _gemini_vision_multi(client, prompt: str, png_list: list[bytes], max_tokens:
 
         parts = [_types.Part.from_text(text=prompt)]
         for png in png_list:
-            parts.append(_types.Part.from_bytes(data=png, mime_type="image/png"))
+            parts.append(_types.Part.from_bytes(data=png, mime_type=image_mime(png)))
         contents = [_types.Content(role="user", parts=parts)]
         config = _types.GenerateContentConfig(
             temperature=0.2,
@@ -552,7 +563,7 @@ def _openai_vision_multi(client, prompt: str, png_list: list[bytes], max_tokens:
             b64 = base64.b64encode(png).decode("ascii")
             content.append({
                 "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{b64}"},
+                "image_url": {"url": f"data:{image_mime(png)};base64,{b64}"},
             })
         resp = provider_capacity.call('openai', lambda: client.chat.completions.create(
             model=OPENAI_VISION_MODEL,

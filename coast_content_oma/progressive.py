@@ -349,7 +349,8 @@ def status_for_section(user_id,folder,section):
             conn.executemany('INSERT OR IGNORE INTO source_page_progress VALUES (?,?,?,1,?)',
                 [(ns,'doc_'+sid,row['page_number'],json.dumps(by_page.get(row['page_number'],[]))) for row in data['pages']])
     result=section_status(orch,ns,section)
-    failed=[s for s in sources.values() if s.source_id in {r['source_id'] for r in section['source_refs']} and s.oma_ingest_status=='FAILED']
+    failed=[s for s in sources.values() if s.source_id in {r['source_id'] for r in section['source_refs']}
+            and s.oma_ingest_status=='FAILED' and not _retrying(s.source_id)]
     if failed: result['error']='Some source material could not be prepared. Retry source processing.'
     elif not result['ready'] and all(
             sources[sid].oma_ingest_status in CONTENT_DONE for sid in {r['source_id'] for r in section['source_refs']}):
@@ -389,6 +390,16 @@ def folder_progress(user_id,folder):
             'ready':s.oma_ingest_status in ('COMPLETE','READY_FOR_ROADMAP')} for s in sources],
         'concepts':orch.concept.count(ns),'images_indexed':orch.images.count(ns),
         'ingest_threads_active':sum(s.oma_ingest_status=='INGESTING' for s in sources)}
+
+def _retrying(source_id):
+    """A file whose indexing failed for a passing reason (a busy database, a provider hiccup) is
+    queued to try again; until its retries run out it is still being prepared, not failed."""
+    import hashlib
+    from database import SessionLocal, LearningJob
+    with SessionLocal() as db:
+        job=db.get(LearningJob,hashlib.sha256(('source:'+source_id).encode()).hexdigest())
+        return bool(job and job.status in ('queued','running'))
+
 
 def assert_chat_ready(user_id,folder,section_index=None,*,test_out=False):
     """Enforce readiness on the server, before starting an SSE response or saving a turn."""

@@ -34,7 +34,7 @@ SessionLocal = sessionmaker(bind=engine)
 def _set_sqlite_wal(dbapi_conn, connection_record):
     cursor = dbapi_conn.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA busy_timeout=5000")
+    cursor.execute("PRAGMA busy_timeout=30000")  # concurrent writers wait their turn rather than fail
     # Safe with WAL (a crash can lose only the last commits, never corrupt) and
     # avoids an fsync on every commit.
     cursor.execute("PRAGMA synchronous=NORMAL")

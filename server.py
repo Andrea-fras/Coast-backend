@@ -2080,11 +2080,17 @@ def serve_source_image(image_id: int, user: User = Depends(get_image_user)):
         from fastapi.responses import FileResponse
         return FileResponse(
             path=str(resolved),
-            media_type="image/png",
+            media_type=_image_media_type(resolved),
             headers={"Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer"},
         )
     finally:
         db.close()
+
+
+def _image_media_type(path) -> str:
+    """Figures are saved as WebP now; older ones are PNG."""
+    return {".webp": "image/webp", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif"}.get(
+        Path(path).suffix.lower(), "image/png")
 
 
 @app.get("/api/source-pages/{source_id}/{page_number}")
@@ -4183,7 +4189,7 @@ def serve_oma_image(item_id: str, user: User = Depends(get_image_user)):
     from fastapi.responses import FileResponse
     return FileResponse(
         path=str(path),
-        media_type="image/png",
+        media_type=_image_media_type(path),
         headers={"Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer"},
     )
 

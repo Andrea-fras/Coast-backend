@@ -287,8 +287,8 @@ def _extract_images_pymupdf(pdf_path: Path, cache_to: Path | None = None) -> lis
     try:
         doc = fitz.open(str(pdf_path))
         decoded: dict[int, Any] = {}  # xref -> image: a logo on every slide is decoded once
+        from .normalized_source import FIGURE_EXT, LazyImage, save_figure
         if cache_to is not None:
-            from .normalized_source import LazyImage
             Path(cache_to).mkdir(parents=True, exist_ok=True)
 
         def keep(pil, name):
@@ -296,7 +296,7 @@ def _extract_images_pymupdf(pdf_path: Path, cache_to: Path | None = None) -> lis
             if cache_to is None or isinstance(pil, LazyImage):
                 return pil
             target = Path(cache_to) / name
-            pil.save(target, "PNG")
+            save_figure(pil, target)
             return LazyImage(target, pil.width, pil.height)
         # The same image object on a quarter or more of the slides is part of the slide
         # template (a logo, a header banner): skip it before decoding anything.
@@ -375,7 +375,7 @@ def _extract_images_pymupdf(pdf_path: Path, cache_to: Path | None = None) -> lis
                         ratio = min(MAX_DIM / w, MAX_DIM / h)
                         pil_img = pil_img.resize((int(w * ratio), int(h * ratio)))
                         w, h = pil_img.size
-                    pil_img = keep(pil_img, f"p{page_idx + 1}_i{img_idx}.png")
+                    pil_img = keep(pil_img, f"p{page_idx + 1}_i{img_idx}.{FIGURE_EXT}")
                     if decoded.get(xref) is not None and not isinstance(decoded[xref], type(pil_img)):
                         decoded[xref] = pil_img  # later slides reuse the saved file, not the pixels
                     page_imgs.append({
@@ -393,7 +393,7 @@ def _extract_images_pymupdf(pdf_path: Path, cache_to: Path | None = None) -> lis
             if needs_render or _has_vector_diagram(page):
                 # At most one extra image per page; full-page rendering retains labels
                 # that often sit outside the drawing's bounding box.
-                preview = keep(_render_clip(page, page.rect), f"p{page_idx + 1}_i1000000.png")
+                preview = keep(_render_clip(page, page.rect), f"p{page_idx + 1}_i1000000.{FIGURE_EXT}")
                 page_imgs.append({'idx': 1000000, 'pil_image': preview,
                                   'extraction_kind': 'page_diagram',
                                   'width': preview.width, 'height': preview.height})

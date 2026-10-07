@@ -193,7 +193,8 @@ class UploadFlow(unittest.TestCase):
         self.assertEqual(figures[0].size, (400, 300))
         self.assertEqual(figures[0].load().size, (400, 300))  # pixels on demand, owned by the caller
         named = {im["file"] for row in json.loads((cache_dir(pdf) / "manifest.json").read_text())["pages"] for im in row["images"]}
-        self.assertEqual({f.name for f in cache_dir(pdf).glob("p*_i*.png")}, named)  # no leftovers
+        self.assertEqual({f.name for f in cache_dir(pdf).glob("p*_i*.*")}, named)  # no leftovers
+        self.assertTrue(all(name.endswith(".webp") for name in named))  # figures kept as WebP
 
     def test_real_pptx_upload_extracts_slides_notes_images_and_preserves_download(self):
         path = ROOT / 'curated_content/Data Structures & Algorithms/Lecture 2 - 2024 (1).pptx'

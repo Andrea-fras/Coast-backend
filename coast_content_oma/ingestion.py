@@ -695,11 +695,16 @@ class IngestionPipeline:
             page_num = page["page_number"]
             context = (page.get("text") or "")[:500]
             for img in page.get("images") or []:
-                file_path = out_dir / f"p{page_num}_i{img['idx']}.png"
+                from .normalized_source import FIGURE_EXT, LazyImage, save_figure, store_once
+                pil = img["pil_image"]
                 try:
-                    img["pil_image"].save(file_path, "PNG")  # optimize=True was 4x slower for the same size
+                    if isinstance(pil, LazyImage):  # the page copy's file, linked rather than copied
+                        file_path = store_once(pil.path, out_dir / f"p{page_num}_i{img['idx']}{pil.path.suffix}")
+                    else:
+                        file_path = out_dir / f"p{page_num}_i{img['idx']}.{FIGURE_EXT}"
+                        save_figure(pil, file_path)
                 except Exception as e:
-                    logger.warning(f"failed saving image {file_path}: {e}")
+                    logger.warning(f"failed saving image for page {page_num}: {e}")
                     continue
                 saved.append({
                     "page_number": page_num,
