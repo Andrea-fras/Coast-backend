@@ -1733,6 +1733,11 @@ async def _read_upload(path: str) -> list[dict]:
     if _READ_SLOTS is None:
         _READ_SLOTS = asyncio.Semaphore(max(1, int(os.getenv("COAST_EXTRACT_CONCURRENCY", "2"))))
     async with _READ_SLOTS:
+        import memory_budget
+        waited = 0.0
+        while not memory_budget.has_room(memory_budget.READ_UPLOAD_MB) and waited < 600:
+            await asyncio.sleep(1)  # wait for room rather than push the machine over its limit
+            waited += 1
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "-m", "coast_content_oma.read_upload", path,
             cwd=str(Path(__file__).parent), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)

@@ -107,6 +107,21 @@ class LaunchIntegrity(unittest.TestCase):
             self.assertEqual(db.get(LearningJob,job_id).status,'running')
         learning_jobs.finish(job_id,new_token)
 
+    def test_indexing_takes_turns_between_students(self):
+        # Student 1 uploaded three files and one is already being indexed; student 2's single
+        # file is just as urgent, so it goes next instead of waiting behind student 1's upload.
+        now = time.time()
+        with SessionLocal() as db:
+            for n, (uid, status) in enumerate([(1, 'running'), (1, 'queued'), (1, 'queued'), (2, 'queued')]):
+                db.add(LearningJob(id=f'src-{n}', status=status, attempts=0, available_at=0,
+                                   lease_until=now + 60 if status == 'running' else 0,
+                                   payload_json=json.dumps({'kind': 'source_ingest', 'user_id': uid, 'folder': 'Physics',
+                                                            'source_id': f's{n}', 'path': f'/x/s{n}.pdf'})))
+            db.commit()
+        claimed = learning_jobs.claim('source')
+        self.assertEqual(claimed[2]['user_id'], 2)
+        self.assertEqual(learning_jobs.claim('source')[2]['source_id'], 's1')  # then student 1's next file
+
     def test_failed_job_keeps_payload_and_retries(self):
         with SessionLocal() as db:
             job_id=learning_jobs.enqueue(db,1,'Physics',2)

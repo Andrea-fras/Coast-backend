@@ -154,7 +154,19 @@ def claim(kind=None):
         if kind == 'source':
             from coast_content_oma.progressive import source_priority
             candidates=query.limit(100).all()
-            row=min(candidates,key=lambda job:source_priority(json.loads(job.payload_json).get('source_id','')),default=None)
+            # Pages a student is about to be taught come first; among equally urgent files the
+            # student with the fewest files being indexed goes next, so nobody waits behind
+            # someone else's whole upload; then first come, first served.
+            busy={}
+            for (payload,) in db.query(LearningJob.payload_json).filter(
+                    LearningJob.status == 'running', LearningJob.lease_until >= now, job_kind == 'source_ingest'):
+                uid=json.loads(payload).get('user_id')
+                busy[uid]=busy.get(uid,0)+1
+            def turn(item):
+                order,job=item
+                payload=json.loads(job.payload_json)
+                return (source_priority(payload.get('source_id','')), busy.get(payload.get('user_id'),0), order)
+            row=min(enumerate(candidates),key=turn,default=(None,None))[1]
         else:
             row=query.first()
         if row is None:
@@ -289,8 +301,12 @@ def run_one(handler=project, *, kind=None):
     return True
 
 def _run(kind=None):
+    import memory_budget
     while not _stop.is_set():
         try:
+            if kind == 'source' and not memory_budget.has_room(memory_budget.INDEX_FILE_MB):
+                _stop.wait(2)  # another file finishes first; the queue keeps its order
+                continue
             if run_one(kind=kind):
                 continue
         except Exception:
