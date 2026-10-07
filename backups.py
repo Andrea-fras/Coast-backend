@@ -35,7 +35,9 @@ log = logging.getLogger(__name__)
 EVERY_SECONDS = 24 * 3600
 KEEP_ON_DISK = int(os.getenv("BACKUP_KEEP_ON_DISK", "3"))  # R2 holds the longer history
 KEEP_DAYS_OFFSITE = int(os.getenv("BACKUP_KEEP_DAYS", "30"))
-_SKIP_SUFFIXES = (".pages",)  # page renders, re-made from the PDF on demand
+# Page images rendered on demand ("<pdf>.pages/render-…/") are re-made from the PDF. The page copy
+# itself (manifest and figures) is kept: lessons check it, and its figures are OMA's files anyway.
+_SKIP_PREFIXES = ("render-",)
 _lock = threading.Lock()
 
 
@@ -118,7 +120,7 @@ def _files() -> tuple[dict[str, Path], dict[str, str]]:
     out, links, first = {}, {}, {}
     for d in file_dirs():
         for p in sorted(d.rglob("*")):
-            if p.is_file() and not any(part.endswith(_SKIP_SUFFIXES) for part in p.parts):
+            if p.is_file() and not any(part.startswith(_SKIP_PREFIXES) for part in p.parts):
                 try:
                     rel = str(p.relative_to(root))
                 except ValueError:  # a directory configured outside the data disk

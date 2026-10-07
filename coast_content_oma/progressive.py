@@ -320,6 +320,27 @@ def _sources(user_id,folder):
     with SessionLocal() as db:
         return db.query(FolderSource).filter_by(user_id=int(user_id),folder_name=folder).order_by(FolderSource.id).all()
 
+_rebuilding=set()
+
+
+def rebuild_page_copy(path):
+    """Re-make a PDF's page copy in the background (once at a time per file), the way an upload
+    does: in its own process, then the cached manifest is read again."""
+    path=str(path)
+    with _lock:
+        if path in _rebuilding: return
+        _rebuilding.add(path)
+    def run():
+        import subprocess, sys
+        try:
+            subprocess.run([sys.executable,'-m','coast_content_oma.read_upload',path],capture_output=True,timeout=600,
+                           cwd=str(Path(__file__).resolve().parents[1]))
+            _read_manifest.cache_clear()
+        finally:
+            with _lock: _rebuilding.discard(path)
+    threading.Thread(target=run,name='coast-page-copy',daemon=True).start()
+
+
 def status_for_section(user_id,folder,section):
     import oma_provider
     from .stores import make_namespace
@@ -328,8 +349,14 @@ def status_for_section(user_id,folder,section):
     for ref in section['source_refs']:
         source=sources.get(ref['source_id'])
         data=manifest(source) if source else None
+        total=sum(len(r['pages']) for r in section['source_refs'])
+        if source and data is None and source.file_path and Path(source.file_path).is_file():
+            # The PDF is here but its page copy is not (a restore, a cleared cache): it is rebuilt
+            # from the PDF, which gives the same fingerprint, and the section is being prepared.
+            rebuild_page_copy(source.file_path)
+            return {'ready':False,'ready_pages':0,'total_pages':total}
         if not data or data['sha256'] != ref['sha256']:
-            return {'ready':False,'ready_pages':0,'total_pages':sum(len(r['pages']) for r in section['source_refs']),
+            return {'ready':False,'ready_pages':0,'total_pages':total,
                 'error':'A source changed or was removed. Regenerate this roadmap.'}
     orch=oma_provider._content_orchestrator()
     ns=make_namespace(user_id,folder)

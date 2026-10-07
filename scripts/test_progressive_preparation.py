@@ -24,6 +24,22 @@ class ProgressiveTests(unittest.TestCase):
         return SimpleNamespace(source_id=sid,title=sid,filename=sid+'.pdf',page_count=count,file_path=sid)
     def manifest(self,count):
         return {'sha256':'fixture','pages':[{'page_number':n,'text':('Topic '+str(n)+' details ')*20,'images':[]} for n in range(1,count+1)]}
+    def test_a_missing_page_copy_is_rebuilt_not_reported_as_a_changed_source(self):
+        # After a restore (or a cleared cache) the PDF is there but its page copy is not: the copy
+        # is rebuilt from the PDF and the section is being prepared, never "regenerate this roadmap".
+        pdf = Path(tempfile.mkdtemp()) / 'lecture.pdf'
+        pdf.write_bytes(b'%PDF-1.4 fixture')
+        section = {'source_refs': [{'source_id': 'srcA', 'sha256': 'fixture', 'pages': [1, 2]}]}
+        here = SimpleNamespace(source_id='srcA', file_path=str(pdf), page_count=2, oma_ingest_status='PENDING')
+        with patch.object(p, '_sources', return_value=[here]), patch.object(p, 'manifest', return_value=None), \
+                patch.object(p, 'rebuild_page_copy') as rebuild:
+            status = p.status_for_section(1, 'Physics', section)
+        self.assertEqual(status, {'ready': False, 'ready_pages': 0, 'total_pages': 2})
+        rebuild.assert_called_once_with(str(pdf))
+        changed = self.manifest(2) | {'sha256': 'other bytes'}
+        with patch.object(p, '_sources', return_value=[here]), patch.object(p, 'manifest', return_value=changed):
+            self.assertIn('Regenerate this roadmap', p.status_for_section(1, 'Physics', section)['error'])
+
     def test_credit_exhaustion_pauses_embeddings_but_transient_limits_do_not(self):
         from coast_content_oma import embedding_health as health
         with patch.object(health,'_retry_at',0),patch.object(health.time,'monotonic',return_value=10):
