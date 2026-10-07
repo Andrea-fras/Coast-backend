@@ -150,11 +150,13 @@ def run_backup() -> dict:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         local = data_root() / "backups" / f"db-{stamp}"
         local.mkdir(parents=True, exist_ok=True)
-        files, links = _files()
+        import file_store
+        in_store = file_store.enabled()  # files already live in R2 ("store/"): only databases to copy
+        files, links = ({}, {}) if in_store else _files()
         manifest = {"stamp": stamp, "created_at": datetime.now(timezone.utc).isoformat(), "commit": _commit(),
                     "data_root": str(data_root()), "databases": {}, "files": {"count": len(files),
-                    "bytes": sum(p.stat().st_size for p in files.values())}, "links": links,
-                    "file_keys": sorted(files)}
+                    "bytes": sum(p.stat().st_size for p in files.values()), "in_store": in_store},
+                    "links": links, "file_keys": sorted(files)}
         for name, path in databases().items():
             manifest["databases"][name] = {**_snapshot(path, local / f"{name}.gz"), "path": str(path)}
         (local / "manifest.json").write_text(json.dumps(manifest, indent=1))
@@ -164,7 +166,16 @@ def run_backup() -> dict:
         if client:
             for f in sorted(local.iterdir()):
                 client.upload_file(str(f), bucket, key(f"db/{stamp}/{f.name}"))
-            manifest["offsite"] = _sync_files(client, bucket, files)
+            if in_store:
+                file_store.prune_trash()
+                # Files kept the old way ("files/", before the store) expire with the backups that use them.
+                cutoff = datetime.now(timezone.utc) - timedelta(days=KEEP_DAYS_OFFSITE)
+                legacy = [n for prefix in ("files/", "removed/")
+                          for n, o in _listing(client, bucket, prefix).items() if o["LastModified"] < cutoff]
+                _delete(client, bucket, legacy)
+                manifest["offsite"] = {"files_in_store": True, "legacy_expired": len(legacy)}
+            else:
+                manifest["offsite"] = _sync_files(client, bucket, files)
             _prune_offsite(client, bucket)
             client.put_object(Bucket=bucket, Key=key(f"db/{stamp}/manifest.json"),
                               Body=json.dumps(manifest, indent=1).encode())

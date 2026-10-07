@@ -1514,7 +1514,8 @@ def get_oma_image_path(item_id: str) -> Path | None:
         fp = (item.store_specific or {}).get("file_path")
         if not fp:
             return None
-        path = Path(fp)
+        import file_store
+        path = file_store.local(fp)  # fetched from R2 if the disk cache cleared it
         return path if path.is_file() else None
     except Exception:
         logger.exception("OMA image lookup failed for %s", item_id)

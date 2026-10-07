@@ -240,6 +240,8 @@ def page_image(file_path: str, page_number: int) -> Optional[tuple[bytes, str]]:
         cached = cache_dir / f"p{page_number}.{ext}"
         if cached.is_file():
             return cached.read_bytes(), media
+    import file_store
+    file_path = str(file_store.local(file_path))  # the PDF, fetched from R2 if the cache cleared it
     if not str(file_path).lower().endswith(".pdf") or not Path(file_path).is_file():
         return None
     import fitz

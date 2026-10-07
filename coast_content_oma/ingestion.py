@@ -698,8 +698,8 @@ class IngestionPipeline:
                 from .normalized_source import FIGURE_EXT, LazyImage, save_figure, store_once
                 pil = img["pil_image"]
                 try:
-                    if isinstance(pil, LazyImage):  # the page copy's file, linked rather than copied
-                        file_path = store_once(pil.path, out_dir / f"p{page_num}_i{img['idx']}{pil.path.suffix}")
+                    if isinstance(pil, LazyImage):  # one home for each figure: the page copy's file
+                        file_path = pil.path
                     else:
                         file_path = out_dir / f"p{page_num}_i{img['idx']}.{FIGURE_EXT}"
                         save_figure(pil, file_path)
@@ -734,7 +734,8 @@ class IngestionPipeline:
             batch_items = []
             for j, s in enumerate(batch):
                 try:
-                    with open(s["file_path"], "rb") as fh:
+                    import file_store
+                    with open(file_store.local(s["file_path"]), "rb") as fh:
                         png_bytes = fh.read()
                 except OSError as e:
                     logger.warning(f"vision read failed {s['file_path']}: {e}")

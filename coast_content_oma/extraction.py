@@ -27,7 +27,8 @@ def extract_pages(pdf_path: str | Path, extract_images: bool = True, use_cache: 
     Set extract_images=False to skip PyMuPDF image extraction entirely —
     useful for fast text-only ingestion. With cache_to, each figure is written there as soon
     as it is extracted and stands in as a LazyImage, so no file's figures are held together."""
-    pdf_path = Path(pdf_path)
+    import file_store
+    pdf_path = file_store.local(pdf_path)  # fetched from R2 if the disk cache cleared it
     if not pdf_path.exists():
         raise FileNotFoundError(pdf_path)
 

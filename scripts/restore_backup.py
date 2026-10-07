@@ -55,6 +55,9 @@ def fetch(args, to: Path) -> dict:
         sys.exit(f"no backup {stamp}; available: {', '.join(stamps[-10:])}")
     for name in backups._listing(client, bucket, f"db/{stamp}/"):
         client.download_file(bucket, backups.key(name), str(to / name.split("/")[-1]))
+    if json.loads((to / "manifest.json").read_text())["files"].get("in_store"):
+        print(f"fetched backup {stamp}: databases (files live in R2's store and reach the disk when needed)")
+        return json.loads((to / "manifest.json").read_text())
     files = backups._listing(client, bucket, "files/")
     listed = json.loads((to / "manifest.json").read_text()).get("file_keys")
     if listed is not None:  # only the files this backup holds, not everything ever kept
@@ -100,6 +103,35 @@ def unpack(manifest: dict, to: Path) -> dict[str, Path]:
                      f"{ {t: (rows[t], n) for t, n in want['rows'].items() if rows[t] != n} }")
         print(f"ok   {name}: checksum, integrity and {sum(rows.values())} rows in {len(rows)} tables match")
     return places
+
+
+def check_store(manifest: dict, to: Path) -> None:
+    """Every upload the restored database names must be in R2's store; one deleted since the
+    backup is brought back from the trash (kept 30 days)."""
+    import backups
+    client, bucket = backups._r2()
+    c = sqlite3.connect(to / "coast.db")
+    paths = [p for (p,) in c.execute("select file_path from folder_sources where file_path is not null and file_path != ''")]
+    c.close()
+    root = manifest["data_root"].rstrip("/") + "/"
+    wanted = ["store/" + p[len(root):] for p in paths if p.startswith(root)]
+    store = set(backups._listing(client, bucket, "store/"))
+    trash = {}
+    for name in sorted(backups._listing(client, bucket, "trash/")):  # newest copy wins
+        trash[name.split("/", 2)[2]] = name
+    revived, missing = 0, []
+    for k in wanted:
+        if k in store:
+            continue
+        rel = k[len("store/"):]
+        if rel in trash:
+            client.copy_object(Bucket=bucket, Key=backups.key(k), CopySource={"Bucket": bucket, "Key": backups.key(trash[rel])})
+            revived += 1
+        else:
+            missing.append(k)
+    if missing:
+        sys.exit(f"FAIL files: {len(missing)} of {len(wanted)} uploads are neither in R2's store nor its trash, e.g. {missing[:3]}")
+    print(f"ok   files: all {len(wanted)} uploads are in R2's store" + (f" ({revived} brought back from the trash)" if revived else ""))
 
 
 def check_files(manifest: dict, to: Path, with_files: bool) -> None:
@@ -179,7 +211,10 @@ def main() -> None:
         sys.exit(f"{to} is not empty")
     manifest = fetch(args, to)
     places = unpack(manifest, to)
-    check_files(manifest, to, with_files=not args.local)
+    if manifest["files"].get("in_store") and not args.local:
+        check_store(manifest, to)
+    else:
+        check_files(manifest, to, with_files=not args.local)
     check_app(to, places)
     print(f"RESTORE OK: backup {manifest['stamp']} (commit {manifest.get('commit') or '?'}) is complete and usable at {to}")
 

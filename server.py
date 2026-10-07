@@ -356,6 +356,8 @@ def on_startup():
     learning_jobs.start()
     import backups
     backups.start()
+    import file_store
+    file_store.start(backups.file_dirs())
     threading.Thread(target=learning_jobs.recover_sources, name="coast-source-recovery", daemon=True).start()
     # Past papers are no longer part of Coast: nothing loads them at startup.
 
@@ -1863,6 +1865,10 @@ async def upload_folder_source(
             committed = True
         finally:
             db.close()
+        import file_store  # the file and its page copy to R2; the disk keeps a cached copy
+        from coast_content_oma.normalized_source import cache_dir as _page_copy_dir
+        file_store.publish(stored_path)
+        file_store.publish_tree(_page_copy_dir(stored_path))
 
         if _curated_uid(folder_name) is None:
             import source_search
@@ -1963,9 +1969,9 @@ def delete_folder_source(folder_name: str, source_id: str, user: User = Depends(
         db.close()
 
     if file_path:
-        Path(file_path).unlink(missing_ok=True)
+        import file_store
         from coast_content_oma.normalized_source import cache_dir
-        shutil.rmtree(cache_dir(file_path), ignore_errors=True)
+        file_store.remove([file_path, cache_dir(file_path)])  # disk now, R2's trash for 30 days
 
     try:
         rag.delete_notebook_embeddings(owner_id, folder_name, source_id)
@@ -1997,9 +2003,10 @@ def get_source_file(folder_name: str, source_id: str, user: User = Depends(get_c
         ).first()
         if not fs:
             raise HTTPException(404, "Source not found")
-        if not fs.file_path or not Path(fs.file_path).exists():
+        import file_store
+        file_path = file_store.local(fs.file_path) if fs.file_path else None
+        if not file_path or not file_path.exists():
             raise HTTPException(404, "File not available")
-        file_path = Path(fs.file_path)
         filename = fs.filename
     finally:
         db.close()
@@ -3826,10 +3833,12 @@ def _purge_user_data(db, user_id: int) -> None:
         UserMapState,
     )
 
+    import file_store
+    from coast_content_oma.normalized_source import cache_dir as _page_copy_dir
     for src in db.query(FolderSource).filter(FolderSource.user_id == user_id).all():
         if src.file_path:
             try:
-                Path(src.file_path).unlink(missing_ok=True)
+                file_store.remove([src.file_path, _page_copy_dir(src.file_path)])
             except OSError:
                 pass
     for img in db.query(SourceImage).filter(SourceImage.user_id == user_id).all():

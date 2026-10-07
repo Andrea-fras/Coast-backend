@@ -20,8 +20,9 @@ def _source_fingerprint(path,mtime_ns,size):
     return fingerprint(path)
 
 def manifest(source):
-    path = Path(source.file_path or '')
-    cached = Path(str(path) + '.pages') / 'manifest.json'
+    import file_store
+    path = file_store.local(source.file_path or '') if source.file_path else Path('')
+    cached = file_store.local(Path(str(path) + '.pages') / 'manifest.json')
     try:
         source_stat = path.stat()
         stat = cached.stat()
@@ -336,6 +337,8 @@ def rebuild_page_copy(path):
             subprocess.run([sys.executable,'-m','coast_content_oma.read_upload',path],capture_output=True,timeout=600,
                            cwd=str(Path(__file__).resolve().parents[1]))
             _read_manifest.cache_clear()
+            import file_store
+            file_store.publish_tree(Path(path + '.pages'))
         finally:
             with _lock: _rebuilding.discard(path)
     threading.Thread(target=run,name='coast-page-copy',daemon=True).start()

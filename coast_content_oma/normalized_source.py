@@ -51,6 +51,9 @@ class LazyImage:
     def __init__(self, path, width=None, height=None):
         self.path = Path(path)
         if not (width and height):
+            import file_store
+            file_store.local(self.path)
+        if not (width and height):
             with Image.open(self.path) as img:  # reads the header only, not the pixels
                 width, height = img.size
         self.width, self.height = int(width), int(height)
@@ -61,7 +64,8 @@ class LazyImage:
 
     def load(self):
         """The pixels, decoded now and owned by the caller (nothing is kept here)."""
-        with Image.open(self.path) as img:
+        import file_store
+        with Image.open(file_store.local(self.path)) as img:
             return img.convert('RGB')
 
     def convert(self, mode):
@@ -69,6 +73,8 @@ class LazyImage:
 
     def save(self, fp, format=None, **params):
         """Saving as PNG copies the cached file as it is: no decoding, no re-encoding."""
+        import file_store
+        file_store.local(self.path)
         if (format or '').upper() == 'PNG' and not params and isinstance(fp, (str, os.PathLike)):
             if Path(fp).resolve() == self.path.resolve():
                 return  # already there: extraction wrote it straight into the cache
@@ -111,6 +117,8 @@ def save_pages(path,pages):
 
 def load_pages(path,extract_images=True):
     directory=cache_dir(path)
+    import file_store
+    file_store.local(directory/'manifest.json')  # the page copy's manifest, from R2 if the cache cleared it
     try:
         manifest=json.loads((directory/'manifest.json').read_text())
         if manifest.get('version')!=VERSION or manifest.get('sha256')!=fingerprint(path):
