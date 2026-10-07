@@ -474,9 +474,33 @@ class QuestionBox(unittest.TestCase):
             self.assertEqual(pc.box_question(reply, (self.OPEN,)), reply)
 
     def test_pedro_is_told_to_box_a_question_he_puts_again(self):
-        self.assertIn("put that same question to them again, in a question box with its answer key", pc.CORE)
+        self.assertIn("put that same question to them again in a question box, with its ⟦ANSWER_KEY⟧ tag at the end", pc.CORE)
+        self.assertIn("never write the answer, a key or a model answer in the reply itself", pc.CORE)
         note = "\n".join(pc.lesson_state([("user", "…"), ("pedro", "> [!QUESTION] Practice\n> " + self.OPEN)]))
-        self.assertIn("put the open question to them again, in a question box with its answer key", note)
+        self.assertIn("put the open question to them again in a question box, with its ⟦ANSWER_KEY⟧ tag at the end", note)
+
+
+class LeakedKey(unittest.TestCase):
+    """The answer key stays in Pedro's hidden tag, even when he also writes it into the box."""
+    BOX = ("> [!QUESTION] Practice\n> The Council approves a measure that the Parliament rejects. Which channel "
+           "supports it, and why is it not simply undemocratic?")
+    KEY = "[ANSWER_KEY: National channel supports; direct European channel opposes; both democratic, different constituencies.]"
+
+    def test_a_labelled_paragraph_restating_the_key_is_removed(self):
+        leak = ("\n>\n> **Answer key:** The national channel supports it; the direct European channel opposes it; "
+                "both are democratic, with different constituencies.")
+        self.assertEqual(pc.drop_leaked_key(self.BOX + leak + "\n" + self.KEY), self.BOX + "\n" + self.KEY)
+
+    def test_the_question_and_other_box_text_stay(self):
+        hint = "\n>\n> Hint: think about who elects the members of each body."
+        reply = self.BOX + hint + "\n" + self.KEY
+        self.assertEqual(pc.drop_leaked_key(reply), reply)
+        unlabelled = "\n>\n> National channel supports; direct European channel opposes; both democratic."
+        self.assertEqual(pc.drop_leaked_key(self.BOX + unlabelled + "\n" + self.KEY), self.BOX + unlabelled + "\n" + self.KEY)
+
+    def test_pedro_is_told_the_key_is_private(self):
+        self.assertIn("never write the answer, a key or a model answer in the reply itself", pc.CORE)
+        self.assertIn("never mention the key to the student", pc.CORE)
 
 
 class LessonState(unittest.TestCase):
@@ -504,7 +528,7 @@ class LessonState(unittest.TestCase):
         reply = self.Q1 + "\n[ANSWER_KEY: 2 + 0.2(5) + 0.8(-1) = 2.2]"
         self.assertIn("Your answer key for it: «2 + 0.2(5) + 0.8(-1) = 2.2».", self.note(reply))
         self.assertNotIn("ANSWER_KEY", strip_ui_tags(reply))
-        self.assertIn("⟦ANSWER_KEY: <the answer you expect>⟧ whenever you ask a question", pc.CORE)
+        self.assertIn("⟦ANSWER_KEY: <the answer you expect>⟧ whenever you ask a question, among the tags at the end", pc.CORE)
 
     def test_a_graded_answer_closes_the_question(self):
         self.assertNotIn("open question", self.note(self.Q1, "Correct: 2.2.\n[ANSWER_CORRECT: Bellman recursion]"))

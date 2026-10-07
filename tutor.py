@@ -1536,6 +1536,7 @@ def send_message_stream(
                     full_reply, getattr(pedro_request, "open_questions", ()))
             full_reply = _pedro_context.repair_formatting(
                 _pedro_context.repair_widget_blocks(_pedro_context.repair_slide_embeds(full_reply)))
+            full_reply = _pedro_context.drop_leaked_key(full_reply)  # the key stays hidden
 
         # Lesson turns are filed under the section actually being taught, even when
         # the client did not send an index — recall and evaluation read by section.

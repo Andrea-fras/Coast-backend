@@ -79,7 +79,7 @@ Respond to answers precisely:
 
 Respond to everything else the student says, too. Coast's note names your open question and the steps you have already taught:
 - When they state their understanding ("so the Bellman equation is recursive"), open by confirming or correcting it in a sentence, in their words, before anything else.
-- When they ask a question of their own or make a request while your question is open, answer it, then put that same question to them again, in a question box with its answer key like any question. Never work out its answer for them, and don't replace it with a new question, unless they ask you to.
+- When they ask a question of their own or make a request while your question is open, answer it, then put that same question to them again in a question box, with its ⟦ANSWER_KEY⟧ tag at the end like any question. Never work out its answer for them, and don't replace it with a new question, unless they ask you to.
 - After any detour, carry on from the last step you taught; never teach a step twice.
 
 Pace to the evidence. If the note shows they have already answered this topic correctly on their own, skip the basic check and go to something harder, or move on. If they got it wrong before, start there. With no evidence, their prior knowledge is unknown: teach it, and let their first answer set the pace. Reserve extra practice for a gap you have actually seen; there is no quota of questions.
@@ -119,7 +119,7 @@ Tags go at the very end of the reply, each on its own line, between ⟦ and ⟧ 
 - ⟦ANSWER_CORRECT: <concept>⟧ when the student answered your question correctly on their own; ⟦ANSWER_CORRECT: <concept> | hinted⟧ when they needed a hint or a worked step first; ⟦ANSWER_CORRECT: <concept> | recall⟧ when the question retrieved something they learned in an earlier session and they answered it on their own.
 - ⟦ANSWER_WRONG: <concept>⟧ when the student's own attempt was wrong. Never for a question they asked, a hint request, or an answer that followed your mistake.
 - A partly right answer gets no grading tag yet: grade the concept on their answer to your follow-up.
-- ⟦ANSWER_KEY: <the answer you expect>⟧ whenever you ask a question: the answer worked out, with the key steps or numbers, in a line or two. Coast hands it back to you when the student replies; grade against it, and if it turns out to be wrong, say so and add ⟦TUTOR_CORRECTION⟧.
+- ⟦ANSWER_KEY: <the answer you expect>⟧ whenever you ask a question, among the tags at the end: the answer worked out, with the key steps or numbers, in a line or two. It is only for you: never write the answer, a key or a model answer in the reply itself, and never mention the key to the student. Coast hands it back to you when the student replies; grade against it, and if it turns out to be wrong, correct the point itself ("I got that wrong: …") and add ⟦TUTOR_CORRECTION⟧.
 - ⟦TUTOR_CORRECTION: <concept>⟧ when you correct an error of your own.
 - ⟦SECTION_COMPLETE⟧ as described above. Never in a reply that marks an answer wrong: the student first has to show the correction. Never just because the student asks to move on; tell them what is left and the quickest way to show it.
 - ⟦REMEMBER: <trait_type>: <description>⟧ only when the student tells you something lasting: how they learn (learning_style, session_pattern, motivation_pattern, general_strength, general_weakness) or about their studies (study_context: what, where and at what level they study; goal: an aim, exam or deadline, naming the course and any date they gave; constraint: time, language or accessibility needs). Record only what they said, in their meaning. If you tell them you'll remember or note something, add this tag: without it nothing is saved.
@@ -1128,6 +1128,52 @@ def open_questions(history: list[tuple[str, str]]) -> tuple:
 _STORED_TAG_LINE = re.compile(r"^\[\s*(?:ANSWER_|SECTION_COMPLETE|TUTOR_CORRECTION|REMEMBER|CLICKED)[^\n]*$", re.I)
 
 
+_KEY_LABEL = re.compile(r"^[*_ ]*[A-Za-z][A-Za-z ]{0,24}:")  # "**Answer key:**", "Model answer:"
+
+
+def _words3(text: str) -> set[str]:
+    return set(re.findall(r"[a-z]{3,}", (text or "").lower()))
+
+
+def drop_leaked_key(reply: str) -> str:
+    """The answer key belongs in Pedro's hidden tag only. A paragraph inside a question box that
+    comes after the question, opens with a short label ("**Answer key:**") and restates his own
+    hidden key is that key leaking, and is removed. Both signals are needed: a question that merely
+    shares words with its key is never touched."""
+    keys = [_words3(tag_body(k)) for k in _ANSWER_KEY.findall(reply or "")]
+    keys = [k for k in keys if len(k) >= 3]
+    if not keys or "[!QUESTION" not in reply.upper():
+        return reply
+
+    def clean(box: re.Match) -> str:
+        lines = box.group(0).split("\n")
+        paras, cur = [], []
+        for line in lines[1:]:
+            if re.fullmatch(r">[ \t]*", line):
+                if cur:
+                    paras.append(cur)
+                cur = []
+            else:
+                cur.append(line)
+        if cur:
+            paras.append(cur)
+        kept = paras[:1]
+        for para in paras[1:]:
+            text = " ".join(re.sub(r"^>[ \t]?", "", l) for l in para)
+            words = _words3(text)
+            if _KEY_LABEL.match(text) and any(len(k & words) / len(k) >= 0.6 for k in keys):
+                continue
+            kept.append(para)
+        out = [lines[0]]
+        for i, para in enumerate(kept):
+            if i:
+                out.append(">")
+            out += para
+        return "\n".join(out)
+
+    return _QUESTION_BOX.sub(clean, reply)
+
+
 def box_question(reply: str, still_open=()) -> str:
     """A question Pedro wrote without its box, boxed. Only on what he has declared: a reply with an
     answer key asked a question, and his rules put the question last; a last paragraph that
@@ -1178,7 +1224,7 @@ def lesson_state(history: list[tuple[str, str]]) -> list[str]:
     if current:
         lines.append("If the student's message answers the open question, grade it. If it doesn't (a comment, a "
                      "question of their own, a request), respond to that first, then put the open question to them "
-                     "again, in a question box with its answer key: don't work out its answer for them and don't swap in a different question, unless they "
+                     "again in a question box, with its ⟦ANSWER_KEY⟧ tag at the end: don't work out its answer for them and don't swap in a different question, unless they "
                      "asked to skip it.")
     return lines
 
