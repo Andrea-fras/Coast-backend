@@ -20,11 +20,13 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def extract_pages(pdf_path: str | Path, extract_images: bool = True, use_cache: bool = True) -> list[dict[str, Any]]:
+def extract_pages(pdf_path: str | Path, extract_images: bool = True, use_cache: bool = True,
+                  cache_to: Path | None = None) -> list[dict[str, Any]]:
     """Extract pages with text (and optionally PIL images) from a PDF.
 
     Set extract_images=False to skip PyMuPDF image extraction entirely —
-    useful for fast text-only ingestion."""
+    useful for fast text-only ingestion. With cache_to, each figure is written there as soon
+    as it is extracted and stands in as a LazyImage, so no file's figures are held together."""
     pdf_path = Path(pdf_path)
     if not pdf_path.exists():
         raise FileNotFoundError(pdf_path)
@@ -65,7 +67,7 @@ def extract_pages(pdf_path: str | Path, extract_images: bool = True, use_cache: 
                 except Exception as exc:
                     logger.warning('OCR unavailable for page %s: %s', i + 1, type(exc).__name__)
 
-    images_by_page = _extract_images_pymupdf(pdf_path) if extract_images else []
+    images_by_page = _extract_images_pymupdf(pdf_path, cache_to) if extract_images else []
 
     n_pages = max(len(text_by_page), len(images_by_page))
     pages: list[dict[str, Any]] = []
@@ -269,10 +271,11 @@ def _extract_text_pypdf(pdf_path: Path) -> list[str]:
     return out
 
 
-def _extract_images_pymupdf(pdf_path: Path) -> list[list[dict[str, Any]]]:
+def _extract_images_pymupdf(pdf_path: Path, cache_to: Path | None = None) -> list[list[dict[str, Any]]]:
     """Return per-page list of {idx, pil_image, bbox} entries. Filters
     out tiny/decorative images at the geometry level (less than 80x80
-    or area < 10K)."""
+    or area < 10K). With cache_to, every kept image is saved there at once and returned as a
+    LazyImage; a reused image (the same object on several slides) points at its first file."""
     try:
         import fitz  # PyMuPDF
         from PIL import Image, ImageStat
@@ -284,6 +287,17 @@ def _extract_images_pymupdf(pdf_path: Path) -> list[list[dict[str, Any]]]:
     try:
         doc = fitz.open(str(pdf_path))
         decoded: dict[int, Any] = {}  # xref -> image: a logo on every slide is decoded once
+        if cache_to is not None:
+            from .normalized_source import LazyImage
+            Path(cache_to).mkdir(parents=True, exist_ok=True)
+
+        def keep(pil, name):
+            """With a cache folder, the image goes to disk now and only its stand-in stays."""
+            if cache_to is None or isinstance(pil, LazyImage):
+                return pil
+            target = Path(cache_to) / name
+            pil.save(target, "PNG")
+            return LazyImage(target, pil.width, pil.height)
         # The same image object on a quarter or more of the slides is part of the slide
         # template (a logo, a header banner): skip it before decoding anything.
         listed = [page.get_images(full=True) for page in doc]
@@ -361,6 +375,9 @@ def _extract_images_pymupdf(pdf_path: Path) -> list[list[dict[str, Any]]]:
                         ratio = min(MAX_DIM / w, MAX_DIM / h)
                         pil_img = pil_img.resize((int(w * ratio), int(h * ratio)))
                         w, h = pil_img.size
+                    pil_img = keep(pil_img, f"p{page_idx + 1}_i{img_idx}.png")
+                    if decoded.get(xref) is not None and not isinstance(decoded[xref], type(pil_img)):
+                        decoded[xref] = pil_img  # later slides reuse the saved file, not the pixels
                     page_imgs.append({
                         "idx": img_idx,
                         "extraction_kind": "composited" if rects else "raster",
@@ -376,7 +393,7 @@ def _extract_images_pymupdf(pdf_path: Path) -> list[list[dict[str, Any]]]:
             if needs_render or _has_vector_diagram(page):
                 # At most one extra image per page; full-page rendering retains labels
                 # that often sit outside the drawing's bounding box.
-                preview = _render_clip(page, page.rect)
+                preview = keep(_render_clip(page, page.rect), f"p{page_idx + 1}_i1000000.png")
                 page_imgs.append({'idx': 1000000, 'pil_image': preview,
                                   'extraction_kind': 'page_diagram',
                                   'width': preview.width, 'height': preview.height})
@@ -452,8 +469,8 @@ def extract_and_cache(pdf_path: str) -> list[dict[str, Any]]:
 
     Uploads run this in a separate process: the PDF readers are pure Python and would
     otherwise hold the server's interpreter lock for tens of seconds per file."""
-    from .normalized_source import save_pages
-    pages = extract_pages(pdf_path, extract_images=True, use_cache=False)
+    from .normalized_source import cache_dir, save_pages
+    pages = extract_pages(pdf_path, extract_images=True, use_cache=False, cache_to=cache_dir(Path(pdf_path)))
     save_pages(Path(pdf_path), pages)
     return [{"page_number": p["page_number"], "text": p.get("text", "")} for p in pages]
 

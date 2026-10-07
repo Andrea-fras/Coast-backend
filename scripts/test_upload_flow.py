@@ -165,6 +165,36 @@ class UploadFlow(unittest.TestCase):
                 self.assertEqual(db.query(CourseOutline).filter_by(user_id=1, folder_name='Physics').first().outline_json, original)
                 db.query(SourceUpload).filter_by(status='queued').update({'status': 'cancelled'}); db.commit()
 
+    def test_figures_are_streamed_to_disk_never_held_together(self):
+        # A lecture's figures decoded at once took 360 MB; now each goes to disk as it is read.
+        import fitz
+        from PIL import Image
+        from coast_content_oma.extraction import extract_and_cache
+        from coast_content_oma.normalized_source import LazyImage, cache_dir, load_pages
+        pdf = Path(TMP.name) / "figures.pdf"
+        doc = fitz.open()
+        for n in range(3):
+            page = doc.new_page()
+            page.insert_text((72, 72), f"Slide {n} about graphs")
+            img = Image.new("RGB", (400, 300), (40 * n, 120, 200))
+            for x in range(0, 400, 20):
+                for y in range(300):
+                    img.putpixel((x, y), (255, 255, 255))  # stripes: not an empty asset
+            path = Path(TMP.name) / f"fig{n}.png"
+            img.save(path)
+            page.insert_image(fitz.Rect(72, 120, 472, 420), filename=str(path))
+        doc.save(str(pdf))
+        texts = extract_and_cache(str(pdf))
+        self.assertEqual([t["text"].strip() for t in texts], [f"Slide {n} about graphs" for n in range(3)])
+        pages = load_pages(pdf)
+        figures = [im["pil_image"] for page in pages for im in page["images"]]
+        self.assertEqual(len(figures), 3)
+        self.assertTrue(all(isinstance(f, LazyImage) for f in figures))
+        self.assertEqual(figures[0].size, (400, 300))
+        self.assertEqual(figures[0].load().size, (400, 300))  # pixels on demand, owned by the caller
+        named = {im["file"] for row in json.loads((cache_dir(pdf) / "manifest.json").read_text())["pages"] for im in row["images"]}
+        self.assertEqual({f.name for f in cache_dir(pdf).glob("p*_i*.png")}, named)  # no leftovers
+
     def test_real_pptx_upload_extracts_slides_notes_images_and_preserves_download(self):
         path = ROOT / 'curated_content/Data Structures & Algorithms/Lecture 2 - 2024 (1).pptx'
         if not path.exists(): self.skipTest('Local PowerPoint fixture unavailable')
