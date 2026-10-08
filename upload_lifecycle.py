@@ -9,9 +9,26 @@ from sqlalchemy import text
 from database import SessionLocal, SourceUpload, FolderSource, SavedNotebook
 
 UPLOAD_LEASE_SECONDS = 30 * 60
-MAX_UPLOAD_MB = int(os.environ.get("COAST_MAX_UPLOAD_MB", "100"))
+MAX_UPLOAD_MB = int(os.environ.get("COAST_MAX_UPLOAD_MB", "70"))
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 TOO_LARGE = f"This file is larger than {MAX_UPLOAD_MB} MB. Split it or export a smaller PDF."
+# More sources than this make a roadmap with too many sections to follow.
+MAX_SOURCES = int(os.environ.get("COAST_MAX_SOURCES_PER_LESSON", "8"))
+
+
+def _check_room(db, user_id, folder, ids):
+    """A lesson holds at most MAX_SOURCES sources: those it has, files still uploading, and these.
+    Lessons that already hold more keep them; they only can't take new ones."""
+    rows = _rows(db, user_id, folder).all()
+    _expire(rows)
+    status = {r.upload_id: r.status for r in rows}
+    pending = sum(1 for r in rows if r.status in ("queued", "processing") and r.upload_id not in ids)
+    incoming = sum(1 for uid in ids if status.get(uid) != "complete")
+    have = db.query(FolderSource).filter_by(user_id=user_id, folder_name=folder).count()
+    if incoming and have + pending + incoming > MAX_SOURCES:
+        room = max(0, MAX_SOURCES - have - pending)
+        raise HTTPException(409, f"A lesson can have up to {MAX_SOURCES} sources. "
+                                 + (f"There's room for {room} more." if room else "Remove one to add another."))
 
 
 def _rows(db, user_id, folder):
@@ -36,6 +53,7 @@ def reserve(user_id, folder, files):
         raise HTTPException(400, "Select at least one file.")
     with SessionLocal() as db:
         db.execute(text("BEGIN IMMEDIATE"))
+        _check_room(db, user_id, folder, [f.get("upload_id") for f in files])
         out = []
         for file in files:
             uid, name, size = file["upload_id"], file["filename"], file["size_bytes"]

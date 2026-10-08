@@ -1918,7 +1918,7 @@ async def upload_folder_source(
         traceback.print_exc()
         if claim:
             upload_lifecycle.fail(user.id, folder_name, upload_id, claim, "Upload failed. Retry this file.")
-        return JSONResponse(status_code=500, content={"detail": "Upload failed — server error"},
+        return JSONResponse(status_code=500, content={"detail": "Upload failed: server error"},
                             headers=_cors_headers)
     finally:
         if tmp_path:
@@ -2923,7 +2923,7 @@ def chat_send(req: ChatSendRequest, user: User = Depends(get_current_user)):
         raise HTTPException(
             429,
             "You've reached your weekly message limit. "
-            "Your limit resets in a few days — thanks for testing Coast!",
+            "Your limit resets in a few days. Thanks for testing Coast!",
         )
 
     try:
@@ -4118,6 +4118,35 @@ def health():
     with SessionLocal() as db:
         db.execute(text("SELECT 1"))
     return {"status": "ok"}
+
+
+_csp_seen: dict[tuple, float] = {}
+
+
+@app.post("/api/csp-report")
+async def csp_report(request: Request):
+    """What the app's Content-Security-Policy would block (it is report-only until real use shows
+    nothing legitimate is caught). Each distinct violation is logged at most hourly; bounded, so
+    a flood of fake reports costs nothing."""
+    import time
+    body = await request.body()
+    try:
+        data = json.loads(body) if 0 < len(body) <= 8192 else {}
+    except ValueError:
+        data = {}
+    if isinstance(data, list):  # the Reporting API's format
+        data = {"csp-report": (data[0] or {}).get("body") or {}} if data else {}
+    report = data.get("csp-report") or {} if isinstance(data, dict) else {}
+    if isinstance(report, dict) and report:
+        directive = str(report.get("effective-directive") or report.get("violated-directive") or report.get("effectiveDirective") or "?")[:40]
+        blocked = str(report.get("blocked-uri") or report.get("blockedURL") or "?")[:120]
+        now = time.time()
+        if now - _csp_seen.get((directive, blocked), 0) > 3600 and len(_csp_seen) < 500:
+            _csp_seen[(directive, blocked)] = now
+            page = str(report.get("document-uri") or report.get("documentURL") or "")[:80]
+            source = str(report.get("source-file") or report.get("sourceFile") or "")[:100]
+            print(f"[csp] would block {blocked} ({directive}) on {page} from {source}")
+    return StarletteResponse(status_code=204)
 
 
 class ContentProviderRequest(BaseModel):

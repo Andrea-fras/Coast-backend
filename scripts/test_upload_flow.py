@@ -82,6 +82,21 @@ class UploadFlow(unittest.TestCase):
             self.assertEqual(result.status_code, 409, result.text)
             model.assert_not_called()
 
+    def test_a_lesson_takes_at_most_eight_sources(self):
+        files = self.reserve([f'Lecture {i}.pdf' for i in range(6)])
+        for file in files[:3]:
+            self.assertEqual(self.upload(file).status_code, 200)
+        extra = [{'upload_id': uuid.uuid4().hex, 'filename': f'More {i}.pdf', 'size_bytes': len(self.data)} for i in range(3)]
+        refused = client.post(self.url + '/uploads', headers=self.h, json={'files': extra})  # 3 done, 3 uploading, 3 more
+        self.assertEqual(refused.status_code, 409)
+        self.assertIn("room for 2 more", refused.json()['detail'])
+        self.assertEqual(client.post(self.url + '/uploads', headers=self.h, json={'files': extra[:2]}).status_code, 200)
+        self.assertEqual(client.post(self.url + '/uploads', headers=self.h, json={'files': files}).status_code, 200)  # the same files again: no new room needed
+        last = client.post(self.url + '/uploads', headers=self.h, json={'files': extra[2:]})
+        self.assertIn("Remove one to add another", last.json()['detail'])
+        big = {'upload_id': uuid.uuid4().hex, 'filename': 'Huge.pdf', 'size_bytes': 71 * 1024 * 1024}
+        self.assertEqual(client.post('/api/folders/Other/uploads', headers=self.h, json={'files': [big]}).status_code, 413)
+
     def test_successful_retry_is_idempotent(self):
         file, = self.reserve(['Retry.pdf'])
         first = self.upload(file)
