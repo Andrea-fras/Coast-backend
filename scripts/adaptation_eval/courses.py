@@ -62,9 +62,10 @@ def copy_course(oma_db_path, src_uid: int, src_folder: str, dst_uid: int, dst_fo
                      id_map.get(source_doc, source_doc), json.dumps(ents), json.dumps(tag_list),
                      id_map.get(superseded, superseded), json.dumps(ss), embedding),
                 )
-                conn.execute(f"INSERT INTO {t.replace('_items', '_items_fts')} (id, namespace, content, entities, tags) "
-                             f"VALUES (?,?,?,?,?)", (id_map[_id], dst_ns, content, " ".join(map(str, ents)),
-                                                     " ".join(map(str, tag_list))))
+                from coast_content_oma.stores.db import fts_rowid
+                conn.execute(f"INSERT INTO {t.replace('_items', '_items_fts')} (rowid, id, namespace, content, entities, tags) "
+                             f"VALUES (?,?,?,?,?,?)", (fts_rowid(id_map[_id]), id_map[_id], dst_ns, content,
+                                                       " ".join(map(str, ents)), " ".join(map(str, tag_list))))
             counts[t] = len(rows[t])
 
     with SessionLocal() as db:

@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Optional
 
 from .base import MemoryItem, new_item_id, now_iso
-from .db import connect_db
+from .db import connect_db, fts_rowid, key_fts_rows
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +82,7 @@ class SemanticStoreBase:
             for statement in schema.split(';'):
                 if statement.strip():
                     conn.execute(statement)
+            key_fts_rows(conn, self.table, self.fts_table)
 
 
     # ── Write ─────────────────────────────────────────────────────
@@ -131,7 +132,7 @@ class SemanticStoreBase:
                 for start in range(0, len(items), batch_size):
                     chunk = items[start : start + batch_size]
                     texts = [it.content[:8000] for it in chunk]
-                    resp = provider_capacity.call('openai', lambda: self._client.embeddings.create(model=EMBED_MODEL, input=texts))
+                    resp = provider_capacity.call('openai', lambda: self._client.embeddings.create(model=EMBED_MODEL, input=texts), lane='embed')
                     for it, data in zip(chunk, resp.data):
                         id_to_emb[it.id] = list(data.embedding)
             except Exception as e:
@@ -158,10 +159,10 @@ class SemanticStoreBase:
                         _pack(emb) if emb else None,
                     ),
                 )
-                conn.execute(f"DELETE FROM {self.fts_table} WHERE id = ?", (it.id,))
+                conn.execute(f"DELETE FROM {self.fts_table} WHERE rowid = ?", (fts_rowid(it.id),))
                 conn.execute(
-                    f"INSERT OR REPLACE INTO {self.fts_table} (id, namespace, content, entities, tags) VALUES (?,?,?,?,?)",
-                    (it.id, it.namespace, it.content, " ".join(it.entities), " ".join(it.tags)),
+                    f"INSERT INTO {self.fts_table} (rowid, id, namespace, content, entities, tags) VALUES (?,?,?,?,?,?)",
+                    (fts_rowid(it.id), it.id, it.namespace, it.content, " ".join(it.entities), " ".join(it.tags)),
                 )
 
     def _insert(self, item: MemoryItem) -> None:
@@ -181,10 +182,10 @@ class SemanticStoreBase:
                     _pack(emb) if emb else None,
                 ),
             )
-            conn.execute(f"DELETE FROM {self.fts_table} WHERE id = ?", (item.id,))
+            conn.execute(f"DELETE FROM {self.fts_table} WHERE rowid = ?", (fts_rowid(item.id),))
             conn.execute(
-                f"INSERT OR REPLACE INTO {self.fts_table} (id, namespace, content, entities, tags) VALUES (?,?,?,?,?)",
-                (item.id, item.namespace, item.content, " ".join(item.entities), " ".join(item.tags)),
+                f"INSERT INTO {self.fts_table} (rowid, id, namespace, content, entities, tags) VALUES (?,?,?,?,?,?)",
+                (fts_rowid(item.id), item.id, item.namespace, item.content, " ".join(item.entities), " ".join(item.tags)),
             )
 
     def supersede(self, old_id: str, new_id: str) -> None:
@@ -422,7 +423,7 @@ class SemanticStoreBase:
     def delete(self, item_id: str) -> None:
         with connect_db(self.db_path) as conn:
             conn.execute(f"DELETE FROM {self.table} WHERE id = ?", (item_id,))
-            conn.execute(f"DELETE FROM {self.fts_table} WHERE id = ?", (item_id,))
+            conn.execute(f"DELETE FROM {self.fts_table} WHERE rowid = ?", (fts_rowid(item_id),))
 
     def delete_namespace(self, namespace: str) -> int:
         """Wipe all items in a namespace. Used when a folder is deleted or re-ingested."""
@@ -442,7 +443,7 @@ class SemanticStoreBase:
             if self._client is None:
                 from openai import OpenAI
                 self._client = OpenAI(max_retries=0, timeout=20)
-            resp = provider_capacity.call('openai', lambda: self._client.embeddings.create(model=EMBED_MODEL, input=text[:8000]))
+            resp = provider_capacity.call('openai', lambda: self._client.embeddings.create(model=EMBED_MODEL, input=text[:8000]), lane='embed')
             return resp.data[0].embedding
         except Exception as e:
             embedding_health.note_error(e)

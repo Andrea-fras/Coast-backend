@@ -117,7 +117,13 @@ _ingest_active: dict[str, int] = {}
 _ingest_source_active: set[str] = set()
 _ingest_timings: dict[str, list[dict]] = {}
 _ingest_timing_t0: dict[str, float] = {}
-_ingest_slots = max(1, min(4, int(os.getenv("OMA_DOCUMENT_CONCURRENCY", "2"))))
+def _ingest_slot_count() -> int:
+    from coast_content_oma import remote
+    most = 16 if remote.enabled() else 4  # in containers the server only stores the results
+    return max(1, min(most, int(os.getenv("OMA_DOCUMENT_CONCURRENCY", "2"))))
+
+
+_ingest_slots = _ingest_slot_count()
 _ingest_semaphore = threading.Semaphore(_ingest_slots)  # limit parallel PDF ingests (LLM-heavy)
 
 
@@ -527,11 +533,13 @@ def _content_ingest_pipeline():
         describe = _env_truthy(os.environ.get("OMA_DESCRIBE_IMAGES", "true"))
         workers = int(os.environ.get("OMA_INGEST_WORKERS", "2" if _ON_RENDER_DISK else "4"))
         skip_images = _env_truthy(os.environ.get("OMA_SKIP_IMAGES", "false"))
+        from coast_content_oma import remote
+        constrained = _ON_RENDER_DISK and not remote.enabled()  # in containers the server only stores results
         classify_workers = int(os.environ.get(
-            "OMA_CLASSIFY_WORKERS", "3" if _ON_RENDER_DISK else "6",
+            "OMA_CLASSIFY_WORKERS", "3" if constrained else "6",
         ))
         vision_workers = int(os.environ.get(
-            "OMA_VISION_WORKERS", "2" if _ON_RENDER_DISK else "3",
+            "OMA_VISION_WORKERS", "2" if constrained else "3",
         ))
         _content_pipeline = IngestionPipeline(
             orch.concept, orch.content, orch.images, OMA_IMAGE_DIR,
@@ -785,6 +793,11 @@ def kickoff_background_concept_refinement_async(
     return True
 
 
+def _file_available(path: Path) -> bool:
+    import file_store
+    return file_store.available(path)  # on the disk, or in R2 if the disk cache cleared it
+
+
 # ── Upload-time: ingest a single PDF into Content OMA ────────────────
 
 def ingest_pdf_into_oma(
@@ -798,7 +811,8 @@ def ingest_pdf_into_oma(
         return
     from coast_content_oma import ingest_status as ist
 
-    pdf_path = Path(pdf_path)
+    import file_store
+    pdf_path = file_store.local(pdf_path)  # the disk cache may have cleared it; R2 holds it
     if not pdf_path.exists():
         logger.warning(f"OMA ingest skipped — file missing: {pdf_path}")
         return
@@ -903,12 +917,13 @@ def resolve_source_pdf_path(
     file_path: str | None = None,
 ) -> Path | None:
     """Resolve on-disk PDF path for a FolderSource row."""
+    import file_store  # on the disk, or in R2 if the disk cache cleared it
     if file_path:
         p = Path(file_path)
-        if p.is_file() and p.suffix.lower() in (".pdf", ".pptx"):
+        if p.suffix.lower() in (".pdf", ".pptx") and file_store.available(p):
             return p
     p = _folder_uploads_dir() / f"{source_id}{Path(filename).suffix.lower()}"
-    if p.is_file() and p.suffix.lower() in (".pdf", ".pptx"):
+    if p.suffix.lower() in (".pdf", ".pptx") and file_store.available(p):
         return p
     return None
 
@@ -1281,7 +1296,7 @@ def ensure_oma_ready_for_outline(
             if st == ist.STATUS_CONTENT_INDEXED:
                 continue
             p = Path(path)
-            if not p.is_file():
+            if not _file_available(p):
                 continue
             if _source_gap_ok(_pages_for_source(src), need) and _vision_complete() and _concepts_ready():
                 continue
@@ -1388,7 +1403,7 @@ def ensure_oma_ready_for_outline(
         if not path:
             continue
         p = Path(path)
-        if not p.is_file():
+        if not _file_available(p):
             continue
         have = _pages_for_source(src)
         if not _source_gap_ok(have, need):
@@ -1478,7 +1493,7 @@ def kickoff_folder_oma_ingest(user_id: int | str, folder: str) -> int:
         if st == ist.STATUS_INGESTING:
             continue
         p = Path(path)
-        if not p.is_file():
+        if not _file_available(p):
             continue
         names = {src.get("filename") or p.name, p.name}
         if sid:
@@ -2978,14 +2993,15 @@ def _remap_entity_ids(orch, namespace: str, id_map: dict[str, str]) -> None:
             updates.append((_json.dumps(new_entities), " ".join(new_entities), it.id))
         if not updates:
             continue
+        from coast_content_oma.stores.db import fts_rowid
         with connect_db(store.db_path) as conn:
             conn.executemany(
                 f"UPDATE {store.table} SET entities = ? WHERE id = ?",
                 [(u[0], u[2]) for u in updates],
             )
             conn.executemany(
-                f"UPDATE {store.fts_table} SET entities = ? WHERE id = ?",
-                [(u[1], u[2]) for u in updates],
+                f"UPDATE {store.fts_table} SET entities = ? WHERE rowid = ?",
+                [(u[1], fts_rowid(u[2])) for u in updates],
             )
 
 

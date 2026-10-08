@@ -58,11 +58,11 @@ def retry_sources(user_id, folder):
     """Explicit retry: keep finished work and live leases, requeue incomplete sources."""
     from database import FolderSource
     from coast_content_oma.ingest_status import CONTENT_DONE
-    from pathlib import Path
+    import file_store  # on the disk, or in R2 if the disk cache cleared it
     queued=[]
     with SessionLocal() as db:
         for source in db.query(FolderSource).filter_by(user_id=int(user_id),folder_name=folder):
-            if source.oma_ingest_status in CONTENT_DONE or not source.file_path or not Path(source.file_path).is_file():
+            if source.oma_ingest_status in CONTENT_DONE or not source.file_path or not file_store.available(source.file_path):
                 continue
             job_id=enqueue_source(db,source)
             job=db.get(LearningJob,job_id)
@@ -108,10 +108,11 @@ def recover_sources():
     from database import FolderSource
     from coast_content_oma.ingest_status import CONTENT_DONE
     from pathlib import Path
+    import file_store  # on the disk, or in R2 if the disk cache cleared it
     folders = set()
     with SessionLocal() as db:
         for source in db.query(FolderSource).all():
-            if not source.file_path or not Path(source.file_path).is_file():
+            if not source.file_path or not file_store.available(source.file_path):
                 continue
             if Path(source.file_path).suffix.lower() not in ('.pdf', '.pptx'):
                 continue
@@ -304,7 +305,7 @@ def _run(kind=None):
     import memory_budget
     while not _stop.is_set():
         try:
-            if kind == 'source' and not memory_budget.has_room(memory_budget.INDEX_FILE_MB):
+            if kind == 'source' and not memory_budget.has_room(memory_budget.index_file_mb()):
                 _stop.wait(2)  # another file finishes first; the queue keeps its order
                 continue
             if run_one(kind=kind):
@@ -324,7 +325,9 @@ def start():
         _thread.start()
         import os
         _source_threads[:] = [thread for thread in _source_threads if thread.is_alive()]
-        count = max(1,min(4,int(os.getenv('COAST_SOURCE_WORKERS','2'))))
+        from coast_content_oma import remote
+        most = 16 if remote.enabled() else 4  # in containers the server only stores the results
+        count = max(1,min(most,int(os.getenv('COAST_SOURCE_WORKERS','2'))))
         for i in range(len(_source_threads),count):
             thread=threading.Thread(target=_run,args=('source',),name=f'coast-source-worker-{i}',daemon=True)
             _source_threads.append(thread)

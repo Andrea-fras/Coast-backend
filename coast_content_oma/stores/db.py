@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
+import hashlib
 import sqlite3
 
 # Several files are indexed at once, each writing batches of pages and their search entries; a
@@ -9,6 +10,28 @@ import sqlite3
 BUSY_TIMEOUT_MS = 30000
 _active = ContextVar('oma_transaction', default=None)
 _wal_ready = set()
+
+def fts_rowid(item_id: str) -> int:
+    """An item's row number in its full-text table, derived from its id. FTS5 finds a row by
+    number at once, but by id only by reading every row: 0.01 ms against 10 ms per lookup at
+    50,000 rows, with every course's pages in one table and writers waiting on each other."""
+    return int.from_bytes(hashlib.blake2b(item_id.encode(), digest_size=8).digest(), 'big') >> 1
+
+
+def key_fts_rows(conn, table: str, fts: str) -> None:
+    """Once per full-text table: number its existing rows by their ids (rows written before
+    fts_rowid had numbers in insertion order). Keeps the last row of any id written twice."""
+    conn.execute('CREATE TABLE IF NOT EXISTS fts_keyed (name TEXT PRIMARY KEY)')
+    if conn.execute('SELECT 1 FROM fts_keyed WHERE name=?', (fts,)).fetchone():
+        return
+    conn.create_function('fts_rowid', 1, fts_rowid, deterministic=True)
+    conn.execute(f'CREATE TEMP TABLE fts_copy AS SELECT max(rowid), id, namespace, content, entities, tags FROM {fts} GROUP BY id')
+    conn.execute(f'DELETE FROM {fts}')
+    conn.execute(f'INSERT INTO {fts}(rowid, id, namespace, content, entities, tags) '
+                 f'SELECT fts_rowid(id), id, namespace, content, entities, tags FROM fts_copy')
+    conn.execute('DROP TABLE fts_copy')
+    conn.execute('INSERT OR IGNORE INTO fts_keyed VALUES (?)', (fts,))  # another process may have just done it
+
 
 @contextmanager
 def connect_db(db_path):

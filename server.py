@@ -1730,7 +1730,14 @@ _READ_SLOTS = None
 async def _read_upload(path: str) -> list[dict]:
     """Read an uploaded PDF or PowerPoint in a separate Python process (the PDF readers are
     pure Python and would otherwise freeze every other request for tens of seconds), saving
-    the page copy that indexing loads. Returns the pages' text."""
+    the page copy that indexing loads. Returns the pages' text. With containers on, a container
+    reads it instead, and the server only waits."""
+    from coast_content_oma import remote
+    if remote.enabled():
+        try:
+            return await remote.read_upload(path)
+        except Exception as exc:
+            print(f"[upload] reading {Path(path).name} in a container failed ({type(exc).__name__}: {exc}); reading it here")
     global _READ_SLOTS
     if _READ_SLOTS is None:
         _READ_SLOTS = asyncio.Semaphore(max(1, int(os.getenv("COAST_EXTRACT_CONCURRENCY", "2"))))
@@ -2229,7 +2236,9 @@ async def generate_notebook_from_source(
         raise HTTPException(401, "User not found")
     if not fs:
         raise HTTPException(404, "Source not found")
-    if not fs.file_path or not Path(fs.file_path).exists():
+    import asyncio
+    import file_store
+    if not fs.file_path or not (await asyncio.to_thread(file_store.local, fs.file_path)).exists():  # from R2 if the cache cleared it
         raise HTTPException(404, "Original file not available")
 
     if user:
@@ -2861,7 +2870,8 @@ def source_page_preview(folder_name: str, source_id: str, page_number: int, user
     # Rendering a single original PDF page makes citations reliable in all browsers.
     with SessionLocal() as db:
         source = db.query(FolderSource).filter_by(user_id=user.id, folder_name=folder_name, source_id=source_id).first()
-        if not source or not source.file_path or not Path(source.file_path).is_file():
+        import file_store
+        if not source or not source.file_path or not file_store.local(source.file_path).is_file():  # from R2 if the cache cleared it
             raise HTTPException(404, "Source no longer available.")
         path, count, kind = source.file_path, source.page_count, source.source_type
     if not 1 <= page_number <= count:

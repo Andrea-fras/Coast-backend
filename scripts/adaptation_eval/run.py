@@ -192,7 +192,8 @@ def discard_conversation(uid, conversation_id) -> None:
                 f"WHERE e.namespace LIKE ? AND j.value IN ({marks})", (f"u{uid}__%", *ids))]
             for eid in doomed:
                 conn.execute("DELETE FROM episode_items WHERE id = ?", (eid,))
-                conn.execute("DELETE FROM episode_items_fts WHERE id = ?", (eid,))
+                from coast_content_oma.stores.db import fts_rowid
+                conn.execute("DELETE FROM episode_items_fts WHERE rowid = ?", (fts_rowid(eid),))
 
 
 def settle_jobs(uid, timeout=240) -> bool:

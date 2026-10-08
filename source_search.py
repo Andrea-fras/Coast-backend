@@ -51,19 +51,21 @@ def page_passages(pages):
 
 
 def ensure_index(source, with_vectors=True):
-    from coast_content_oma.normalized_source import cache_dir
+    import file_store
+    from coast_content_oma.normalized_source import VERSION, cache_dir
     path = Path(source.file_path or '')
-    if not path.is_file():
+    if not source.file_path or not file_store.available(path):
         return None
-    manifest = cache_dir(path) / 'manifest.json'
-    stat = (manifest if manifest.is_file() else path).stat()
-    stamp = f'passages-v1:{stat.st_mtime_ns}:{stat.st_size}'
+    # A source's file never changes (a new upload is a new source), so its passages change only
+    # with extraction; never with the files' times, which the disk cache refreshes and re-fetches.
+    stamp = f'passages-v2:{VERSION}'
     with SessionLocal() as db:
         row = db.get(SourceSearchIndex, source.source_id, options=[] if with_vectors else [defer(SourceSearchIndex.vectors)])
         if row and row.stamp == stamp and row.embedding_model == MODEL:
             db.expunge(row)
             return row
     # Uploads have already extracted these pages; legacy uploads backfill only once.
+    manifest = file_store.local(cache_dir(path) / 'manifest.json')
     if manifest.is_file():
         pages = json.loads(manifest.read_text())['pages']
     else:
@@ -91,7 +93,7 @@ def ensure_index(source, with_vectors=True):
 def embed(texts, priority='background'):
     from openai import OpenAI
     with OpenAI(api_key=os.getenv('OPENAI_API_KEY', ''), timeout=20, max_retries=0) as client:
-        result = provider_capacity.call('openai', lambda: client.embeddings.create(model=MODEL, input=texts), priority=priority)
+        result = provider_capacity.call('openai', lambda: client.embeddings.create(model=MODEL, input=texts), priority=priority, lane='embed')
     return np.asarray([r.embedding for r in sorted(result.data, key=lambda r: r.index)], dtype='<f4')
 
 

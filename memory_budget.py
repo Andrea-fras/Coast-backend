@@ -11,6 +11,7 @@ import os
 # 160 MB in its own process, indexing at +116 MB in the server. Estimates round those up.
 READ_UPLOAD_MB = 220
 INDEX_FILE_MB = 180
+INDEX_REMOTE_MB = 40  # indexed in a container: the server holds the pages' text and stores results
 _SHARE = 0.85  # leave room for chat, the database and the unexpected
 
 
@@ -24,6 +25,11 @@ def used_mb() -> float:
         except psutil.Error:
             pass  # a helper that just finished
     return total / 1e6
+
+
+def index_file_mb() -> float:
+    from coast_content_oma import remote
+    return INDEX_REMOTE_MB if remote.enabled() else INDEX_FILE_MB
 
 
 def has_room(need_mb: float) -> bool:

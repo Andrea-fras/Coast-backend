@@ -35,8 +35,8 @@ def extract_pages(pdf_path: str | Path, extract_images: bool = True, use_cache: 
     if use_cache:
         from .normalized_source import load_pages
         cached = load_pages(pdf_path, extract_images)
-        if cached is not None:
-            return select_figures(cached) if extract_images else cached
+        if cached is not None:  # saved after figure selection, so its figures are chosen already
+            return cached  # (choosing again would read every figure's pixels, from R2 if need be)
     if pdf_path.suffix.lower() == '.pptx':
         pages = _extract_pptx(pdf_path, extract_images)
         return select_figures(pages) if extract_images else pages
@@ -288,16 +288,17 @@ def _extract_images_pymupdf(pdf_path: Path, cache_to: Path | None = None) -> lis
     try:
         doc = fitz.open(str(pdf_path))
         decoded: dict[int, Any] = {}  # xref -> image: a logo on every slide is decoded once
-        from .normalized_source import FIGURE_EXT, LazyImage, save_figure
+        from .normalized_source import FIGURE_EXT, FigureSaver, LazyImage
         if cache_to is not None:
             Path(cache_to).mkdir(parents=True, exist_ok=True)
+        saver = FigureSaver()
 
         def keep(pil, name):
             """With a cache folder, the image goes to disk now and only its stand-in stays."""
             if cache_to is None or isinstance(pil, LazyImage):
                 return pil
             target = Path(cache_to) / name
-            save_figure(pil, target)
+            saver.save(pil, target)
             return LazyImage(target, pil.width, pil.height)
         # The same image object on a quarter or more of the slides is part of the slide
         # template (a logo, a header banner): skip it before decoding anything.
@@ -360,6 +361,8 @@ def _extract_images_pymupdf(pdf_path: Path, cache_to: Path | None = None) -> lis
                         pil_img = decoded[xref]
                         if pil_img is None:
                             continue
+                    if isinstance(pil_img, LazyImage):
+                        saver.wait(pil_img.path)  # shown again: read back from its file
                     w, h = pil_img.size
                     if w < 80 or h < 80:
                         continue
@@ -400,6 +403,7 @@ def _extract_images_pymupdf(pdf_path: Path, cache_to: Path | None = None) -> lis
                                   'width': preview.width, 'height': preview.height})
             out.append(page_imgs)
         doc.close()
+        saver.close()  # every figure is on disk before the pages are handed over
     except Exception as e:
         logger.warning(f"PyMuPDF failed: {e}")
         return []

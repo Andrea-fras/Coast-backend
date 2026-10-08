@@ -1,6 +1,6 @@
 """Remove deleted source material from live retrieval without erasing learner episodes."""
 from pathlib import Path
-from .stores.db import transaction
+from .stores.db import fts_rowid, transaction
 
 
 def remove_source_material(db_path, namespace, source_id):
@@ -18,5 +18,6 @@ def remove_source_material(db_path, namespace, source_id):
             if table not in tables:
                 continue
             if fts in tables:
-                conn.execute(f'DELETE FROM {fts} WHERE id IN (SELECT id FROM {table} WHERE namespace=? AND source_doc_id=?)', (namespace, doc_id))
+                ids = conn.execute(f'SELECT id FROM {table} WHERE namespace=? AND source_doc_id=?', (namespace, doc_id)).fetchall()
+                conn.executemany(f'DELETE FROM {fts} WHERE rowid=?', [(fts_rowid(i),) for (i,) in ids])
             conn.execute(f'DELETE FROM {table} WHERE namespace=? AND source_doc_id=?', (namespace, doc_id))

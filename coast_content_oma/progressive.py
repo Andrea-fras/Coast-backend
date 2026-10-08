@@ -345,6 +345,7 @@ def rebuild_page_copy(path):
 
 
 def status_for_section(user_id,folder,section):
+    import file_store
     import oma_provider
     from .stores import make_namespace
     from .ingest_status import TERMINAL_OK, CONTENT_DONE
@@ -353,7 +354,7 @@ def status_for_section(user_id,folder,section):
         source=sources.get(ref['source_id'])
         data=manifest(source) if source else None
         total=sum(len(r['pages']) for r in section['source_refs'])
-        if source and data is None and source.file_path and Path(source.file_path).is_file():
+        if source and data is None and source.file_path and file_store.available(source.file_path):
             # The PDF is here but its page copy is not (a restore, a cleared cache): it is rebuilt
             # from the PDF, which gives the same fingerprint, and the section is being prepared.
             rebuild_page_copy(source.file_path)

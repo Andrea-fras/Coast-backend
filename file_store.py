@@ -29,7 +29,7 @@ STORE, TRASH = "store/", "trash/"
 TRASH_DAYS = 30
 EVICT_ABOVE, EVICT_TO = 0.75, 0.60  # share of the disk in use
 _TOUCH_AFTER = 3600  # a read refreshes a file's place in the cache at most hourly
-_pool = ThreadPoolExecutor(8, thread_name_prefix="coast-store")
+_pool = ThreadPoolExecutor(int(os.getenv("FILE_STORE_THREADS", "8")), thread_name_prefix="coast-store")
 _db_lock = threading.Lock()
 _fetching: dict[str, threading.Lock] = {}
 _fetch_lock = threading.Lock()
@@ -80,6 +80,13 @@ def _mark(key: str, size: int) -> None:
         c.execute("insert or replace into stored values (?, ?, ?)", (key, size, time.time()))
 
 
+def mark_many(held: Iterable[tuple[str, int]]) -> None:
+    """Record files R2 now holds (a page copy a container published), in one transaction."""
+    now = time.time()
+    with _db_lock, _db() as c:
+        c.executemany("insert or replace into stored values (?, ?, ?)", [(k, size, now) for k, size in held])
+
+
 def _forget(keys: Iterable[str]) -> None:
     keys = list(keys)
     with _db_lock, _db() as c:
@@ -107,13 +114,22 @@ def _upload(path: Path, key: str) -> None:
             time.sleep(2 ** attempt)
 
 
+def _held(key: str, path: Path) -> bool:
+    """R2 already holds this version of the file (sent, and not rewritten since)."""
+    with _db() as c:
+        row = c.execute("select size, published from stored where key = ?", (key,)).fetchone()
+    stat = path.stat()
+    return bool(row) and row[0] == stat.st_size and row[1] >= stat.st_mtime
+
+
 def publish(path, wait: bool = False) -> None:
-    """Send a newly written file to R2 (in the background unless wait)."""
+    """Send a newly written file to R2 (in the background unless wait); a version R2 already
+    holds is not sent again."""
     if not enabled():
         return
     path = Path(path)
     key = key_for(path)
-    if key and path.is_file():
+    if key and path.is_file() and not _held(key, path):
         future = _pool.submit(_upload, path, key)
         if wait:
             future.result()
@@ -130,12 +146,33 @@ def publish_tree(directory, wait: bool = False) -> None:
                 f.result()
 
 
+def ensure_published(paths: Iterable) -> None:
+    """Before a container reads these files from R2: send any R2 does not hold yet, and wait."""
+    if not enabled():
+        return
+    with _db() as c:
+        held = {k for (k,) in c.execute("select key from stored")}
+    todo = [(Path(p), key_for(p)) for p in paths]
+    todo = [(p, k) for p, k in todo if k and k not in held and p.is_file()]
+    list(_pool.map(lambda item: _upload(*item), todo))
+
+
 def _regenerable(path: Path) -> bool:
     """Page images rendered on demand are re-made from the PDF; they never go to R2."""
     return any(part.startswith("render-") for part in path.parts)
 
 
 # ── reading ───────────────────────────────────────────────────────────────────
+def available(path) -> bool:
+    """The file exists: on the disk, or in R2 for local() to fetch. (With the store on, a file
+    missing from the disk was usually only cleared from the cache.)"""
+    path = Path(path)
+    if path.is_file():
+        return True
+    key = key_for(path) if enabled() else None
+    return bool(key) and published(key)
+
+
 def local(path) -> Path:
     """The file on the local disk, fetched from R2 first if the cache no longer has it."""
     path = Path(path)
@@ -214,7 +251,8 @@ def _trash(keys: list[str]) -> None:
 # ── housekeeping ──────────────────────────────────────────────────────────────
 def evict(disk=None) -> int:
     """Clear files R2 holds from the disk, least recently used first, once the disk is fuller than
-    EVICT_ABOVE; page renders older than a day go first. Returns how many files were cleared."""
+    EVICT_ABOVE; page renders older than a day go first, and nothing used in the last hour (a
+    file just uploaded, or being indexed) goes at all. Returns how many files were cleared."""
     import backups
     disk = disk or backups.data_root()
     usage = shutil.disk_usage(disk)
@@ -227,7 +265,8 @@ def evict(disk=None) -> int:
     fresh = {p for p in renders if time.time() - p.stat().st_mtime < 86400}  # in use today: kept
     with _db() as c:
         held = [root / k[len(STORE):] for (k,) in c.execute("select key from stored")]
-    candidates = [p for p in renders if p not in fresh] + sorted((p for p in held if p.is_file()), key=lambda p: p.stat().st_mtime)
+    held = [p for p in held if p.is_file() and time.time() - p.stat().st_mtime > _TOUCH_AFTER]  # never one in use
+    candidates = [p for p in renders if p not in fresh] + sorted(held, key=lambda p: p.stat().st_mtime)
     for p in candidates:
         if freed <= target:
             break

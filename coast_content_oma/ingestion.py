@@ -295,26 +295,44 @@ class IngestionPipeline:
                 if short_pages: _on_classify_batch(short_pages)
                 tmark("extract", {"pdf": pdf.name, "pages": len(pages), "figures": len(saved_images)})
                 priority = lambda page: progressive.page_rank(namespace, source_doc_id, page)
-                # Publish each finished batch; the first section no longer waits for the whole PDF.
-                with ThreadPoolExecutor(max_workers=2) as phase_ex:
-                    tmark("classify_start", {"pdf": pdf.name, "pages": len(pages)})
-                    classify = phase_ex.submit(self._classify_pages_parallel, pages_to_classify, _on_classify_batch, priority)
-                    vision = None
-                    pending_paths = {(it.store_specific or {}).get('file_path') for it in self.images.all(namespace) if it.source_doc_id == source_doc_id and self._image_describe_pending(it)}
-                    pending_images = [image for image in saved_images if image['file_path'] in pending_paths]
-                    pending_images.sort(key=lambda image: priority(image['page_number']))  # the student's section first
-                    stats.figures_pending += max(0, len(pending_images) - self.INLINE_FIGURES)
-                    pending_images = pending_images[:self.INLINE_FIGURES]
-                    if self.describe_images and pending_images and not self.skip_images:
-                        vision = phase_ex.submit(self._describe_saved_images_batched, pending_images, _on_vision_batch, priority)
-                    classify.result()
-                    tmark("classify_done", {"pdf": pdf.name, "pages": len(pages)})
-                    if vision:
-                        vision_results = vision.result()
-                        # Text is what teaching needs; undescribed figures are retried in the
-                        # background and can never block the source (or its sections) for good.
-                        stats.figures_pending += sum(1 for row in vision_results if row.get("_pending_vision"))
-                        tmark("vision_done", {"pdf": pdf.name, "figures": len(saved_images)})
+                pending_paths = {(it.store_specific or {}).get('file_path') for it in self.images.all(namespace) if it.source_doc_id == source_doc_id and self._image_describe_pending(it)}
+                pending_images = [image for image in saved_images if image['file_path'] in pending_paths]
+                pending_images.sort(key=lambda image: priority(image['page_number']))  # the student's section first
+                stats.figures_pending += max(0, len(pending_images) - self.INLINE_FIGURES)
+                pending_images = pending_images[:self.INLINE_FIGURES]
+                describe = bool(self.describe_images and pending_images and not self.skip_images)
+                tmark("classify_start", {"pdf": pdf.name, "pages": len(pages)})
+                # Text is what teaching needs; undescribed figures are retried in the background
+                # and can never block the source (or its sections) for good.
+                def _on_figures(rows):
+                    stats.figures_pending += sum(1 for row in rows if row.get("_pending_vision"))
+                    _on_vision_batch(rows)
+                todo_pages = [p for p in pages_to_classify if len((p.get('text') or '').strip()) >= 30]
+                todo_images = pending_images if describe else []
+                from . import remote
+                if remote.enabled() and (todo_pages or todo_images):
+                    # The AI work in a container; each batch is applied here as it arrives.
+                    applied = {"pages": set(), "figures": set(), "left": set()}
+                    try:
+                        applied = remote.index(todo_pages, todo_images, priority, _on_classify_batch, _on_figures,
+                                               self._remote_settings())
+                    except Exception:
+                        logger.exception("container indexing failed for %s; finishing it here", pdf.name)
+                    todo_pages = [p for p in todo_pages if p["page_number"] not in applied["pages"]]
+                    stats.figures_pending += len(applied["left"])
+                    todo_images = [i for i in todo_images if i["file_path"] not in applied["figures"] | applied["left"]]
+                if todo_pages or todo_images:  # here: without containers, or what a container left
+                    # Publish each finished batch; the first section no longer waits for the whole PDF.
+                    with ThreadPoolExecutor(max_workers=2) as phase_ex:
+                        classify = phase_ex.submit(self._classify_pages_parallel, todo_pages, _on_classify_batch, priority)
+                        vision = (phase_ex.submit(self._describe_saved_images_batched, todo_images, _on_vision_batch, priority)
+                                  if todo_images else None)
+                        classify.result()
+                        if vision:  # published batch by batch above; count what is left for the background
+                            stats.figures_pending += sum(1 for row in vision.result() if row.get("_pending_vision"))
+                tmark("classify_done", {"pdf": pdf.name, "pages": len(pages)})
+                if describe:
+                    tmark("vision_done", {"pdf": pdf.name, "figures": len(saved_images)})
                 stats.image_items = images_before + len(saved_images)
                 tmark("pdf_done", {
                     "pdf": pdf.name,
@@ -718,6 +736,11 @@ class IngestionPipeline:
                 })
         return saved
 
+    def _remote_settings(self) -> dict:
+        """What a container needs to classify and describe exactly as this pipeline would."""
+        return {"classify_workers": self.classify_workers, "vision_workers": self.vision_workers,
+                "BATCH_SIZE": self.BATCH_SIZE, "VISION_BATCH_SIZE": self.VISION_BATCH_SIZE}
+
     def _describe_saved_images_batched(self, saved: list[dict], on_batch=None, priority=None) -> list[dict]:
         """Multi-image vision batches run in parallel."""
         if not saved:
@@ -905,7 +928,8 @@ class IngestionPipeline:
         for it in pending:
             ss = it.store_specific or {}
             file_path = ss.get("file_path")
-            if not file_path or not Path(file_path).exists():
+            import file_store  # in R2 when the server's disk does not hold it (read in a container)
+            if not file_path or not file_store.available(file_path):
                 continue
             saved.append({
                 "page_number": ss.get("page_number"),
@@ -1341,15 +1365,15 @@ class IngestionPipeline:
                     ))
             if not updates:
                 continue
-            from .stores.db import connect_db
+            from .stores.db import connect_db, fts_rowid
             with connect_db(store.db_path) as conn:
                 conn.executemany(
                     f"UPDATE {store.table} SET entities = ? WHERE id = ?",
                     [(u[0], u[2]) for u in updates],
                 )
                 conn.executemany(
-                    f"UPDATE {store.fts_table} SET entities = ? WHERE id = ?",
-                    [(u[1], u[2]) for u in updates],
+                    f"UPDATE {store.fts_table} SET entities = ? WHERE rowid = ?",
+                    [(u[1], fts_rowid(u[2])) for u in updates],
                 )
 
     # ── Misc ──────────────────────────────────────────────────────

@@ -144,7 +144,7 @@ def _get_embeddings(texts: list[str]) -> list[list[float]]:
     """Compute embeddings using OpenAI text-embedding-3-small."""
     from openai import OpenAI
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""), max_retries=0)
-    response = provider_capacity.call('openai', lambda: client.embeddings.create(model=EMBEDDING_MODEL, input=texts), priority='background')
+    response = provider_capacity.call('openai', lambda: client.embeddings.create(model=EMBEDDING_MODEL, input=texts), priority='background', lane='embed')
     return [item.embedding for item in response.data]
 
 

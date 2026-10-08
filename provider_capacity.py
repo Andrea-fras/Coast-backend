@@ -98,11 +98,11 @@ class Capacity:
 _gates = {}
 _lock = threading.Lock()
 
-def gate(provider):
+def gate(provider, default_concurrency=6):
     with _lock:
         if provider not in _gates:
             prefix = 'COAST_' + provider.upper()
-            concurrent = int(os.getenv(prefix + '_CONCURRENCY', '6'))
+            concurrent = int(os.getenv(prefix + '_CONCURRENCY', str(default_concurrency)))
             _gates[provider] = Capacity(concurrent, int(os.getenv(prefix + '_BACKGROUND_CONCURRENCY', str(max(1,concurrent-2)))),
                 int(os.getenv('COAST_AI_MAX_WAITERS','64')), int(os.getenv(prefix + '_RPM','0')))
         return _gates[provider]
@@ -123,10 +123,12 @@ def _usage(provider, response):
         return None
 
 
-def call(provider, operation, *, priority='background'):
+def call(provider, operation, *, priority='background', lane=None):
+    """lane="embed" for embeddings: a fast call with its own provider quota, so it has its own
+    slots (COAST_OPENAI_EMBED_CONCURRENCY, 16) instead of waiting behind figure descriptions."""
     _check_available(provider)
     started = time.monotonic()
-    with gate(provider).slot(priority) as waited:
+    with gate(f'{provider}_{lane}' if lane else provider, 16 if lane else 6).slot(priority) as waited:
         call_started = time.monotonic()
         try:
             response = operation()

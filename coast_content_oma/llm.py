@@ -417,7 +417,7 @@ def embed_texts(texts: list[str]) -> list[Optional[list[float]]]:
     for start in range(0, len(texts), EMBED_BATCH):
         chunk = [(t or "")[:8000] for t in texts[start : start + EMBED_BATCH]]
         try:
-            resp = provider_capacity.call('openai', lambda: oai.embeddings.create(model=EMBED_MODEL, input=chunk), priority='background')
+            resp = provider_capacity.call('openai', lambda: oai.embeddings.create(model=EMBED_MODEL, input=chunk), priority='background', lane='embed')
             for i, data in enumerate(resp.data):
                 out[start + i] = list(data.embedding)
         except Exception as e:

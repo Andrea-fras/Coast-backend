@@ -24,3 +24,4 @@ httpx>=0.27.0
 anthropic>=0.84.0
 boto3>=1.34  # nightly backups to Cloudflare R2 (backups.py)
 psutil>=5.9  # memory-aware admission of uploads and indexing (memory_budget.py)
+modal>=1.6  # reading and indexing uploads in containers (coast_modal.py)

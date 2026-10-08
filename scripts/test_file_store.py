@@ -93,6 +93,7 @@ class FileStore(unittest.TestCase):
         file_store.publish(self.figure, wait=True)
         old = time.time() - 86400 * 3
         os.utime(self.pdf, (old, old))  # not used for days
+        os.utime(self.figure, (old + 86400, old + 86400))  # nor this, but more recently
         unsent = DISK / "folder_uploads" / "src_2.pdf"
         unsent.write_bytes(b"%PDF not in R2 yet")
         usage = type("U", (), {"total": 100, "used": 80})()
@@ -102,6 +103,31 @@ class FileStore(unittest.TestCase):
         self.assertFalse(self.pdf.exists())          # the oldest file R2 holds went first
         self.assertTrue(unsent.exists())             # a file R2 does not hold is never cleared
         self.assertEqual(file_store.local(self.pdf).read_bytes(), b"%PDF lecture")  # and comes back on use
+
+    def test_a_version_r2_holds_is_not_sent_again(self):
+        sent = []
+        upload = self.r2.upload_file
+        self.r2.upload_file = lambda path, bucket, key: (sent.append(key), upload(path, bucket, key))
+        file_store.publish(self.pdf, wait=True)
+        file_store.publish(self.pdf, wait=True)  # the same file: already there
+        self.assertEqual(len(sent), 1)
+        time.sleep(0.01)
+        self.pdf.write_bytes(b"%PDF lecture, rewritten")  # a new version goes
+        file_store.publish(self.pdf, wait=True)
+        self.assertEqual(len(sent), 2)
+
+    def test_a_file_used_in_the_last_hour_is_never_cleared(self):
+        file_store.publish(self.pdf, wait=True)  # just uploaded, about to be indexed
+        usage = type("U", (), {"total": 100, "used": 99})()
+        with patch("file_store.shutil.disk_usage", return_value=usage):
+            self.assertEqual(file_store.evict(), 0)
+        self.assertTrue(self.pdf.exists())
+
+    def test_a_file_only_in_r2_still_counts_as_there(self):
+        file_store.publish(self.pdf, wait=True)
+        self.pdf.unlink()  # cleared from the disk cache
+        self.assertTrue(file_store.available(self.pdf))
+        self.assertFalse(file_store.available(self.pdf.with_name("src_9.pdf")))
 
     def test_the_sweep_sends_what_r2_lacks_once(self):
         self.assertEqual(file_store.sweep([DISK / "folder_uploads"]), 2)
