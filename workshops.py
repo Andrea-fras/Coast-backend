@@ -36,6 +36,7 @@ def validate_contract(raw, course_outcome=None):
         "coaching": (str(raw.get("coaching") or "").strip() or DEFAULT_COACHING)[:1500],
         "minutes": minutes, "version": int(raw.get("version") or 1),
         "course_outcome": (str(raw.get("course_outcome") or "").strip() or course_outcome or outcome)[:400],
+        **({"kind": "assignment"} if raw.get("kind") == "assignment" else {}),
     }
 
 
@@ -63,11 +64,12 @@ def decorate_sections(folder_name, sections):
             for section, contract in zip(result, steps):
                 section["workshop"] = {**deepcopy(contract), "version": 1, "course_outcome": curated["outcome"]}
             return result
-    # Generated workshops carry their own contracts; keep only valid ones.
+    # Generated workshops carry their own contracts; keep only valid ones. A workshop the student made
+    # from their own files is an assignment, including those planned before assignments had their own kind.
     for section in result:
         contract = validate_contract(section.get("workshop"))
         if contract:
-            section["workshop"] = contract
+            section["workshop"] = contract if curated else {**contract, "kind": "assignment"}
         else:
             section.pop("workshop", None)
     return result
@@ -79,6 +81,21 @@ def is_workshop(sections):
 
 def workshop_instructions(contract):
     checks = "\n".join(f"- {item}" for item in contract["criteria"])
+    if contract.get("kind") == "assignment":
+        return (
+            "\n--- GUIDED ASSIGNMENT: THE STUDENT DOES THE WORK ---\n"
+            f"Current exercise: {contract['title']}\n"
+            f"The brief asks for: {contract['outcome']}\n"
+            f"Its parts:\n{checks}\n"
+            "The student is doing an assignment they have been set; the brief in their files is the authority. State what "
+            "the exercise asks in the brief's terms, then guide them through its parts in order, one at a time. Never add "
+            "tasks, warm-ups or practice questions the brief doesn't ask for. Never write their answer, code or derivation: "
+            "ask for their attempt, respond precisely, and give progressively stronger hints (a cue, an explanation or a "
+            "worked example on a different case, then a partial step for them to finish). Check their work against what "
+            "the brief requires. The exercise is complete when every part is done in their own work.\n"
+            f"Notes for guiding it (never hand these over as answers): {contract['coaching']}\n"
+            "--- END GUIDED ASSIGNMENT ---\n"
+        )
     return (
         "\n--- GUIDED WORKSHOP: STUDENT-CREATED WORK ---\n"
         f"Whole workshop outcome: {contract['course_outcome']}\n"

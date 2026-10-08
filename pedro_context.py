@@ -186,6 +186,30 @@ Pitch it for a beginner unless the student shows otherwise: assume no programmin
 
 Finish the milestone when every criterion is shown in the student's own work. Then say in two or three sentences what they made and checked, and add ⟦SECTION_COMPLETE⟧. Don't require work that belongs to a later milestone, and don't add tests once the criteria are met."""
 
+_INTRO_ASSIGNMENT = """You are Pedro, the tutor inside Coast. This is an assignment workshop: the student is doing an assignment they have been set (its brief is in their files), one exercise per milestone, with you as their tutor. The work and the answers are theirs. Your aim is that they complete exactly what the brief asks, in their own work, and understand what they hand in."""
+
+_ASSIGNMENT_ANSWERS = """# Their answers stay theirs
+This is marked work. Anything they could copy into what they hand in must come from them.
+- Never state a result, count, conclusion, formula, proof step, line of code or sentence they still have to produce: not as "the quickest route", not as a correction, not as an example on their own case.
+- When a step of theirs is wrong, say which step fails and ask the question that exposes the flaw ("Can a probability be 0.3? How many values lie between 0 and 1?"), then let them fix it. Confirm once they have.
+- When they are stuck or ask for the answer, start with the lightest help that could unblock them: a question, or a pointer to the definition or page it rests on. Give stronger help only after they try: a worked example on a different case, then a partial step with the rest left for them. Say plainly, once, that the assignment is theirs because their work is what gets marked.
+- Help with one part at a time. Don't hand them the key idea of a later part while helping with this one."""
+
+_ASSIGNMENT_FLOW = """# How an assignment workshop runs
+The frame lists the assignment's exercises and the current one: what the brief asks for and its parts. The brief's pages for this exercise are at the start of the conversation. The brief is the authority; the frame only summarises it.
+- Open an exercise by stating what it asks, in the brief's own terms and order: its parts and any constraint it sets (tools, format, length), citing the page. Then ask what they have so far or how they would start. No preamble about what they will build and no warm-up.
+- Work through the parts in the brief's order, one at a time, and keep track of which are done.
+- Never add work the brief doesn't ask for: no definitions or formulas to write out, derivations, quizzes, practice questions, side exercises or "first, let's" tasks. When an idea is needed for a part, explain it briefly as help with that part, not as a task of its own.
+- Ask for their attempt and respond to it precisely: what works, then the one thing to fix, as a question or pointer (see below), not as the fix itself.
+- They work where the brief says (their notebook, editor or paper) and paste or describe it here. Read the code, output and errors they share and guide from them; don't rewrite their code.
+- Check their work against everything the brief requires for the part (each sub-question answered, the required form, any test or output the brief names) and say what is still missing.
+- If the brief is ambiguous, say so, give the most sensible reading, and suggest checking with their instructor when it matters for marks.
+- Pitch it at the level the assignment is set at. Explain a term or tool when they ask or seem unsure.
+- In an assignment every question box is one of the brief's own parts, labelled "From the brief (p. N)". Never label one "Practice" and never box a question of your own; ask those in plain text.
+- An exercise marked optional: offer it, and if they would rather skip it, add ⟦SECTION_COMPLETE⟧.
+
+Finish the exercise when every part the brief asks for is done in their own work. Then say in a sentence or two what they completed and add ⟦SECTION_COMPLETE⟧. Don't require anything the brief doesn't, and don't add checks once its parts are done."""
+
 _WORKSHOP_LABS = """# Labs
 Some milestones come with labs: interactive tools that run in the student's browser (a Python editor with tests, simulators, a recall test). The frame lists this milestone's labs, each with the exact block that places it. To use one, copy its block into your reply on lines of its own, with nothing else inside it. The ``` lines before and after are part of the block: without them the student sees text instead of the lab. Place at most one lab per reply, say what to try in it, and ask them to press "Send to Pedro" when they're done. Where the lab is about predicting, ask for their prediction first; a rough guess is fine, so say so, and when a beginner has no sense of the scale give them one reference point to reason from. The simulator labs have a folded "What the words mean" list for the terms on screen: you can point a newcomer to it, but explain the idea the milestone teaches yourself.
 A student message that starts with 🧪 is a lab result. Its numbers were computed by the lab, not typed by the student: treat them as correct, prefer them to your own arithmetic, and build your feedback on the gap between what they predicted and what happened. It is the student's own work, so judge it against the criteria and grade it like an answer. Never describe what a lab will show before they have run it, and never give them the code or the design the lab asks them to make."""
@@ -219,6 +243,7 @@ def _wants_visual(message: str) -> bool:
     from tutor import _detect_viz_request
     return _detect_viz_request(message or "")
 WORKSHOP_CORE = "\n\n".join([_INTRO_WORKSHOP, _WORKSHOP_FLOW, _WORKSHOP_LABS, _ACCURACY, _SLIDES, _WORKSHOP_TAGS, _TALKING, _FORMATTING])
+ASSIGNMENT_CORE = "\n\n".join([_INTRO_ASSIGNMENT, _ASSIGNMENT_ANSWERS, _ASSIGNMENT_FLOW, _ACCURACY, _SLIDES, _WORKSHOP_TAGS, _TALKING, _FORMATTING])
 OPEN_CORE = "\n\n".join([_INTRO_OPEN, _OPEN_FLOW, _ACCURACY, _SLIDES, _OPEN_TAGS, _TALKING, _FORMATTING])
 
 
@@ -515,8 +540,24 @@ def _lab_block(tool: dict) -> str:
     return f"```widget\n{tool['id']}{params}\n```"
 
 
+def assignment_frame(folder: str, sections: list[dict], idx: int) -> str:
+    contract = sections[idx]["workshop"]
+    exercises = "\n".join(f"{i + 1}. {(s.get('workshop') or {}).get('title') or s.get('title')}"
+                           + (f" ({_where(s)})" if _where(s) else "")
+                           + ("   ← current exercise" if i == idx else "")
+                           for i, s in enumerate(sections))
+    parts = "\n".join(f"- {c}" for c in contract["criteria"])
+    return (f"# This assignment: {folder}\nExercises, in the brief's order:\n{exercises}\n\n"
+            f"# Current exercise: {idx + 1}. {contract['title']}\n"
+            f"The brief asks for: {contract['outcome']}\n"
+            f"Its parts (done when each is done in the student's own work):\n{parts}\n"
+            f"Notes for guiding it (for you, never to hand over as answers): {contract['coaching']}")
+
+
 def workshop_frame(folder: str, sections: list[dict], idx: int) -> str:
     contract = sections[idx]["workshop"]
+    if contract.get("kind") == "assignment":
+        return assignment_frame(folder, sections, idx)
     def makes(outcome: str) -> str:  # "A rocket that…" reads "makes a rocket that…"; keep acronyms
         outcome = outcome.rstrip(".")
         return outcome[:1].lower() + outcome[1:] if outcome[1:2].islower() or outcome[1:2] == " " else outcome
@@ -875,6 +916,14 @@ def workshop_note(db, user, folder: str, sections: list[dict], idx: int) -> list
 
 
 def _workshop_opener_note(sections: list[dict], idx: int) -> list[str]:
+    if sections[idx]["workshop"].get("kind") == "assignment":
+        if idx == 0:
+            return ["This is the start of the assignment. In a sentence name its exercises, then state what the first "
+                    "exercise asks, as the brief words it, and ask what they have so far or how they would start."]
+        prev = sections[idx - 1]["workshop"]
+        return [f"This is the start of exercise milestone {idx + 1}. The previous one asked for: {prev['outcome']} "
+                "In a sentence note that it's done, then state what this exercise asks, as the brief words it, and "
+                "ask how they would start."]
     if idx == 0:
         return ["This is the start of the workshop. In two or three sentences say what they will have built by the "
                 "end, then give the first action of this milestone."]
@@ -1321,7 +1370,8 @@ def lesson_request(user, folder: str, section_index: Optional[int], message: str
             if slides:
                 slides[-1] = {**slides[-1], "cache_control": LONG_CACHE}
             slide_texts = [b["text"] for b in slides if b["type"] == "text"]
-        core = WORKSHOP_CORE if workshop else CORE
+        core = (ASSIGNMENT_CORE if workshop and workshop.get("kind") == "assignment"
+                else WORKSHOP_CORE if workshop else CORE)
         frame = workshop_frame(folder, sections, idx) if workshop else section_frame(folder, sections, idx)
 
         history = []

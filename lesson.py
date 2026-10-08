@@ -106,6 +106,43 @@ WORKSHOP_OUTLINE_RULES = (
     "builds, likely pitfalls, \"course_outcome\": the same one-sentence final deliverable in every section}.\n"
 )
 
+# A workshop a student makes from their own files is an assignment they have been set: the roadmap
+# follows it exercise by exercise and Pedro guides them through doing it (pedro_context ASSIGNMENT_CORE).
+ASSIGNMENT_PLAN = (
+    "You are planning a guided assignment workshop. The student uploaded an assignment they have been set (a "
+    "problem sheet, lab, exercise notebook or coursework brief) and will do it themselves, guided by their tutor. "
+    "The roadmap IS the assignment: follow it, never redesign it.\n\n"
+    "Rules:\n"
+    "- One milestone per exercise, task or question in the brief, in the brief's own order and numbering. Its parts "
+    "(1a, 1b, ...) stay together in that milestone; split an exercise only where the brief itself splits it into "
+    "separately titled tasks.\n"
+    "- Title each milestone with the brief's own label and name, e.g. \"Exercise 1 · What does the policy need to know?\".\n"
+    "- Add nothing the brief doesn't ask for: no warm-up, notation, background, review or summary milestones, and no "
+    "extra tasks inside a milestone. What the brief gives as reference (notation, setup, starter code) belongs to the "
+    "exercises that use it.\n"
+    "- Optional exercises and extensions come last with \"(optional)\" in the title; short optional extensions may "
+    "share one milestone.\n"
+    "- Pages that only cover submission or logistics are skipped, but any constraint they set (allowed tools, length, "
+    "format, deadline) goes into the coaching of the exercises it applies to.\n"
+    "- If the material sets no tasks at all (lecture notes rather than an assignment), make one milestone per major "
+    "topic, each a concrete piece of work that applies it.\n"
+    "- learning_objectives: the exercise's parts, briefly. estimated_minutes: the brief's own estimate if it gives one.\n"
+    "For every milestone add a \"workshop\" object: {\"title\": same as the section title, \"outcome\": what the "
+    "exercise asks the student to produce, in the brief's terms, \"criteria\": the exercise's parts and requirements "
+    "as the brief states them, one per part, 1-5 (never 'understands X', never something the brief doesn't require), "
+    "\"coaching\": what the student needs to know or watch for to do it themselves (concepts it relies on, likely "
+    "pitfalls, constraints from the brief), never the answer, \"course_outcome\": \"The assignment, completed in "
+    "the student's own work\" or a closer sentence naming it, the same in every milestone}.\n"
+)
+ASSIGNMENT_PAGES = (
+    "\nThese are page-addressed excerpts from the uploaded files, grouped into UNITs of up to 8 pages. In "
+    "source_units give the exact pages each milestone uses, as ranges inside one source such as \"src_ab12:3-4\" "
+    "(a UNIT identifier also works and means all its pages): the pages where its exercise is set, plus any reference "
+    "pages it needs (notation, setup, starter code). Several milestones may use the same page. Pages with no exercise "
+    "content (title, submission logistics) go in skipped_pages. Never invent a source identifier or page. The full "
+    "pages will be available while the student works.\n"
+)
+
 
 def folder_kind(user_id: int, folder_name: str) -> str:
     """'workshop' or 'lesson' — fixed when the course was created (Workshops vs Lessons)."""
@@ -115,7 +152,7 @@ def folder_kind(user_id: int, folder_name: str) -> str:
         return (row.kind if row and row.kind else "lesson")
 
 
-def _apply_course_format(sections: list[dict], course_format: str) -> list[dict]:
+def _apply_course_format(sections: list[dict], course_format: str, assignment: bool = False) -> list[dict]:
     """Workshop roadmaps always carry a valid contract per milestone; lessons carry none."""
     from workshops import contract_from_section, validate_contract
     if course_format != "workshop":
@@ -128,6 +165,8 @@ def _apply_course_format(sections: list[dict], course_format: str) -> list[dict]
         raw = section.get("workshop") if isinstance(section.get("workshop"), dict) else {}
         section["workshop"] = (validate_contract({**raw, "title": section.get("title")}, course_outcome)
                                or contract_from_section(section, course_outcome))
+        if assignment:
+            section["workshop"]["kind"] = "assignment"
     return sections
 
 
@@ -140,6 +179,8 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
     Outline is always saved under user_id (per-user progress).
     """
     src_uid = source_user_id if source_user_id is not None else user_id
+    # The student's own workshop (not a curated one): an assignment to follow, not material to teach.
+    assignment = course_format == "workshop" and not structure and src_uid == user_id
     db = SessionLocal()
     try:
         import upload_lifecycle
@@ -185,7 +226,7 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
             if oma_provider.is_oma_enabled():
                 from coast_content_oma import progressive
                 try:
-                    quick = progressive.overview(raw_sources) if raw_sources and not notebooks else None
+                    quick = progressive.overview(raw_sources, page_chars=8000 if assignment else 1000) if raw_sources and not notebooks else None
                 except ValueError as exc:
                     return {"error": str(exc)}
                 if quick:
@@ -374,6 +415,8 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
             "- If a source covers multiple distinct topics, split across sections\n\n"
             + (WORKSHOP_OUTLINE_RULES if course_format == "workshop" else "")
         )
+        if assignment:
+            system = ASSIGNMENT_PLAN + (ASSIGNMENT_PAGES if planning_units else "")
 
         material_label = (
             "Content OMA course index" if outline_via_oma
@@ -392,7 +435,8 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
 
         if planning_units:
             try:
-                progressive.bind_sections(outline_sections, planning_units, skipped=skipped_pages)
+                progressive.bind_sections(outline_sections, planning_units, skipped=skipped_pages,
+                                          merge_same=not assignment)
             except ValueError as error:
                 repaired, skipped_again = _plan_outline(
                     system, format_line,
@@ -402,11 +446,12 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
                     # The sections are still good; if the references are unusable again,
                     # teach the pages in source order rather than fail the student.
                     outline_sections = progressive.bind_sections(repaired or outline_sections, planning_units, spread=True,
-                                                                 skipped=skipped_again or skipped_pages)
+                                                                 skipped=skipped_again or skipped_pages,
+                                                                 merge_same=not assignment)
                 except ValueError as final_error:
                     return {"error": str(final_error)}
 
-        outline_sections = _apply_course_format(outline_sections, course_format)
+        outline_sections = _apply_course_format(outline_sections, course_format, assignment)
         total_minutes = sum(s.get("estimated_minutes", 20) for s in outline_sections)
 
         if not structure:

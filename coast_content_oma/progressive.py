@@ -35,8 +35,9 @@ def manifest(source):
     except (OSError, ValueError, TypeError):
         return None
 
-def overview(sources, max_chars=70000):
-    """Represent every source/page, without waiting for classification or vision APIs."""
+def overview(sources, max_chars=70000, page_chars=1000):
+    """Represent every source/page, without waiting for classification or vision APIs. A page gets
+    up to page_chars (an assignment's dense pages get more: an exercise cut short is planned wrong)."""
     manifests = [(s, manifest(s)) for s in sources]
     if not manifests or any(m is None for _, m in manifests):
         return None
@@ -63,7 +64,7 @@ def overview(sources, max_chars=70000):
         raise ValueError('Source/page references exceed the roadmap context budget. Reduce the upload set or source title lengths.')
     allocations = {}
     for position,text in sorted(excerpts,key=lambda item:len(item[1])):
-        allowance = min(len(text),1000,remaining // (len(excerpts)-len(allocations)))
+        allowance = min(len(text),page_chars,remaining // (len(excerpts)-len(allocations)))
         allocations[position] = allowance
         remaining -= allowance
     for position,text in excerpts:
@@ -79,7 +80,7 @@ def overview(sources, max_chars=70000):
         parts[position] += excerpt
     return '\n'.join(parts), units
 
-def bind_sections(sections, units, spread=False, skipped=None):
+def bind_sections(sections, units, spread=False, skipped=None, merge_same=True):
     """Bind each section to exact source pages.
 
     References are unit ids ("src_x:1-8") or page ranges inside a source ("src_x:17",
@@ -90,7 +91,7 @@ def bind_sections(sections, units, spread=False, skipped=None):
     `skipped` (course logistics, title and reading-list slides). With spread=True a
     roadmap with no usable references at all gets the units in source order, split
     evenly across its sections, instead of failing. Sections bound to exactly the
-    same pages are merged."""
+    same pages are merged, unless merge_same is off (an assignment's exercises often share a page)."""
     if not sections or not isinstance(sections,list):
         raise ValueError('The roadmap response did not contain sections.')
     order=list(units)  # source order, then page order
@@ -160,7 +161,7 @@ def bind_sections(sections, units, spread=False, skipped=None):
     for section in sections:
         keys=tuple(sorted(set(section['_pages']),key=rank.get))
         chosen=section.pop('_chosen')
-        if chosen and keys in seen:  # the planner gave two sections the same pages: teach them once, with both goals
+        if merge_same and chosen and keys in seen:  # the planner gave two sections the same pages: teach them once, with both goals
             first=seen[keys]
             for field in ('learning_objectives','key_topics'):
                 first[field]=list(dict.fromkeys(list(first.get(field) or [])+list(section.get(field) or [])))
