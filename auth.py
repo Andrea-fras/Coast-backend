@@ -9,10 +9,11 @@ import bcrypt
 import jwt
 
 SECRET_KEY = os.getenv("JWT_SECRET", "")
+if os.getenv("RENDER") and len(SECRET_KEY) < 32:
+    # Never run production with a guessable signing key: a short one can be cracked offline from
+    # any session token, and then a session can be forged for any account.
+    raise RuntimeError("JWT_SECRET must be set in production, at least 32 random characters")
 if not SECRET_KEY:
-    if os.getenv("RENDER"):
-        # Never run production with a guessable signing key.
-        raise RuntimeError("JWT_SECRET env var must be set in production")
     SECRET_KEY = "coast-local-dev-secret"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 72

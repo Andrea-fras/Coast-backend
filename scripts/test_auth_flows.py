@@ -124,6 +124,18 @@ class AuthFlows(unittest.TestCase):
         self.assertEqual(client.post('/api/auth/password/reset', json={'email': 'lin@example.com', 'code': emailed,
                                                                         'password': 'another123'}).status_code, 400)
 
+    def test_an_account_linked_to_google_keeps_its_password_and_can_reset_it(self):
+        with SessionLocal() as db:
+            db.add(User(email='both@example.com', name='Both', password_hash=server.hash_password('secret123'), google_id='g-9'))
+            db.commit()
+        self.assertEqual(client.post('/api/auth/login', json={'email': 'both@example.com', 'password': 'secret123'}).status_code, 200)
+        wrong = client.post('/api/auth/login', json={'email': 'both@example.com', 'password': 'nope'})
+        self.assertIn('Continue with Google', wrong.json()['detail'])
+        client.post('/api/auth/password/forgot', json={'email': 'both@example.com'})
+        (_, emailed, purpose), = SENT
+        r = client.post('/api/auth/password/reset', json={'email': 'both@example.com', 'code': emailed, 'password': 'newpassword'})
+        self.assertEqual(r.status_code, 200, r.text)
+
     def test_forgot_password_never_reveals_whether_an_account_exists(self):
         r = client.post('/api/auth/password/forgot', json={'email': 'nobody@example.com'})
         self.assertEqual(r.status_code, 200)

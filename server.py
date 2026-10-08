@@ -778,10 +778,12 @@ def login(req: LoginRequest, request: Request):
         if not user:
             limiter.record(f"login-fail:{email}")
             raise HTTPException(401, "Invalid email or password")
-        if user.google_id:
-            raise HTTPException(401, "This account uses Google sign-in.")
+        # Google is an extra way in, not a replacement: a password the student set keeps working.
         if not verify_password(req.password, user.password_hash):
             limiter.record(f"login-fail:{email}")
+            if user.google_id:
+                raise HTTPException(401, "Wrong password. This account also signs in with Google: use Continue with Google, "
+                                         "or reset your password.")
             raise HTTPException(401, "Invalid email or password")
         limiter.reset(f"login-fail:{email}")
         # New accounts prove their email at sign-up; accounts made before that keep signing in.
@@ -808,8 +810,9 @@ def forgot_password(req: ForgotPasswordRequest, request: Request):
     answer = {"ok": True, "message": "If an account uses this email, we've sent it a code."}
     with SessionLocal() as db:
         user = db.query(User).filter(User.email == email).first()
-        if not user or user.google_id:
-            return answer  # Google accounts have no password to reset
+        if not user:
+            return answer
+        # Accounts that use Google can set a password this way too: the code proves the inbox is theirs.
         code = generate_code()
         row = db.get(PasswordReset, email) or PasswordReset(email=email)
         row.code_hash = _code_hash(email, code)
@@ -847,7 +850,7 @@ def reset_password(req: ResetPasswordRequest, request: Request):
         if expires < datetime.now(timezone.utc):
             raise HTTPException(400, "That code has expired. Request a new one.")
         user = db.query(User).filter(User.email == email).first()
-        if not user or user.google_id:
+        if not user:
             raise HTTPException(400, "That code isn't right. Check the email or request a new code.")
         user.password_hash = hash_password(req.password)
         user.email_verified = True  # the code reached this inbox
