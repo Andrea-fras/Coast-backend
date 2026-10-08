@@ -521,6 +521,16 @@ class EmailVerification(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class PasswordReset(Base):
+    """A pending "forgot password" code. Stored as a hash; one per email, 15 minutes."""
+    __tablename__ = "password_resets"
+
+    email = Column(String(255), primary_key=True)
+    code_hash = Column(String(64), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class BetaCode(Base):
     """Single-use invite codes: creating an account consumes one (see beta_codes.py)."""
     __tablename__ = "beta_codes"

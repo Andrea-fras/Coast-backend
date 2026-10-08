@@ -493,6 +493,17 @@ class LoginRequest(BaseModel):
 
 class VerifyEmailSendRequest(BaseModel):
     email: str
+    beta_code: str = ""  # checked before any email is sent, so a code is only sent to an invitee
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    code: str
+    password: str
 
 
 class VerifyEmailCheckRequest(BaseModel):
@@ -532,6 +543,9 @@ def auth_config():
         "google_client_id": os.environ.get("GOOGLE_CLIENT_ID", "").strip(),
         "email_verification_enabled": _email_verification_required(),
         "beta_code_required": beta_codes.required(),
+        # Codes can be emailed (Resend set up; or shown on screen locally): "forgot password" is offered.
+        "email_enabled": bool(os.environ.get("RESEND_API_KEY", "").strip())
+                         or (os.environ.get("AUTH_DEV_EXPOSE_CODES", "").lower() in ("1", "true", "yes") and not os.getenv("RENDER")),
     }
 
 
@@ -552,6 +566,12 @@ def send_verify_email(req: VerifyEmailSendRequest, request: Request):
         existing = db.query(User).filter(User.email == email).first()
         if existing:
             raise HTTPException(400, "Email already registered. Sign in instead.")
+        import beta_codes
+        if beta_codes.required() and not beta_codes.exempt(email):
+            try:
+                beta_codes.check(db, req.beta_code)
+            except beta_codes.BetaCodeError as exc:
+                raise HTTPException(400, str(exc))
 
         code = generate_code()
         expires = datetime.now(timezone.utc) + timedelta(minutes=15)
@@ -647,14 +667,17 @@ def google_auth(req: GoogleAuthRequest, request: Request):
             db.refresh(user)
             return _auth_token_response(user)
 
-        # A new account: during the beta it needs an unused invite code.
+        # A new account: during the beta it needs an unused invite code. Without one the app asks
+        # for it and sends the same Google sign-in again (it stays valid for an hour).
         import beta_codes
         code = None
         if beta_codes.required():
             try:
                 code = beta_codes.check(db, req.beta_code)
             except beta_codes.BetaCodeError as exc:
-                raise HTTPException(403, str(exc))
+                message = ("Enter your beta code to finish creating your account." if not (req.beta_code or "").strip()
+                           else str(exc))
+                raise HTTPException(403, {"message": message, "needs_beta_code": True})
 
         user = User(
             email=email,
@@ -761,12 +784,109 @@ def login(req: LoginRequest, request: Request):
             limiter.record(f"login-fail:{email}")
             raise HTTPException(401, "Invalid email or password")
         limiter.reset(f"login-fail:{email}")
-        if _email_verification_required() and not getattr(user, "email_verified", True):
-            raise HTTPException(403, "Please verify your email before signing in.")
-
+        # New accounts prove their email at sign-up; accounts made before that keep signing in.
         return _auth_token_response(user)
     finally:
         db.close()
+
+
+def _code_hash(email: str, code: str) -> str:
+    import hashlib
+    return hashlib.sha256(f"{email}:{code}".encode()).hexdigest()
+
+
+@app.post("/api/auth/password/forgot")
+def forgot_password(req: ForgotPasswordRequest, request: Request):
+    """Email a reset code to an account that signs in with a password. The answer is the same
+    whether or not the account exists, so this can't be used to find out who has one."""
+    from auth_email import generate_code, normalize_email, send_code_email
+    from database import PasswordReset
+
+    email = normalize_email(req.email)
+    limiter.check(f"reset-send:ip:{client_ip(request)}", 20, HOUR)
+    limiter.check(f"reset-send:{email}", 5, HOUR, "Too many codes requested for this email. Try again in an hour.")
+    answer = {"ok": True, "message": "If an account uses this email, we've sent it a code."}
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.email == email).first()
+        if not user or user.google_id:
+            return answer  # Google accounts have no password to reset
+        code = generate_code()
+        row = db.get(PasswordReset, email) or PasswordReset(email=email)
+        row.code_hash = _code_hash(email, code)
+        row.expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+        db.merge(row)
+        db.commit()
+    limiter.reset(f"reset-check:{email}")
+    sent, detail = send_code_email(email, code, "reset")
+    if not sent:
+        if detail.startswith("dev_code:") and not os.getenv("RENDER"):
+            return {**answer, "dev_code": detail.split(":", 1)[1]}
+        print(f"[auth] reset email not sent: {detail}")
+        raise HTTPException(503, "We couldn't send the email right now. Please try again in a few minutes.")
+    return answer
+
+
+@app.post("/api/auth/password/reset")
+def reset_password(req: ResetPasswordRequest, request: Request):
+    import hmac
+    from auth_email import normalize_email
+    from database import PasswordReset
+
+    email = normalize_email(req.email)
+    limiter.check(f"reset-check:ip:{client_ip(request)}", 30, 15 * MINUTE)
+    if limiter.blocked(f"reset-check:{email}", 5, HOUR):
+        raise HTTPException(429, "Too many wrong codes. Request a new code.")
+    if len(req.password or "") < 8:
+        raise HTTPException(400, "Use a password of at least 8 characters.")
+    with SessionLocal() as db:
+        row = db.get(PasswordReset, email)
+        if not row or not hmac.compare_digest(row.code_hash, _code_hash(email, req.code.strip())):
+            limiter.record(f"reset-check:{email}")
+            raise HTTPException(400, "That code isn't right. Check the email or request a new code.")
+        expires = row.expires_at if row.expires_at.tzinfo else row.expires_at.replace(tzinfo=timezone.utc)
+        if expires < datetime.now(timezone.utc):
+            raise HTTPException(400, "That code has expired. Request a new one.")
+        user = db.query(User).filter(User.email == email).first()
+        if not user or user.google_id:
+            raise HTTPException(400, "That code isn't right. Check the email or request a new code.")
+        user.password_hash = hash_password(req.password)
+        user.email_verified = True  # the code reached this inbox
+        db.delete(row)
+        db.commit()
+        db.refresh(user)
+        limiter.reset(f"login-fail:{email}")
+        return _auth_token_response(user)
+
+
+class DeleteAccountRequest(BaseModel):
+    confirm_email: str
+
+
+@app.get("/api/account/export")
+def export_my_data(user: User = Depends(get_current_user)):
+    """Download everything Coast holds about you, as JSON."""
+    limiter.check(f"account-export:{user.id}", 10, HOUR, "You've downloaded your data several times. Try again in an hour.")
+    import account_deletion
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return JSONResponse(account_deletion.export_account(user.id),
+                        headers={"Content-Disposition": f'attachment; filename="coast-data-{stamp}.json"'})
+
+
+@app.post("/api/account/delete")
+def delete_my_account(req: DeleteAccountRequest, user: User = Depends(get_current_user)):
+    """Delete your account and everything with it. You confirm by typing your account's email."""
+    if (req.confirm_email or "").strip().lower() != (user.email or "").strip().lower():
+        raise HTTPException(400, "Type your account's email exactly to confirm.")
+    limiter.check(f"account-delete:{user.id}", 5, HOUR)
+    import account_deletion
+    result = account_deletion.delete_account(user.id)
+    try:
+        import map_world
+        map_world.invalidate_map_cache(user.id)
+    except Exception:
+        pass
+    print(f"[account] user {user.id} deleted their account: {result.get('removed')}")
+    return {"deleted": bool(result.get("deleted"))}
 
 
 @app.get("/api/auth/me")

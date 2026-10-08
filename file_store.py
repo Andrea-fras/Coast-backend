@@ -211,10 +211,10 @@ def local_tree(directory, names: Iterable[str]) -> None:
 
 
 # ── deleting ──────────────────────────────────────────────────────────────────
-def remove(paths: Iterable) -> None:
+def remove(paths: Iterable, trash: bool = True) -> None:
     """Files or folders deleted on purpose: gone from the disk now, kept in R2's trash for 30 days
-    (prune_trash removes them for good). Goes by what R2 holds, so a page copy the cache had
-    already cleared is removed too."""
+    (prune_trash removes them for good), or with trash=False (a deleted account) removed from R2
+    at once. Goes by what R2 holds, so a page copy the cache had already cleared is removed too."""
     keys: set[str] = set()
     for path in paths:
         path = Path(path)
@@ -228,7 +228,7 @@ def remove(paths: Iterable) -> None:
                 keys |= {k for (k,) in c.execute(
                     "select key from stored where key = ? or substr(key, 1, ?) = ?", (key, len(key) + 1, key + "/"))}
     if keys:
-        _pool.submit(_trash, sorted(keys))
+        _pool.submit(_trash if trash else _purge, sorted(keys))
 
 
 def _trash(keys: list[str]) -> None:
@@ -243,6 +243,13 @@ def _trash(keys: list[str]) -> None:
             pass  # never sent (an upload that failed): nothing to keep
     with ThreadPoolExecutor(16) as copies:  # a course's 100 files in about a second, not 25
         list(copies.map(keep, keys))
+    for i in range(0, len(keys), 1000):
+        client.delete_objects(Bucket=bucket, Delete={"Objects": [{"Key": _obj(k)} for k in keys[i:i + 1000]], "Quiet": True})
+    _forget(keys)
+
+
+def _purge(keys: list[str]) -> None:
+    client, bucket = _client()
     for i in range(0, len(keys), 1000):
         client.delete_objects(Bucket=bucket, Delete={"Objects": [{"Key": _obj(k)} for k in keys[i:i + 1000]], "Quiet": True})
     _forget(keys)
