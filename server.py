@@ -183,7 +183,7 @@ async def http_exception_handler(request: StarletteRequest, exc: HTTPException):
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail},
-        headers=_cors_headers,
+        headers={**_cors_headers, **(exc.headers or {})},  # e.g. Retry-After, X-Coast-Limit
     )
 
 @app.exception_handler(Exception)
@@ -213,9 +213,7 @@ from curated_config import curated_source_uid as _curated_uid, get_lesson_struct
 
 QUESTIONS_PER_BATCH = 10
 
-RATE_LIMIT_CHAT_MESSAGES = 500      # max Pedro messages per user per week
-RATE_LIMIT_NOTEBOOKS = 20           # max notebook uploads per user
-RATE_LIMIT_WINDOW_DAYS = 7          # rolling window for chat limit
+RATE_LIMIT_NOTEBOOKS = 20           # max notebook uploads per user (older notebook pipeline)
 
 _live_users: dict[int, dict] = {}
 HEARTBEAT_TIMEOUT = 60
@@ -416,13 +414,13 @@ def _require_curated_write_access(folder_name: str, user: User) -> None:
 
 
 def _get_user_usage(user_id: int):
-    """Return current usage counts for rate limiting. Admin gets unlimited."""
-    from datetime import timedelta
-
+    """Return current usage counts for rate limiting: this month's messages (see plans.py) and
+    notebooks of the older notebook pipeline. Admin gets unlimited."""
+    import plans
     db = SessionLocal()
     try:
-        admin = db.query(User).filter(User.id == user_id).first()
-        if admin and is_admin(admin):
+        account = db.query(User).filter(User.id == user_id).first()
+        if account and is_admin(account):
             return {
                 "chat_messages_used": 0,
                 "chat_messages_limit": 999999,
@@ -431,17 +429,6 @@ def _get_user_usage(user_id: int):
                 "notebooks_limit": 999999,
                 "notebooks_remaining": 999999,
             }
-
-        cutoff = datetime.now(timezone.utc) - timedelta(days=RATE_LIMIT_WINDOW_DAYS)
-        chat_count = (
-            db.query(ChatMessage)
-            .filter(
-                ChatMessage.user_id == user_id,
-                ChatMessage.role == "user",
-                ChatMessage.created_at >= cutoff,
-            )
-            .count()
-        )
         notebook_count = (
             db.query(SavedNotebook)
             .filter(
@@ -452,9 +439,7 @@ def _get_user_usage(user_id: int):
             .count()
         )
         return {
-            "chat_messages_used": chat_count,
-            "chat_messages_limit": RATE_LIMIT_CHAT_MESSAGES,
-            "chat_messages_remaining": max(0, RATE_LIMIT_CHAT_MESSAGES - chat_count),
+            **(plans.legacy_usage(db, account) if account else {}),
             "notebooks_used": notebook_count,
             "notebooks_limit": RATE_LIMIT_NOTEBOOKS,
             "notebooks_remaining": max(0, RATE_LIMIT_NOTEBOOKS - notebook_count),
@@ -472,6 +457,52 @@ if os.getenv("COAST_ENABLE_MANIM", "false").lower() == "true":
 def get_usage(user: User = Depends(get_current_user)):
     """Return the user's current usage against rate limits."""
     return _get_user_usage(user.id)
+
+
+def _check_messages(user: User) -> None:
+    """Refuse a new message to Pedro once this month's are used up."""
+    import plans
+    with SessionLocal() as db:
+        plans.check(db, user, "messages")
+
+
+def _counts_as_message(req) -> bool:
+    """The welcome chat, and the opener Coast sends for the student when a section or a
+    test-out starts, don't use up messages."""
+    if req.context_type == "onboarding":
+        return False
+    if req.context_type in ("lesson", "test_out"):
+        from oma_provider import _is_lesson_intro
+        return not _is_lesson_intro(req.message)
+    return True
+
+
+def _count_message(user: User, ref: str = "") -> None:
+    import plans
+    with SessionLocal() as db:
+        plans.record(db, user.id, "messages", ref)
+        db.commit()
+
+
+@app.get("/api/plan")
+def get_plan(user: User = Depends(get_current_user)):
+    """The student's plan and what they've used of it this month."""
+    import plans
+    with SessionLocal() as db:
+        return plans.summary(db, db.get(User, user.id))
+
+
+@app.post("/api/plan/founder-interest")
+def founder_interest(user: User = Depends(get_current_user)):
+    """Payments aren't open yet: note that the student wants the Founding Student pass."""
+    import plans
+    with SessionLocal() as db:
+        account = db.get(User, user.id)
+        if not account.founder_interest_at:
+            account.founder_interest_at = datetime.now(timezone.utc)
+            db.commit()
+            print(f"[plan] user {account.id} wants the Founding Student pass")
+        return plans.summary(db, account)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -526,6 +557,8 @@ def _user_payload(user: User) -> dict:
         "email_verified": bool(getattr(user, "email_verified", True)),
         "auth_provider": "google" if getattr(user, "google_id", None) else "email",
         "is_admin": is_admin(user),
+        "plan": "founder" if getattr(user, "plan", None) == "founder" else "beta",
+        "founder": getattr(user, "plan", None) == "founder" or is_admin(user),  # the founder badge
     }
 
 
@@ -1686,10 +1719,16 @@ def create_folder(req: CreateFolderRequest, user: User = Depends(get_current_use
         ).first()
         if existing:
             return {"folder": name, "kind": existing.kind or "lesson"}
+        import plans
+        premade = _curated_uid(name) is not None  # opening a premade lesson or workshop is free
+        if not premade:
+            plans.check(db, user, "lessons")
         from coast_content_oma.course_identity import register
         register(db, user.id, name)
         folder = StudyFolder(user_id=user.id, name=name, kind=kind)
         db.add(folder)
+        if not premade:
+            plans.record(db, user.id, "lessons", name)
         db.commit()
         return {"folder": name, "kind": kind}
     finally:
@@ -1736,6 +1775,8 @@ def rename_folder(folder_name: str, req: RenameFolderRequest, user: User = Depen
             raise HTTPException(409, "Wait for the source answer to finish before renaming this lesson.")
         db.query(SourceChatTurn).filter_by(user_id=user.id, folder_name=folder_name).update({'folder_name': new_name})
         identity.folder_name = new_name
+        import plans
+        plans.rename_lesson(db, user.id, folder_name, new_name)
         db.query(ChatMessage).filter(ChatMessage.user_id == user.id, ChatMessage.context_id == folder_name,
             ChatMessage.context_type.in_(['lesson','folder','test_out','sources'])).update({ChatMessage.context_id: new_name}, synchronize_session=False)
         for model in (CourseChatEpoch, SectionVerification, SectionRewardClaim, MapTileProvenance, PlacementTestSession):
@@ -1785,6 +1826,8 @@ def delete_folder(folder_name: str, user: User = Depends(get_current_user)):
         ).first()
         if folder:
             db.delete(folder)
+            import plans
+            plans.give_back_unused_lesson(db, user.id, folder_name)
         db.commit()
         return {"status": "deleted", "moved_count": len(notebooks)}
     finally:
@@ -2978,9 +3021,11 @@ def ask_sources(folder_name: str, req: SourceQuestionRequest, user: User = Depen
     from database import SourceChatTurn
     with SessionLocal() as db:
         retry = db.get(SourceChatTurn, (user.id, str(req.request_id))) is not None
-    if not retry and _get_user_usage(user.id)["chat_messages_remaining"] <= 0:
-        raise HTTPException(429, "Weekly message limit reached.")
+    if not retry:
+        _check_messages(user)
     claim = source_chat.begin(user.id, folder_name, question, str(req.request_id), req.conversation_id)
+    if not retry:
+        _count_message(user, str(req.request_id))
     def events():
         for event in source_chat.stream_answer(user.id, folder_name, question, claim):
             yield f"data: {json.dumps(event)}\n\n"
@@ -3041,13 +3086,9 @@ def chat_send(req: ChatSendRequest, user: User = Depends(get_current_user)):
         from coast_content_oma.progressive import assert_chat_ready
         assert_chat_ready(user.id,req.context_id,req.section_index,test_out=req.context_type == 'test_out')
 
-    usage = _get_user_usage(user.id)
-    if req.context_type != "onboarding" and usage["chat_messages_remaining"] <= 0:
-        raise HTTPException(
-            429,
-            "You've reached your weekly message limit. "
-            "Your limit resets in a few days. Thanks for testing Coast!",
-        )
+    if req.context_type != "onboarding":  # the welcome chat is free
+        _check_messages(user)
+    counted = _counts_as_message(req)
 
     try:
         result = tutor.send_message(
@@ -3060,6 +3101,8 @@ def chat_send(req: ChatSendRequest, user: User = Depends(get_current_user)):
             section_index=req.section_index,
             concept_id=req.concept_id,
         )
+        if counted:
+            _count_message(user)
         result["usage"] = _get_user_usage(user.id)
         return result
     except HTTPException:
@@ -3082,9 +3125,9 @@ def chat_stream(req: ChatSendRequest, user: User = Depends(get_current_user)):
         from coast_content_oma.progressive import assert_chat_ready
         assert_chat_ready(user.id,req.context_id,req.section_index,test_out=req.context_type == 'test_out')
 
-    usage = _get_user_usage(user.id)
-    if req.context_type != "onboarding" and usage["chat_messages_remaining"] <= 0:
-        raise HTTPException(429, "Weekly message limit reached.")
+    if req.context_type != "onboarding":  # the welcome chat is free
+        _check_messages(user)
+    counted = _counts_as_message(req)
 
     # The turn is produced on its own thread so it always finishes and is saved,
     # even if the student's connection drops mid-answer; the response only relays it.
@@ -3106,6 +3149,8 @@ def chat_stream(req: ChatSendRequest, user: User = Depends(get_current_user)):
                 if token is not None:
                     events.put(f"data: {json.dumps({'token': token})}\n\n")
                 if meta is not None:
+                    if counted:
+                        _count_message(user)  # a reply that failed doesn't use a message
                     meta["usage"] = _get_user_usage(user.id)
                     events.put(f"data: {json.dumps({'done': True, **meta})}\n\n")
         except Exception as e:
@@ -4190,6 +4235,42 @@ def admin_revoke_beta_code(code: str, user: User = Depends(get_current_user)):
         raise HTTPException(400, str(exc))
     finally:
         db.close()
+
+
+class PlanGrantRequest(BaseModel):
+    email: str
+    plan: str  # "founder" or "beta"
+
+
+@app.get("/api/admin/plans")
+def admin_list_plans(user: User = Depends(get_current_user)):
+    """Founding students, and the students waiting for the pass to go on sale."""
+    if not is_admin(user):
+        raise HTTPException(403, "Admin access only")
+    with SessionLocal() as db:
+        rows = db.query(User).filter((User.plan == "founder") | (User.founder_interest_at != None)).all()
+        return {"students": [{"id": u.id, "email": u.email, "name": u.name, "plan": u.plan or "beta",
+                              "interested_at": u.founder_interest_at.isoformat() if u.founder_interest_at else None}
+                             for u in rows]}
+
+
+@app.post("/api/admin/plans")
+def admin_set_plan(req: PlanGrantRequest, user: User = Depends(get_current_user)):
+    """Give a student the Founding Student pass (or take it back), until payments do it."""
+    if not is_admin(user):
+        raise HTTPException(403, "Admin access only")
+    import plans
+    if req.plan not in plans.PLANS:
+        raise HTTPException(400, "Choose founder or beta.")
+    from sqlalchemy import func
+    with SessionLocal() as db:
+        account = db.query(User).filter(func.lower(User.email) == req.email.strip().lower()).first()
+        if not account:
+            raise HTTPException(404, "No account uses that email.")
+        account.plan = req.plan
+        db.commit()
+        print(f"[plan] admin {user.id} set user {account.id} to {req.plan}")
+        return {"id": account.id, "plan": account.plan}
 
 
 @app.post("/api/admin/cleanup-loadtest-users")

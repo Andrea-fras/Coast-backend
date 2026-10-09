@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 from sqlalchemy import text
-from database import SessionLocal, SourceUpload, FolderSource, SavedNotebook
+from database import SessionLocal, SourceUpload, FolderSource, SavedNotebook, User
 
 UPLOAD_LEASE_SECONDS = 30 * 60
 MAX_UPLOAD_MB = int(os.environ.get("COAST_MAX_UPLOAD_MB", "70"))
@@ -31,6 +31,15 @@ def _check_room(db, user_id, folder, ids):
                                  + (f"There's room for {room} more." if room else "Remove one to add another."))
 
 
+def _check_allowance(db, user_id, folder, ids):
+    """This month's files (see plans.py): those uploaded, those on their way, and these."""
+    import plans
+    status = {r.upload_id: r.status for r in _rows(db, user_id, folder).filter(SourceUpload.upload_id.in_(ids))}
+    incoming = sum(1 for uid in ids if status.get(uid) != "complete")
+    plans.check(db, db.get(User, user_id), "uploads", incoming=incoming,
+                pending=plans.uploads_on_their_way(db, user_id, set(ids)))
+
+
 def _rows(db, user_id, folder):
     return db.query(SourceUpload).filter_by(user_id=user_id, folder_name=folder)
 
@@ -53,7 +62,9 @@ def reserve(user_id, folder, files):
         raise HTTPException(400, "Select at least one file.")
     with SessionLocal() as db:
         db.execute(text("BEGIN IMMEDIATE"))
-        _check_room(db, user_id, folder, [f.get("upload_id") for f in files])
+        ids = [f.get("upload_id") for f in files]
+        _check_room(db, user_id, folder, ids)
+        _check_allowance(db, user_id, folder, ids)
         out = []
         for file in files:
             uid, name, size = file["upload_id"], file["filename"], file["size_bytes"]
@@ -117,6 +128,8 @@ def finish(db, user_id, folder, uid, claim, source_id):
         {"status": "complete", "source_id": source_id, "claim": None, "error": None})
     if changed != 1:
         raise HTTPException(409, "This upload was removed or replaced. Its source was not added.")
+    import plans
+    plans.record(db, user_id, "uploads", source_id)
 
 
 def fail(user_id, folder, uid, claim, message):

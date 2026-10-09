@@ -13,6 +13,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     String,
@@ -57,6 +58,9 @@ class User(Base):
     course = Column(String(100), default="")  # e.g. "QM1", "Data Science"
     learning_preferences = Column(Text, default="")
     onboarding_completed = Column(Boolean, default=False)
+    # "beta", or "founder" once they hold the Founding Student pass (double allowances).
+    plan = Column(String(20), default="beta", nullable=False)
+    founder_interest_at = Column(DateTime, nullable=True)  # asked for the pass before payments open
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     sessions = relationship("QuizSession", back_populates="user", cascade="all, delete-orphan")
@@ -247,6 +251,20 @@ class ReviewHistory(Base):
 
     card = relationship("ReviewCard", back_populates="history")
     user = relationship("User", back_populates="review_history")
+
+
+class UsageEvent(Base):
+    """One lesson made, file uploaded or message sent: the monthly allowances count these.
+    Rows are only ever added (deleting a lesson or a chat doesn't hand its use back)."""
+    __tablename__ = "usage_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    kind = Column(String(20), nullable=False)  # "lessons", "uploads" or "messages"
+    ref = Column(String(200), default="")      # the lesson, upload or request it was for
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    __table_args__ = (Index("idx_usage_user_time", "user_id", "created_at"),)
 
 
 class StudyFolder(Base):
@@ -626,6 +644,13 @@ def _run_migrations():
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE users ADD COLUMN email_verified BOOLEAN DEFAULT 0"))
                 conn.execute(text("UPDATE users SET email_verified = 1 WHERE email_verified IS NULL OR email_verified = 0"))
+        if "founder_interest_at" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE users ADD COLUMN founder_interest_at DATETIME"))
+        if "plan" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE users ADD COLUMN plan VARCHAR(20) NOT NULL DEFAULT 'beta'"))
+                _count_this_month_so_far(conn)
     if "user_map_state" in insp.get_table_names():
         cols = [c["name"] for c in insp.get_columns("user_map_state")]
         if "full_unlock" not in cols:
@@ -657,6 +682,29 @@ def _run_migrations():
                     "UPDATE course_outlines SET ever_mastered = 1 "
                     "WHERE total_sections > 0 AND current_section >= total_sections"
                 ))
+
+
+def _count_this_month_so_far(conn):
+    """When monthly allowances start, this month's lessons, files and messages already count."""
+    from sqlalchemy import text
+    from curated_config import CURATED_FOLDER_NAMES
+    start = datetime.now(timezone.utc).strftime("%Y-%m-01 00:00:00")
+    premade = list(CURATED_FOLDER_NAMES)
+    marks = ",".join(f":p{i}" for i in range(len(premade))) or "''"
+    names = {f"p{i}": n for i, n in enumerate(premade)}
+    openers = {"o1": "I'm ready to learn about%", "o2": "Im ready to learn about%",  # sent by Coast, not typed
+               "o3": "I'd like to reach 100% mastery%", "o4": "Id like to reach 100% mastery%"}
+    conn.execute(text("INSERT INTO usage_events (user_id, kind, ref, created_at) "
+                      "SELECT user_id, 'messages', '', created_at FROM chat_messages "
+                      "WHERE role = 'user' AND context_type != 'onboarding' AND created_at >= :start "
+                      "AND content NOT LIKE :o1 AND content NOT LIKE :o2 AND content NOT LIKE :o3 AND content NOT LIKE :o4"),
+                 {"start": start, **openers})
+    conn.execute(text("INSERT INTO usage_events (user_id, kind, ref, created_at) "
+                      "SELECT user_id, 'lessons', name, created_at FROM study_folders "
+                      f"WHERE created_at >= :start AND name NOT IN ({marks})"), {"start": start, **names})
+    conn.execute(text("INSERT INTO usage_events (user_id, kind, ref, created_at) "
+                      "SELECT user_id, 'uploads', source_id, created_at FROM folder_sources "
+                      f"WHERE created_at >= :start AND folder_name NOT IN ({marks})"), {"start": start, **names})
 
 
 def init_db():
