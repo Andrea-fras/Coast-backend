@@ -845,7 +845,8 @@ def _hybrid_chunked(
 
     max_workers = min(4, num_chunks)
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(process_chunk, i, c) for i, c in enumerate(chunks)]
+        import ai_usage
+        futures = [executor.submit(ai_usage.carry(process_chunk), i, c) for i, c in enumerate(chunks)]
         for future in concurrent.futures.as_completed(futures):
             idx, result, dmap = future.result()
             partial_results[idx] = _strip_diagram_placeholders(result)
@@ -1434,9 +1435,10 @@ def _extract_chunked(
         return idx, result
 
     max_workers = min(4, num_chunks)
+    import ai_usage
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [
-            executor.submit(process_chunk, i, chunk)
+            executor.submit(ai_usage.carry(process_chunk), i, chunk)
             for i, chunk in enumerate(chunks)
         ]
         for future in concurrent.futures.as_completed(futures):

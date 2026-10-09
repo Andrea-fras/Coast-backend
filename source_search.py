@@ -104,7 +104,8 @@ def schedule(source_id):
         if source_id in _pending or len(_pending) >= 32:
             return
         _pending.add(source_id)
-    _executor.submit(_build_vectors, source_id)
+    import ai_usage
+    _executor.submit(ai_usage.carry(_build_vectors), source_id)
 
 
 def _build_vectors(source_id):

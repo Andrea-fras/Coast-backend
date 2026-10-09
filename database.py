@@ -349,7 +349,9 @@ class UserFeedback(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     category = Column(String(50), default="other")
     message = Column(Text, nullable=False)
-    page = Column(String(100), default="")
+    page = Column(String(100), default="")   # the screen they were on
+    client = Column(String(200), default="")  # browser, system and window size, for bug reports
+    status = Column(String(20), default="new", nullable=False)  # "new" or "resolved"
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
@@ -608,6 +610,13 @@ def _run_migrations():
                     if is_workshop(sections):
                         conn.execute(text("UPDATE study_folders SET kind='workshop' WHERE user_id=:u AND name=:n"),
                                      {"u": uid, "n": name})
+    if "user_feedback" in insp.get_table_names():
+        cols = [c["name"] for c in insp.get_columns("user_feedback")]
+        with engine.begin() as conn:
+            if "client" not in cols:
+                conn.execute(text("ALTER TABLE user_feedback ADD COLUMN client VARCHAR(200) DEFAULT ''"))
+            if "status" not in cols:
+                conn.execute(text("ALTER TABLE user_feedback ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'new'"))
     if "placement_test_sessions" in insp.get_table_names():
         cols = [c["name"] for c in insp.get_columns("placement_test_sessions")]
         with engine.begin() as conn:

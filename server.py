@@ -251,7 +251,18 @@ def _traffic_series(minutes: int = 60) -> list[dict]:
     ]
 
 
+_STORAGE_CACHE: dict = {}
+
+
 def _admin_server_metrics() -> dict:
+    import time as _time
+    hit = _STORAGE_CACHE.get("storage")
+    if not hit or _time.monotonic() - hit[0] > 300:  # walking every file on the disk takes a while
+        _STORAGE_CACHE["storage"] = hit = (_time.monotonic(), _storage_metrics())
+    return {**_server_counts(), "storage": hit[1]}
+
+
+def _storage_metrics() -> dict:
     import oma_provider
     from rag import CHROMA_PATH
 
@@ -298,15 +309,20 @@ def _admin_server_metrics() -> dict:
         except OSError:
             continue
 
-    from database import CourseOutline
+    return {"breakdown": breakdown, "disk": disk, "data_mount": data_mount_breakdown,
+            "measured_at": datetime.now(timezone.utc).isoformat()}
+
+
+def _server_counts() -> dict:
+    from database import CourseOutline, FolderSource
     db = SessionLocal()
     try:
         row_counts = {
-            "users": db.query(User).count(),
+            "accounts": db.query(User).count(),
             "chat_messages": db.query(ChatMessage).count(),
-            "notebooks": db.query(SavedNotebook).count(),
-            "study_folders": db.query(StudyFolder).count(),
-            "course_outlines": db.query(CourseOutline).count(),
+            "lessons_and_workshops": db.query(StudyFolder).count(),
+            "roadmaps": db.query(CourseOutline).count(),
+            "uploaded_files": db.query(FolderSource).count(),
             "activity_events": db.query(ActivityEvent).count(),
             "feedback": db.query(UserFeedback).count(),
         }
@@ -320,7 +336,6 @@ def _admin_server_metrics() -> dict:
         "uptime_seconds": int((datetime.now(timezone.utc) - _server_started_at).total_seconds()),
         "started_at": _server_started_at.isoformat(),
         "environment": "production" if os.getenv("RENDER") else "development",
-        "storage": {"breakdown": breakdown, "disk": disk, "data_mount": data_mount_breakdown},
         "database": row_counts,
         "traffic": {
             "total_requests": _request_total,
@@ -3689,9 +3704,12 @@ def log_activity(body: ActivityRequest, user: User = Depends(get_current_user)):
     try:
         ev = ActivityEvent(
             user_id=user.id,
-            feature=body.feature,
-            action=body.action,
-            duration_ms=max(body.duration_ms, 0),
+            feature=(body.feature or "")[:50],
+            action=(body.action or "session")[:30],
+            # The app reports at most a minute at a time (anything longer is a tab nobody was at),
+            # except a finished focus-timer block, which reports its whole length once.
+            duration_ms=min(max(body.duration_ms, 0),
+                            3 * 3600 * 1000 if (body.feature, body.action) == ("focus", "complete") else 3 * 60 * 1000),
             event_date=today,
         )
         db.add(ev)
@@ -3894,6 +3912,7 @@ class FeedbackRequest(BaseModel):
     category: str = "other"
     message: str
     page: str = ""
+    client: str = ""
 
 
 @app.post("/api/feedback")
@@ -3901,14 +3920,17 @@ def submit_feedback(body: FeedbackRequest, user: User = Depends(get_current_user
     """Any authenticated user can submit feedback."""
     if not body.message.strip():
         raise HTTPException(400, "Message cannot be empty")
+    if len(body.message) > 5000:
+        raise HTTPException(400, "Keep it under 5,000 characters.")
 
     db = SessionLocal()
     try:
         fb = UserFeedback(
             user_id=user.id,
-            category=body.category,
+            category=body.category if body.category in ("bug", "suggestion", "other") else "other",
             message=body.message.strip(),
-            page=body.page,
+            page=(body.page or "")[:100],
+            client=(body.client or "")[:200],
         )
         db.add(fb)
         db.commit()
@@ -3935,11 +3957,14 @@ def admin_feedback(user: User = Depends(get_current_user)):
             "feedback": [
                 {
                     "id": fb.id,
+                    "user_id": u.id,
                     "user_name": u.name,
                     "user_email": u.email,
                     "category": fb.category,
                     "message": fb.message,
                     "page": fb.page,
+                    "client": fb.client or "",
+                    "status": fb.status or "new",
                     "created_at": fb.created_at.isoformat() if fb.created_at else None,
                 }
                 for fb, u in rows
@@ -3947,6 +3972,26 @@ def admin_feedback(user: User = Depends(get_current_user)):
         }
     finally:
         db.close()
+
+
+class FeedbackStatusRequest(BaseModel):
+    status: str  # "new" or "resolved"
+
+
+@app.post("/api/admin/feedback/{feedback_id}")
+def admin_feedback_status(feedback_id: int, req: FeedbackStatusRequest, user: User = Depends(get_current_user)):
+    """Mark a report resolved, or open it again."""
+    if not is_admin(user):
+        raise HTTPException(403, "Admin access only")
+    if req.status not in ("new", "resolved"):
+        raise HTTPException(400, "Choose new or resolved.")
+    with SessionLocal() as db:
+        fb = db.get(UserFeedback, feedback_id)
+        if not fb:
+            raise HTTPException(404, "That report no longer exists.")
+        fb.status = req.status
+        db.commit()
+        return {"id": fb.id, "status": fb.status}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -3995,56 +4040,6 @@ def _user_account_breakdown(db) -> dict:
         "google_auth": google,
         "email_auth": db.query(User).filter(User.google_id.is_(None)).count(),
     }
-
-
-def _purge_user_data(db, user_id: int) -> None:
-    from database import (
-        CourseOutline,
-        FolderSource,
-        LessonNotes,
-        MapTileProvenance,
-        SectionRewardClaim,
-        SectionVerification,
-        SourceImage,
-        StudyFolder,
-        TreasureChestOpen,
-        UserMapState,
-    )
-
-    import file_store
-    from coast_content_oma.normalized_source import cache_dir as _page_copy_dir
-    for src in db.query(FolderSource).filter(FolderSource.user_id == user_id).all():
-        if src.file_path:
-            try:
-                file_store.remove([src.file_path, _page_copy_dir(src.file_path)])
-            except OSError:
-                pass
-    for img in db.query(SourceImage).filter(SourceImage.user_id == user_id).all():
-        if img.image_path:
-            try:
-                Path(img.image_path).unlink(missing_ok=True)
-            except OSError:
-                pass
-
-    db.query(ActivityEvent).filter(ActivityEvent.user_id == user_id).delete()
-    db.query(UserFeedback).filter(UserFeedback.user_id == user_id).delete()
-    db.query(LessonNotes).filter(LessonNotes.user_id == user_id).delete()
-    db.query(CourseOutline).filter(CourseOutline.user_id == user_id).delete()
-    db.query(StudyFolder).filter(StudyFolder.user_id == user_id).delete()
-    from database import SourceSearchIndex, SourceChatTurn
-    db.query(SourceSearchIndex).filter(SourceSearchIndex.source_id.in_(db.query(FolderSource.source_id).filter_by(user_id=user_id))).delete(synchronize_session=False)
-    db.query(SourceChatTurn).filter_by(user_id=user_id).delete()
-    db.query(FolderSource).filter(FolderSource.user_id == user_id).delete()
-    db.query(SourceImage).filter(SourceImage.user_id == user_id).delete()
-    db.query(UserMapState).filter(UserMapState.user_id == user_id).delete()
-    db.query(SectionVerification).filter(SectionVerification.user_id == user_id).delete()
-    db.query(SectionRewardClaim).filter(SectionRewardClaim.user_id == user_id).delete()
-    db.query(MapTileProvenance).filter(MapTileProvenance.user_id == user_id).delete()
-    db.query(TreasureChestOpen).filter(TreasureChestOpen.user_id == user_id).delete()
-
-    user = db.query(User).filter(User.id == user_id).first()
-    if user:
-        db.delete(user)
 
 
 def _collect_live_users() -> dict:
@@ -4100,34 +4095,24 @@ def admin_run_backup(user: User = Depends(get_current_user)):
 
 @app.get("/api/admin/control-center")
 def admin_control_center(user: User = Depends(get_current_user)):
-    """Aggregated mission-control payload: live users, KPIs, traffic, storage."""
+    """Everything the Control Center shows: growth (students only: no test bots, no admin
+    accounts), who is online, feedback waiting, server traffic and storage."""
     if not is_admin(user):
         raise HTTPException(403, "Admin access only")
+    import growth_metrics
+    from security import ADMIN_EMAILS
 
-    analytics = admin_analytics(user)
+    growth = growth_metrics.cached(SessionLocal)
     live = _collect_live_users()
+    for row in live["users"]:
+        row["is_admin"] = (row.get("email") or "").lower() in ADMIN_EMAILS
+    live["students"] = sum(1 for row in live["users"] if not row["is_admin"])
     server = _admin_server_metrics()
 
+    from sqlalchemy import func
     db = SessionLocal()
     try:
-        from sqlalchemy import func
-        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        messages_today = (
-            db.query(ChatMessage)
-            .filter(func.substr(ChatMessage.created_at, 1, 10) == today_str)
-            .count()
-        )
-        signups_today = (
-            db.query(User)
-            .filter(func.substr(User.created_at, 1, 10) == today_str)
-            .count()
-        )
-        recent_users = (
-            db.query(User)
-            .order_by(User.created_at.desc())
-            .limit(8)
-            .all()
-        )
+        recent_users = db.query(User).order_by(User.created_at.desc()).limit(10).all()
         import beta_codes
         from database import BetaCode
         invite_codes = {
@@ -4139,42 +4124,52 @@ def admin_control_center(user: User = Depends(get_current_user)):
                 "id": u.id,
                 "name": u.name,
                 "email": u.email,
-                "course": u.course,
                 "beta_code": invite_codes.get(u.id),
+                "plan": u.plan or "beta",
+                "onboarded": bool(u.onboarding_completed),
+                "auth": "google" if u.google_id else "email",
                 "created_at": u.created_at.isoformat() if u.created_at else None,
                 "is_loadtest": _is_loadtest_email(u.email),
+                "is_admin": (u.email or "").lower() in ADMIN_EMAILS,
             }
             for u in recent_users
         ]
         user_breakdown = _user_account_breakdown(db)
+        feedback_new = dict(db.query(UserFeedback.category, func.count())
+                            .filter(UserFeedback.status == "new").group_by(UserFeedback.category).all())
+        time_per_feature = {
+            feature: round((ms or 0) / 60_000)  # minutes
+            for feature, ms in db.query(ActivityEvent.feature, func.sum(ActivityEvent.duration_ms))
+            .filter(ActivityEvent.created_at >= datetime.now(timezone.utc) - timedelta(days=30))
+            .group_by(ActivityEvent.feature).all()
+        }
     finally:
         db.close()
 
     import oma_provider
     oma_db = oma_provider.OMA_DB_PATH
+    head = growth["headline"]
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "live": live,
         "user_breakdown": user_breakdown,
         "kpis": {
-            "online_now": live["count"],
-            "dau": analytics["active_users"]["dau"],
-            "wau": analytics["active_users"]["wau"],
-            "mau": analytics["active_users"]["mau"],
-            "total_users": user_breakdown["real_users"],
+            "online_now": live["students"],
+            "dau": head["dau"],
+            "wau": head["wau"],
+            "mau": head["mau"],
+            "total_users": head["students"],
             "total_rows": user_breakdown["total_rows"],
             "loadtest_bots": user_breakdown["loadtest_bots"],
-            "total_messages": analytics["headline"]["total_messages"],
-            "messages_today": messages_today,
-            "signups_today": signups_today,
-            "total_hours": analytics["time"]["total_hours"],
-            "retention": analytics["retention"],
+            "total_messages": growth["totals"]["messages"],
+            "messages_today": head["messages_today"],
+            "signups_today": head["new_today"],
+            "total_hours": growth["totals"]["study_hours"],
         },
-        "headline": analytics["headline"],
-        "engagement": analytics["engagement"],
-        "growth": analytics["growth"],
-        "active_users": analytics["active_users"],
-        "time": analytics["time"],
+        "growth": growth,
+        "feedback_new": {"bug": feedback_new.get("bug", 0), "suggestion": feedback_new.get("suggestion", 0),
+                         "other": feedback_new.get("other", 0)},
+        "time": {"per_feature_30d": time_per_feature},
         "recent_signups": recent_signups,
         "server": server,
         "oma": {
@@ -4280,32 +4275,15 @@ def admin_cleanup_loadtest_users(user: User = Depends(get_current_user)):
         raise HTTPException(403, "Admin access only")
 
     from sqlalchemy import func
-    import rag
+    import account_deletion
 
-    db = SessionLocal()
-    try:
-        bots = (
-            db.query(User)
-            .filter(func.lower(User.email).like("%@loadtest.local"))
-            .all()
-        )
-        deleted_users = 0
-        chroma_collections = 0
-        for bot in bots:
-            chroma_collections += rag.delete_user_collections(bot.id)
-            _purge_user_data(db, bot.id)
-            deleted_users += 1
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
-
+    with SessionLocal() as db:
+        bots = [b.id for b in db.query(User.id).filter(func.lower(User.email).like("%@loadtest.local"))]
+    # The same deletion a student gets: every row, index entry and file of the account.
+    deleted_users = sum(1 for bot in bots if account_deletion.delete_account(bot).get("deleted"))
     return {
         "ok": True,
         "deleted_users": deleted_users,
-        "chroma_collections_removed": chroma_collections,
         "message": f"Removed {deleted_users} load-test accounts.",
     }
 

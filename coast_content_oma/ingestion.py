@@ -28,6 +28,12 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from . import llm
+
+try:  # pool threads keep the request's AI-cost attribution (student, feature)
+    from ai_usage import carry as _carry
+except ImportError:  # outside the server
+    def _carry(fn):
+        return fn
 from .concept_identity import effective_merge_threshold
 from .extraction import extract_pages
 from .stores import (
@@ -324,8 +330,8 @@ class IngestionPipeline:
                 if todo_pages or todo_images:  # here: without containers, or what a container left
                     # Publish each finished batch; the first section no longer waits for the whole PDF.
                     with ThreadPoolExecutor(max_workers=2) as phase_ex:
-                        classify = phase_ex.submit(self._classify_pages_parallel, todo_pages, _on_classify_batch, priority)
-                        vision = (phase_ex.submit(self._describe_saved_images_batched, todo_images, _on_vision_batch, priority)
+                        classify = phase_ex.submit(_carry(self._classify_pages_parallel), todo_pages, _on_classify_batch, priority)
+                        vision = (phase_ex.submit(_carry(self._describe_saved_images_batched), todo_images, _on_vision_batch, priority)
                                   if todo_images else None)
                         classify.result()
                         if vision:  # published batch by batch above; count what is left for the background
@@ -1398,7 +1404,7 @@ def _prioritized_batches(jobs, operation, workers, rank):
             while pending and len(active)<workers:
                 pending.sort(key=rank)
                 job=pending.pop(0)
-                active[executor.submit(operation,job)]=job
+                active[executor.submit(_carry(operation),job)]=job
             done,_=wait(active,return_when=FIRST_COMPLETED)
             for future in done:
                 job=active.pop(future)

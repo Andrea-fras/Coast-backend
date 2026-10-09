@@ -182,7 +182,7 @@ def record(provider, usage, *, model="", latency_ms=0, ok=True):
     scope = _scope.get() or {}
     usage = usage or {}
     feature = scope.get("feature") or threading.current_thread().name.removeprefix("coast-") or "background"
-    if feature.startswith(("Thread-", "AnyIO worker")):
+    if feature.startswith(("Thread-", "AnyIO worker", "ThreadPoolExecutor-")):
         feature = "background"
     _rows.put({
         "created_at": datetime.now(timezone.utc),
@@ -276,6 +276,8 @@ def summary(days: int = 7) -> dict:
     total, by_feature, by_model, by_day, by_user = bucket(), {}, {}, {}, {}
     unpriced = set()
     for d, feature, provider, model, uid, calls, inp, cached, written, out, latency, failed in rows:
+        if (feature or "").startswith(("ThreadPoolExecutor-", "Thread-")):  # recorded before pools kept attribution
+            feature = "background"
         inp, cached, written, out = inp or 0, cached or 0, written or 0, out or 0
         cost = cost_usd(model, inp, cached, written, out)
         targets = [total, by_feature.setdefault(feature, bucket()),
