@@ -4617,13 +4617,16 @@ if __name__ == "__main__":
         import oma_provider
         print(f"  RAG provider: {oma_provider.get_rag_provider()}")
         print(f"  Student OMA:  {oma_provider.is_student_enabled()}")
-        import tutor as _tutor, claude_chat as _claude
-        if _tutor.CHAT_PROVIDER == "anthropic":
-            print(f"  Pedro:        Claude {_claude.PEDRO_MODEL} (key {'set' if _claude.available() else 'MISSING'}; "
-                  f"failover {_tutor.HELPER_PROVIDER})")
+        import tutor as _tutor, claude_chat as _claude, openai_chat as _luna
+        claude_desc = f"Claude {_claude.PEDRO_MODEL} (key {'set' if _claude.available() else 'MISSING'})"
+        if _luna.ENABLED:
+            print(f"  Pedro:        {_luna.LUNA_MODEL}; fallback {claude_desc}")
+        elif _tutor.CHAT_PROVIDER == "anthropic":
+            print(f"  Pedro:        {claude_desc}; fallback {_tutor.HELPER_PROVIDER}")
         else:
             print(f"  Pedro:        {_tutor.CHAT_PROVIDER}")
-        print(f"  Evaluator:    {'Claude ' + _claude.EVAL_MODEL if _claude.available() else 'Gemini/OpenAI'}")
+        print(f"  Grading, roadmaps, Ask sources: "
+              + (f"Claude first, then {_luna.LUNA_MODEL}" if _luna.ANTHROPIC_FIRST else f"{_luna.LUNA_MODEL} first, then Claude"))
         print(f"  OMA db:       {oma_provider.OMA_DB_PATH}")
     except Exception as _e:
         print(f"  OMA provider not available: {_e}")
