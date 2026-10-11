@@ -398,6 +398,10 @@ class CourseOutline(Base):
     current_section = Column(Integer, default=0)
     estimated_minutes = Column(Integer, default=0)
     ever_mastered = Column(Boolean, default=False)
+    # "essentials" (the important topics, fewer sections) or "complete"; None for roadmaps made
+    # before depth existed, and for workshops.
+    depth = Column(String(20), nullable=True)
+    left_out_json = Column(Text, nullable=True)  # topics an essentials roadmap leaves out: [{topic, pages, source_units}]
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -684,6 +688,11 @@ def _run_migrations():
             MapTileProvenance.__table__.create(engine)
     if "course_outlines" in insp.get_table_names():
         cols = [c["name"] for c in insp.get_columns("course_outlines")]
+        with engine.begin() as conn:
+            if "depth" not in cols:
+                conn.execute(text("ALTER TABLE course_outlines ADD COLUMN depth VARCHAR(20)"))
+            if "left_out_json" not in cols:
+                conn.execute(text("ALTER TABLE course_outlines ADD COLUMN left_out_json TEXT"))
         if "ever_mastered" not in cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE course_outlines ADD COLUMN ever_mastered BOOLEAN DEFAULT 0"))

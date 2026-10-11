@@ -2619,6 +2619,7 @@ def folder_notebooks(folder_name: str, user: User = Depends(get_current_user)):
 
 class OutlineSourceSelection(BaseModel):
     source_ids: Optional[list[str]] = None
+    depth: Optional[str] = None  # "essentials" or "complete"; None keeps the roadmap's current depth
 
 
 @app.post("/api/folders/{folder_name}/outline")
@@ -2628,7 +2629,8 @@ def generate_outline(folder_name: str, body: Optional[OutlineSourceSelection] = 
     structure = get_lesson_structure(folder_name)
     result = lesson.generate_outline(user.id, folder_name, source_user_id=src_uid, structure=structure,
                                      expected_source_ids=body.source_ids if body else None,
-                                     course_format=lesson.folder_kind(user.id, folder_name))
+                                     course_format=lesson.folder_kind(user.id, folder_name),
+                                     depth=body.depth if body else None)
     if "error" in result:
         raise HTTPException(result.get("status_code", 400), result["error"])
     return result

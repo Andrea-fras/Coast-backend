@@ -124,6 +124,13 @@ def extract_traits_from_conversation(messages: list[dict]) -> list[dict]:
     conversation = "\n".join(lines)
     student_messages = _student_lines_from_messages(messages)
     prompt = EXTRACT_PROMPT.format(conversation=conversation)
+    import openai_chat
+    if not openai_chat.ANTHROPIC_FIRST:  # luna reads the welcome chat; Claude is the fallback
+        try:
+            data = openai_chat.structured(prompt, _TRAITS_SCHEMA, effort="low", max_tokens=6000, priority="interactive")
+            return _checked(_parse_traits_json(json.dumps(data.get("traits") or [])), student_messages)
+        except openai_chat.OpenAIUnavailable as exc:
+            logger.warning("luna onboarding trait extraction failed (%s); falling back", exc)
     try:
         import claude_chat
         if claude_chat.available():

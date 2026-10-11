@@ -170,8 +170,30 @@ def _apply_course_format(sections: list[dict], course_format: str, assignment: b
     return sections
 
 
+DEPTHS = ("essentials", "complete")
+ESSENTIALS_SECTION_PAGES = 14  # a normal section; essentials cuts topics, never makes sections bigger
+
+ESSENTIALS_RULES = (
+    "\n\nDEPTH: ESSENTIALS. The student wants the important part of this course, not every page of it. "
+    "Keep the topics a student must genuinely understand: the central definitions, results and methods, the "
+    "foundations later topics build on, and what is typically examined in a course like this. Judge importance "
+    "from the material itself (what the lecturer defines, states as results, recaps, sets exercises on and "
+    "keeps coming back to) and from your own knowledge of how this subject is taught and examined at university. "
+    "Together the kept topics should cover about 95% of what matters. Leave out the rest: history and "
+    "motivation, anecdotes, side topics and extensions, optional or advanced material, long proofs and "
+    "derivations whose result is what students use, and repeated recaps. Expect roughly half the sections a "
+    "complete roadmap of this material would need.\n"
+    "Sections stay their normal size: each section covers at most " + str(ESSENTIALS_SECTION_PAGES) + " pages "
+    "(15–30 minutes). Never make a section bigger to keep more pages: with fewer sections of normal size, you "
+    "decide which topics are worth keeping and leave the others out. Give each kept topic all the pages it needs (its definition, worked examples and "
+    "exercises together). Pages of topics you leave out belong to no section: list each left-out topic in "
+    "left_out with its exact page ranges.\n"
+)
+
+
 def generate_outline(user_id: int, folder_name: str, source_user_id: int | None = None, structure: dict | None = None,
-                     expected_source_ids: list[str] | None = None, course_format: str = "lesson") -> dict:
+                     expected_source_ids: list[str] | None = None, course_format: str = "lesson",
+                     depth: str | None = None) -> dict:
     """Generate a structured course outline from all sources in a folder.
     
     source_user_id: if set, read sources from this user (for curated/shared folders).
@@ -183,6 +205,15 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
     assignment = course_format == "workshop" and not structure and src_uid == user_id
     db = SessionLocal()
     try:
+        # Depth is a lesson choice: workshops and premade courses follow their own plan. A regenerate
+        # keeps the roadmap's depth unless the student picks another; a new lesson starts at essentials.
+        if course_format == "workshop" or structure:
+            depth = None
+        else:
+            if depth not in DEPTHS:
+                previous = db.query(CourseOutline.depth).filter_by(user_id=user_id, folder_name=folder_name).scalar()
+                depth = previous if previous in DEPTHS else "essentials"
+        essentials = depth == "essentials"
         import upload_lifecycle
         from fastapi import HTTPException
         # Curated lesson behaviour stays on its existing path.
@@ -338,6 +369,9 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
             max_sections = min(25, max(4, total_sources // 2 + 3))
 
         min_sections = min(max_sections,max(1,(len(planning_units)+1)//2)) if planning_units else 4
+        if essentials:  # fewer sections of the same size, not the same pages in bigger sections
+            max_sections = max(3, round(max_sections * 0.55))
+            min_sections = max(2, min(max_sections, round(min_sections * 0.5)))
         structure_block = ""
         if structure:
             parts_desc = []
@@ -379,9 +413,14 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
                 "8 pages for readability. In source_units give the exact pages each section teaches, as ranges inside "
                 "one source such as \"src_ab12:17-36\" (a UNIT identifier also works and means all its pages). "
                 "Start and end each section where the topic changes, not where a UNIT ends: a definition, its worked "
-                "example and its exercises belong together. Every page belongs to exactly one section, except purely "
-                "administrative pages (course logistics, grading rules, schedules, reading lists, title, agenda and "
-                "thank-you slides), which you list in skipped_pages instead. A section takes 15–30 minutes to teach, "
+                "example and its exercises belong together. "
+                + ("A page belongs to at most one section; pages of topics you leave out belong to none (list them in "
+                   "left_out). Purely administrative pages (course logistics, grading rules, schedules, reading lists, "
+                   "title, agenda and thank-you slides) go in skipped_pages. " if essentials else
+                   "Every page belongs to exactly one section, except purely "
+                   "administrative pages (course logistics, grading rules, schedules, reading lists, title, agenda and "
+                   "thank-you slides), which you list in skipped_pages instead. ")
+                + "A section takes 15–30 minutes to teach, "
                 "usually 6–20 slides. Don't add review or summary sections without pages of their own. Put exercise "
                 "and exam-question pages with the lecture pages they practise, and image pages with their neighbouring "
                 "explanations. Order sections by prerequisites. Never invent a source identifier or page. "
@@ -390,19 +429,27 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
 
         format_line = (
             "Return ONLY valid JSON — an array of section objects. No markdown fences, no explanation.\n"
+            + ("Pages you leave out simply belong to no section.\n" if essentials else "")
+            +
             'Format: [{"title": "...", "learning_objectives": ["...", "..."], '
             '"key_topics": ["...", "..."], "source_notebooks": ["..."], "estimated_minutes": 20'
             + (', "source_units": ["exact UNIT identifier"]' if planning_units else '')
             + (', "workshop": {"title": "...", "outcome": "...", "criteria": ["..."], "coaching": "...", '
                '"course_outcome": "..."}' if course_format == "workshop" else '') + '}]'
         )
-        system = (
-            "You are a course designer. Given the student's source materials, create a structured "
-            "course outline that covers ALL the key topics across ALL sources in a logical learning sequence.\n\n"
+        coverage_rule = (
+            "create a structured course outline of the important topics across ALL sources, in a logical learning "
+            "sequence.\n\nEvery source's important topics must be represented, even sources listed last.\n"
+            if essentials else
+            "create a structured course outline that covers ALL the key topics across ALL sources in a logical "
+            "learning sequence.\n\n"
             "CRITICAL: You MUST include content from EVERY source listed. Do NOT skip any sources — "
             "even those listed last. The student uploaded all of them and expects the course to cover "
-            "all their material.\n"
+            "all their material.\n")
+        system = (
+            "You are a course designer. Given the student's source materials, " + coverage_rule
             + oma_rules
+            + (ESSENTIALS_RULES if essentials else "")
             + structure_block +
             "\n\nRules:\n"
             f"- Create {min_sections}-{max_sections} sections depending on the amount of material\n"
@@ -429,30 +476,35 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
         )
 
         db.rollback()  # Do not hold a read transaction over the model request.
-        outline_sections, skipped_pages = _plan_outline(system, format_line, context, course_format)
+        outline_sections, skipped_pages, left_out = _plan_outline(system, format_line, context, course_format, essentials)
         if not outline_sections:
             return {"error": "Failed to generate outline. Please try again."}
 
         if planning_units:
             try:
                 progressive.bind_sections(outline_sections, planning_units, skipped=skipped_pages,
-                                          merge_same=not assignment)
+                                          merge_same=not assignment, fill_gaps=not essentials)
             except ValueError as error:
-                repaired, skipped_again = _plan_outline(
+                repaired, skipped_again, left_again = _plan_outline(
                     system, format_line,
                     context + "\nRepair the prior response: " + str(error) + "\nPrior response: " + json.dumps(outline_sections),
-                    course_format)
+                    course_format, essentials)
+                left_out = left_again or left_out
                 try:
                     # The sections are still good; if the references are unusable again,
                     # teach the pages in source order rather than fail the student.
                     outline_sections = progressive.bind_sections(repaired or outline_sections, planning_units, spread=True,
                                                                  skipped=skipped_again or skipped_pages,
-                                                                 merge_same=not assignment)
+                                                                 merge_same=not assignment, fill_gaps=not essentials)
                 except ValueError as final_error:
                     return {"error": str(final_error)}
 
+        if essentials and planning_units:
+            outline_sections = _cap_section_size(outline_sections, planning_units, system, format_line, context,
+                                                 course_format, skipped_pages)
         outline_sections = _apply_course_format(outline_sections, course_format, assignment)
         total_minutes = sum(s.get("estimated_minutes", 20) for s in outline_sections)
+        left_out_topics = _left_out_topics(left_out, outline_sections, planning_units, skipped_pages) if essentials and planning_units else []
 
         if not structure:
             from sqlalchemy import text
@@ -477,6 +529,8 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
             existing.total_sections = len(outline_sections)
             existing.current_section = 0
             existing.estimated_minutes = total_minutes
+            existing.depth = depth
+            existing.left_out_json = json.dumps(left_out_topics)
             existing.updated_at = datetime.now(timezone.utc)
             # ever_mastered + lesson notes are intentionally preserved on regenerate.
         else:
@@ -487,6 +541,8 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
                 total_sections=len(outline_sections),
                 current_section=0,
                 estimated_minutes=total_minutes,
+                depth=depth,
+                left_out_json=json.dumps(left_out_topics),
             )
             db.add(existing)
 
@@ -518,6 +574,8 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
             "current_section": 0,
             "estimated_minutes": total_minutes,
             "outline_source": outline_source,
+            "depth": depth,
+            "left_out": left_out_topics,
         }
 
     except HTTPException as error:
@@ -531,7 +589,91 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
         db.close()
 
 
-def _outline_schema(course_format: str) -> dict:
+def _section_pages(section: dict) -> int:
+    return sum(len(r.get("pages") or []) for r in section.get("source_refs") or [])
+
+
+def _cap_section_size(sections, units, system, format_line, context, course_format, skipped):
+    """An essentials roadmap keeps sections their normal size: oversized sections are sent back once for the
+    planner to trim (dropping less important pages) or split; any still too big are split in page order."""
+    from coast_content_oma import progressive
+    limit = ESSENTIALS_SECTION_PAGES + 2  # a little slack for a worked example that runs over
+    big = [(i, s) for i, s in enumerate(sections) if _section_pages(s) > limit]
+    if big:
+        note = "; ".join(f'"{s["title"]}" has {_section_pages(s)} pages' for _, s in big)
+        repaired, _, _ = _plan_outline(
+            system, format_line,
+            context + f"\nYour roadmap broke the size rule ({note}; at most {ESSENTIALS_SECTION_PAGES} pages each). "
+            "Return the whole roadmap again: leave out the less important pages of those topics, or split a topic "
+            "into two sections if all of it matters.\nPrior response: " + json.dumps(
+                [{k: s.get(k) for k in ("title", "learning_objectives", "key_topics", "source_notebooks",
+                                         "estimated_minutes", "source_units")} for s in sections]),
+            course_format, True)
+        if repaired:
+            try:
+                sections = progressive.bind_sections(repaired, units, skipped=skipped, fill_gaps=False)
+            except ValueError:
+                pass
+    out = []
+    for section in sections:
+        pages = [(r, p) for r in section.get("source_refs") or [] for p in r.get("pages") or []]
+        if len(pages) <= limit:
+            out.append(section)
+            continue
+        parts = -(-len(pages) // ESSENTIALS_SECTION_PAGES)
+        size = -(-len(pages) // parts)
+        for n in range(parts):
+            chunk = pages[n * size:(n + 1) * size]
+            refs = {}
+            for ref, page in chunk:
+                r = refs.setdefault(ref["source_id"], {**{k: v for k, v in ref.items() if k not in ("pages", "text_chars")},
+                                                       "pages": [], "text_chars": 0})
+                r["pages"].append(page)
+            part = {**section, "title": f'{section["title"]}' + (f" ({n + 1}/{parts})" if parts > 1 else ""),
+                    "source_refs": list(refs.values()),
+                    "estimated_minutes": max(15, round((section.get("estimated_minutes") or 20) / parts))}
+            part["source_units"] = [f"{r['source_id']}:{span}" for r in part["source_refs"]
+                                    for span in progressive._spans(r["pages"])]
+            out.append(part)
+    return out
+
+
+def _left_out_topics(left_out: list[dict], sections: list[dict], units: dict, skipped: list[str]) -> list[dict]:
+    """What an essentials roadmap leaves out, by topic: the planner's own list, checked against the pages
+    no section teaches (and not administrative), plus any pages it left out without naming a topic."""
+    def keys(refs):
+        found = set()
+        for ref in refs or []:
+            if not isinstance(ref, str):
+                continue
+            if ref in units:
+                found |= {(units[ref]["source_id"], p) for p in units[ref]["pages"]}
+                continue
+            source, _, span = ref.rpartition(":")
+            first, _, last = span.partition("-")
+            try:
+                found |= {(source, p) for p in range(int(first), int(last or first) + 1)}
+            except ValueError:
+                pass
+        return found
+    every = {(u["source_id"], p) for u in units.values() for p in u["pages"]}
+    taught = {(r["source_id"], p) for s in sections for r in s.get("source_refs") or [] for p in r.get("pages") or []}
+    out = every - taught - keys(skipped)
+    topics, named = [], set()
+    for item in left_out or []:
+        pages = (keys(item.get("source_units")) & out) - named
+        if item.get("topic") and pages:
+            named |= pages
+            topics.append({"topic": item["topic"], "pages": len(pages),
+                           "source_units": sorted({f"{s}:{p}" for s, p in pages}, key=lambda x: (x.split(":")[0], int(x.split(":")[1])))})
+    rest = out - named
+    if rest:
+        topics.append({"topic": "Other pages", "pages": len(rest),
+                       "source_units": sorted({f"{s}:{p}" for s, p in rest}, key=lambda x: (x.split(":")[0], int(x.split(":")[1])))})
+    return topics
+
+
+def _outline_schema(course_format: str, essentials: bool = False) -> dict:
     text, texts = {"type": "string"}, {"type": "array", "items": {"type": "string"}}
     section = {"title": text, "learning_objectives": texts, "key_topics": texts, "source_notebooks": texts,
                "estimated_minutes": {"type": "integer"}, "source_units": texts}
@@ -540,32 +682,55 @@ def _outline_schema(course_format: str) -> dict:
                                "required": ["title", "outcome", "criteria", "coaching", "course_outcome"],
                                "properties": {"title": text, "outcome": text, "criteria": texts,
                                               "coaching": text, "course_outcome": text}}
-    return {"type": "object", "additionalProperties": False, "required": ["sections", "skipped_pages"],
-            "properties": {"sections": {"type": "array", "items": {"type": "object", "additionalProperties": False,
-                                                                   "required": list(section), "properties": section}},
-                           "skipped_pages": texts}}
+    schema = {"type": "object", "additionalProperties": False, "required": ["sections", "skipped_pages"],
+              "properties": {"sections": {"type": "array", "items": {"type": "object", "additionalProperties": False,
+                                                                     "required": list(section), "properties": section}},
+                             "skipped_pages": texts}}
+    if essentials:
+        schema["required"].append("left_out")
+        schema["properties"]["left_out"] = {"type": "array", "items": {
+            "type": "object", "additionalProperties": False, "required": ["topic", "source_units"],
+            "properties": {"topic": text, "source_units": texts}}}
+    return schema
 
 
-def _plan_outline(system: str, format_line: str, context: str, course_format: str) -> tuple[list[dict] | None, list[str]]:
-    """(sections, skipped administrative page ranges). Claude plans with a guaranteed
-    JSON shape; Gemini and OpenAI remain as fallbacks (they cannot skip pages)."""
+def _plan_outline(system: str, format_line: str, context: str, course_format: str,
+                  essentials: bool = False) -> tuple[list[dict] | None, list[str], list[dict]]:
+    """(sections, skipped administrative page ranges, left-out topics). Claude plans with a guaranteed
+    JSON shape; Gemini and OpenAI remain as fallbacks (they cannot skip pages or name left-out topics;
+    at essentials the pages they don't use are simply left out)."""
+    prompt = (system + "\nReturn the sections in `sections` and the administrative page ranges in `skipped_pages`"
+              + (", and the topics you leave out in `left_out`" if essentials else "") + ".\n\n" + context)
+    import openai_chat
+    if not openai_chat.ANTHROPIC_FIRST:  # luna plans; Claude is the fallback
+        try:
+            started = time.monotonic()
+            plan = openai_chat.structured(prompt, _outline_schema(course_format, essentials), effort="medium",
+                                          max_tokens=32000, priority="interactive")
+            logging.getLogger(__name__).info("outline provider=luna seconds=%.1f sections=%d",
+                                             time.monotonic() - started, len(plan.get("sections") or []))
+            if plan.get("sections"):
+                return (plan["sections"], [str(r) for r in plan.get("skipped_pages") or []],
+                        [t for t in plan.get("left_out") or [] if isinstance(t, dict)])
+        except openai_chat.OpenAIUnavailable as exc:
+            logging.getLogger(__name__).warning("luna roadmap planning failed (%s); trying Claude", exc)
     try:
         import claude_chat
         if claude_chat.available():
             started = time.monotonic()
             plan = claude_chat.structured(
-                system + "\nReturn the sections in `sections` and the administrative page ranges in `skipped_pages`.\n\n"
-                + context, _outline_schema(course_format),
+                prompt, _outline_schema(course_format, essentials),
                 model=os.getenv("ANTHROPIC_OUTLINE_MODEL", claude_chat.EVAL_MODEL),
                 effort=os.getenv("ANTHROPIC_OUTLINE_EFFORT", "medium"), max_tokens=32000, priority="interactive")
             logging.getLogger(__name__).info("outline provider=anthropic seconds=%.1f sections=%d skipped=%s",
                                              time.monotonic() - started, len(plan.get("sections") or []),
                                              plan.get("skipped_pages"))
             if plan.get("sections"):
-                return plan["sections"], [str(r) for r in plan.get("skipped_pages") or []]
+                return (plan["sections"], [str(r) for r in plan.get("skipped_pages") or []],
+                        [t for t in plan.get("left_out") or [] if isinstance(t, dict)])
     except Exception:
         logging.getLogger(__name__).exception("Claude roadmap planning failed; trying the other providers")
-    return _call_llm_for_outline(system + format_line, context), []
+    return _call_llm_for_outline(system + format_line, context), [], []
 
 
 def _request_gemini_outline(system, context, max_output):
@@ -807,13 +972,21 @@ def generate_section_feedback(
 
     parsed = None
     if transcript:
-        try:
-            import claude_chat
-            parsed = claude_chat.structured(
-                _SECTION_REVIEW_PROMPT + "\n\n" + context, _SECTION_REVIEW_SCHEMA,
-                model=claude_chat.PEDRO_MODEL, effort="low", max_tokens=4000)
-        except Exception:
-            traceback.print_exc()
+        import openai_chat
+        if not openai_chat.ANTHROPIC_FIRST:  # luna reviews; Claude is the fallback
+            try:
+                parsed = openai_chat.structured(_SECTION_REVIEW_PROMPT + "\n\n" + context, _SECTION_REVIEW_SCHEMA,
+                                                effort="low", max_tokens=6000)
+            except openai_chat.OpenAIUnavailable as exc:
+                print(f"[review] luna failed ({exc}); trying Claude")
+        if not parsed:
+            try:
+                import claude_chat
+                parsed = claude_chat.structured(
+                    _SECTION_REVIEW_PROMPT + "\n\n" + context, _SECTION_REVIEW_SCHEMA,
+                    model=claude_chat.PEDRO_MODEL, effort="low", max_tokens=4000)
+            except Exception:
+                traceback.print_exc()
 
     if not parsed and transcript:
         system = _SECTION_REVIEW_PROMPT + (
@@ -1622,6 +1795,8 @@ def get_lesson_state(user_id: int, folder_name: str, source_user_id: int | None 
             "total_sections": outline.total_sections,
             "current_section": outline.current_section,
             "estimated_minutes": outline.estimated_minutes,
+            "depth": getattr(outline, "depth", None),
+            "left_out": json.loads(getattr(outline, "left_out_json", None) or "[]"),
             "progress_percent": round((outline.current_section / max(outline.total_sections, 1)) * 100),
             "is_complete": is_complete,
             "ever_mastered": ever_mastered,

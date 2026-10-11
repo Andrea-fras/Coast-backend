@@ -80,7 +80,7 @@ def overview(sources, max_chars=70000, page_chars=1000):
         parts[position] += excerpt
     return '\n'.join(parts), units
 
-def bind_sections(sections, units, spread=False, skipped=None, merge_same=True):
+def bind_sections(sections, units, spread=False, skipped=None, merge_same=True, fill_gaps=True):
     """Bind each section to exact source pages.
 
     References are unit ids ("src_x:1-8") or page ranges inside a source ("src_x:17",
@@ -91,7 +91,9 @@ def bind_sections(sections, units, spread=False, skipped=None, merge_same=True):
     `skipped` (course logistics, title and reading-list slides). With spread=True a
     roadmap with no usable references at all gets the units in source order, split
     evenly across its sections, instead of failing. Sections bound to exactly the
-    same pages are merged, unless merge_same is off (an assignment's exercises often share a page)."""
+    same pages are merged, unless merge_same is off (an assignment's exercises often share a page).
+    With fill_gaps off (an essentials roadmap) pages no section claimed stay out of the roadmap instead
+    of joining a section: sections keep their size, and the pages remain searchable."""
     if not sections or not isinstance(sections,list):
         raise ValueError('The roadmap response did not contain sections.')
     order=list(units)  # source order, then page order
@@ -151,7 +153,7 @@ def bind_sections(sections, units, spread=False, skipped=None, merge_same=True):
     anchors=[list(section['_pages']) for section in sections]
     assigned={key for pages_ in anchors for key in pages_}
     for key in sorted(meta,key=rank.get):
-        if key in assigned or key in skip:
+        if key in assigned or key in skip or not fill_gaps:
             continue
         same_source=[(abs(other[1]-key[1]),i) for i,pages_ in enumerate(anchors)
                      for other in pages_ if other[0]==key[0]]

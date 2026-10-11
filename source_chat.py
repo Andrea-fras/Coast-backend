@@ -108,7 +108,18 @@ def history(user_id, folder, conversation_id):
 def model_tokens(messages):
     """Use Pedro's configured model and existing provider admission control, without OMA."""
     import tutor
+    import openai_chat
     yielded = False
+    if not openai_chat.ANTHROPIC_FIRST:  # luna answers; Claude, then the helper, are the fallbacks
+        try:
+            for piece in openai_chat.stream_messages(messages):
+                yielded = True
+                yield piece
+            return
+        except openai_chat.OpenAIUnavailable as exc:
+            if yielded:
+                raise
+            log.info('Source Q&A: luna unavailable (%s); trying Claude', exc)
     if tutor.CHAT_PROVIDER == 'anthropic':
         import claude_chat
         try:

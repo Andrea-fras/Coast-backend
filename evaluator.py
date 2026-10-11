@@ -366,13 +366,20 @@ def evaluate_section_transcript(
     )
 
     parsed: dict | None = None
-    try:
-        import claude_chat
-        if claude_chat.available():
-            parsed = claude_chat.structured(prompt, EVAL_SCHEMA)
-    except Exception:
-        logger.exception("Claude section evaluation failed; falling back")
-        parsed = None
+    import openai_chat
+    if not openai_chat.ANTHROPIC_FIRST:  # luna grades; Claude is the fallback
+        try:
+            parsed = openai_chat.structured(prompt, EVAL_SCHEMA, effort="high", max_tokens=16000)
+        except openai_chat.OpenAIUnavailable as exc:
+            logger.warning("luna section evaluation failed (%s); falling back", exc)
+    if not parsed:
+        try:
+            import claude_chat
+            if claude_chat.available():
+                parsed = claude_chat.structured(prompt, EVAL_SCHEMA)
+        except Exception:
+            logger.exception("Claude section evaluation failed; falling back")
+            parsed = None
 
     gemini_key = os.getenv("GEMINI_API_KEY", "")
     if not parsed and gemini_key:
