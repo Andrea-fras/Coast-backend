@@ -520,11 +520,7 @@ def generate_outline(user_id: int, folder_name: str, source_user_id: int | None 
         )
 
         if existing:
-            from database import CourseChatEpoch
-            from sqlalchemy import func
-            last_message = db.query(func.max(ChatMessage.id)).filter_by(user_id=user_id,
-                context_type='lesson', context_id=folder_name).scalar() or 0
-            db.merge(CourseChatEpoch(user_id=user_id, folder_name=folder_name, through_message_id=last_message))
+            start_fresh_progress(db, user_id, folder_name, existing)
             existing.outline_json = json.dumps(outline_sections)
             existing.total_sections = len(outline_sections)
             existing.current_section = 0
@@ -1263,19 +1259,49 @@ def is_section_verified(user_id: int, folder_name: str, section_index: int) -> b
         db.close()
 
 
+def start_fresh_progress(db, user_id: int, folder_name: str, outline) -> None:
+    """A regenerated roadmap (or a reset course) starts again from section 1. Section numbers are
+    reused, so everything that says a section is done must stop counting: the section checks are
+    cleared, earlier lesson messages are fenced off (their [SECTION_COMPLETE] marks and episodes no
+    longer count), and reward claims from before now only keep their XP and map tiles."""
+    from database import CourseChatEpoch
+    from sqlalchemy import func
+    last_message = db.query(func.max(ChatMessage.id)).filter_by(user_id=user_id,
+        context_type='lesson', context_id=folder_name).scalar() or 0
+    db.merge(CourseChatEpoch(user_id=user_id, folder_name=folder_name, through_message_id=last_message))
+    db.query(SectionVerification).filter_by(user_id=user_id, folder_name=folder_name).delete()
+    outline.current_section = 0
+    outline.progress_since = datetime.now(timezone.utc)
+
+
+def _chat_epoch(user_id: int, folder_name: str) -> int:
+    """Lesson messages up to this id belong to an earlier roadmap (or an earlier run of the course)."""
+    from database import CourseChatEpoch
+    with SessionLocal() as db:
+        row = db.get(CourseChatEpoch, (int(user_id), folder_name))
+        return int(row.through_message_id) if row else 0
+
+
+def _progress_since(user_id: int, folder_name: str):
+    with SessionLocal() as db:
+        return db.query(CourseOutline.progress_since).filter_by(user_id=user_id, folder_name=folder_name).scalar()
+
+
 def _section_reward_claimed(user_id: int, folder_name: str, section_index: int) -> bool:
+    since = _progress_since(user_id, folder_name)
     db = SessionLocal()
     try:
-        row = (
+        q = (
             db.query(SectionRewardClaim)
             .filter(
                 SectionRewardClaim.user_id == user_id,
                 SectionRewardClaim.folder_name == folder_name,
                 SectionRewardClaim.section_index == section_index,
             )
-            .first()
         )
-        return row is not None
+        if since is not None:  # a claim from an earlier roadmap keeps its rewards, not "done"
+            q = q.filter(SectionRewardClaim.created_at >= since)
+        return q.first() is not None
     finally:
         db.close()
 
@@ -1295,6 +1321,7 @@ def _pedro_marked_section_complete(user_id: int, folder_name: str, section_index
                 ChatMessage.section_index == section_index,
                 ChatMessage.role == "pedro",
                 ChatMessage.content.contains("[SECTION_COMPLETE]"),
+                ChatMessage.id > _chat_epoch(user_id, folder_name),
             )
             .all()
         )
@@ -1424,6 +1451,7 @@ def get_verification_prompt_block(
 def _sections_started(user_id: int, folder_name: str, current_section: int) -> set[int]:
     """Sections the student actually engaged with (not just auto-openers)."""
     started: set[int] = set()
+    epoch = _chat_epoch(user_id, folder_name)
     db = SessionLocal()
     try:
         rows = (
@@ -1434,6 +1462,7 @@ def _sections_started(user_id: int, folder_name: str, current_section: int) -> s
                 ChatMessage.context_id == folder_name,
                 ChatMessage.role == "user",
                 ChatMessage.section_index.isnot(None),
+                ChatMessage.id > epoch,
             )
             .all()
         )
@@ -1451,7 +1480,23 @@ def _sections_started(user_id: int, folder_name: str, current_section: int) -> s
     return started
 
 
-def _group_episodes_by_section(student_orch, course_ns: str, sections: list) -> dict[int, list]:
+def _in_this_run(episode, since) -> bool:
+    """Whether a learning episode belongs to the roadmap as it is now (not one from before a
+    regenerate or reset, whose section numbers meant different sections)."""
+    if since is None:
+        return True
+    try:
+        created = datetime.fromisoformat(episode.created_at)
+    except (TypeError, ValueError):
+        return True
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    if since.tzinfo is None:
+        since = since.replace(tzinfo=timezone.utc)
+    return created >= since
+
+
+def _group_episodes_by_section(student_orch, course_ns: str, sections: list, since=None) -> dict[int, list]:
     """Episodes grouped by lesson section (ground truth for section-scoped mastery)."""
     by_sec: dict[int, list] = defaultdict(list)
     title_to_idx = {
@@ -1459,6 +1504,8 @@ def _group_episodes_by_section(student_orch, course_ns: str, sections: list) -> 
         for i, s in enumerate(sections)
     }
     for it in student_orch.episodes.all(course_ns):
+        if not _in_this_run(it, since):
+            continue
         ss = it.store_specific or {}
         idx = ss.get("section_index")
         if idx is None:
@@ -1473,6 +1520,7 @@ def _group_episodes_by_section(student_orch, course_ns: str, sections: list) -> 
 def _build_chat_section_index(user_id: int, folder_name: str) -> dict[str, int]:
     """Map student message text → section index (for legacy episode backfill)."""
     index: dict[str, int] = {}
+    epoch = _chat_epoch(user_id, folder_name)
     db = SessionLocal()
     try:
         rows = (
@@ -1483,6 +1531,7 @@ def _build_chat_section_index(user_id: int, folder_name: str) -> dict[str, int]:
                 ChatMessage.context_id == folder_name,
                 ChatMessage.role == "user",
                 ChatMessage.section_index.isnot(None),
+                ChatMessage.id > epoch,
             )
             .all()
         )
@@ -1643,8 +1692,9 @@ def get_section_mastery_list(
         course_ns = course_namespace(user_id, folder_name)
         student_orch = oma_provider._student_orchestrator()
         started = _sections_started(user_id, folder_name, current_section)
-        episodes_by_section = _group_episodes_by_section(student_orch, course_ns, sections)
-        all_episodes = student_orch.episodes.all(course_ns)
+        since = _progress_since(user_id, folder_name)
+        episodes_by_section = _group_episodes_by_section(student_orch, course_ns, sections, since)
+        all_episodes = [ep for ep in student_orch.episodes.all(course_ns) if _in_this_run(ep, since)]
         chat_index = _build_chat_section_index(user_id, folder_name)
 
         mastery_by_id: dict[str, float] = {}
@@ -1992,12 +2042,8 @@ def reset_lesson(user_id: int, folder_name: str) -> dict:
 
         ever_mastered = bool(getattr(outline, "ever_mastered", False))
 
-        outline.current_section = 0
+        start_fresh_progress(db, user_id, folder_name, outline)
         outline.updated_at = datetime.now(timezone.utc)
-
-        sections = json.loads(outline.outline_json)
-        for i in range(len(sections)):
-            clear_section_verification(user_id, folder_name, i)
 
         db.commit()
         return {

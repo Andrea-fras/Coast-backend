@@ -139,6 +139,47 @@ class RoadmapDepth(unittest.TestCase):
         self.assertTrue(all(n <= 14 for n in sizes), sizes)   # and no section is bigger than a normal one
         self.assertEqual([s['title'] for s in result['sections']], ['Everything about A (1/2)', 'Everything about A (2/2)'])
 
+    def finish_first_section(self):
+        from database import ChatMessage, SectionRewardClaim, SectionVerification
+        from datetime import datetime, timedelta, timezone
+        earlier = datetime.now(timezone.utc) - timedelta(minutes=5)
+        with SessionLocal() as db:
+            db.add(SectionVerification(user_id=1, folder_name='Physics', section_index=0, is_active=True, verified_at=earlier))
+            db.add(SectionRewardClaim(user_id=1, folder_name='Physics', section_index=0, xp_gained=50, created_at=earlier))
+            db.add(ChatMessage(user_id=1, conversation_id='c', role='pedro', content='Great work! [SECTION_COMPLETE]',
+                               context_type='lesson', context_id='Physics', section_index=0, created_at=earlier))
+            outline = db.query(CourseOutline).filter_by(user_id=1, folder_name='Physics').one()
+            outline.current_section = 1
+            db.commit()
+
+    def assert_starts_fresh(self):
+        from database import SectionRewardClaim
+        self.assertFalse(lesson.can_advance_from_section(1, 'Physics', 0))  # the new section 1 is not "done"
+        state = lesson.get_lesson_state(1, 'Physics')
+        self.assertEqual(state['current_section'], 0)
+        self.assertFalse(state['section_verified'])
+        import server
+        from fastapi.testclient import TestClient
+        from auth import create_access_token
+        summary = TestClient(server.app).get('/api/lessons/summary', headers={
+            'Authorization': 'Bearer ' + create_access_token(1, 'ada@example.com')}).json()['Physics']
+        self.assertFalse(summary['section_progress'][0]['mastered'])
+        with SessionLocal() as db:  # the XP and map tiles earned stay earned
+            self.assertEqual(db.query(SectionRewardClaim).filter_by(user_id=1, folder_name='Physics').count(), 1)
+
+    def test_a_regenerated_roadmap_starts_fresh(self):
+        self.generate(depth='complete')
+        self.finish_first_section()
+        self.assertTrue(lesson.can_advance_from_section(1, 'Physics', 0))
+        self.generate(depth='essentials')
+        self.assert_starts_fresh()
+
+    def test_a_reset_course_starts_fresh(self):
+        self.generate(depth='complete')
+        self.finish_first_section()
+        lesson.reset_lesson(1, 'Physics')
+        self.assert_starts_fresh()
+
     def test_binding_without_filling_gaps(self):
         sections = json.loads(json.dumps(SECTIONS))
         progressive.bind_sections(sections, UNITS, fill_gaps=False)

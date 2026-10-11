@@ -2688,7 +2688,8 @@ def lesson_summaries(user: User = Depends(get_current_user)):
     from sqlalchemy import func
     with SessionLocal() as db:
         outlines = db.query(CourseOutline).filter_by(user_id=user.id).all()
-        claims = {(r.folder_name, r.section_index) for r in db.query(SectionRewardClaim).filter_by(user_id=user.id).all()}
+        claim_times = {(r.folder_name, r.section_index): r.created_at
+                       for r in db.query(SectionRewardClaim).filter_by(user_id=user.id).all()}
         verified = {(r.folder_name, r.section_index) for r in db.query(SectionVerification).filter_by(user_id=user.id, is_active=True).all()}
         recent = dict(db.query(ChatMessage.context_id, func.max(ChatMessage.created_at)).filter(
             ChatMessage.user_id == user.id, ChatMessage.context_type == "lesson"
@@ -2697,8 +2698,11 @@ def lesson_summaries(user: User = Depends(get_current_user)):
         for outline in outlines:
             sections = json.loads(outline.outline_json or "[]")
             progress = []
+            since = outline.progress_since
+            fresh_claims = {(f, i) for (f, i), at in claim_times.items()
+                            if f == outline.folder_name and (since is None or (at and at >= since))}
             for i in range(len(sections)):
-                done = i < outline.current_section or (outline.folder_name, i) in claims or (outline.folder_name, i) in verified
+                done = i < outline.current_section or (outline.folder_name, i) in fresh_claims or (outline.folder_name, i) in verified
                 progress.append({"mastery_pct": 100 if done else 0, "mastered": done, "attempted": done or i == outline.current_section})
             complete = bool(sections) and all(p["mastered"] for p in progress)
             last = recent.get(outline.folder_name)

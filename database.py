@@ -402,6 +402,9 @@ class CourseOutline(Base):
     # before depth existed, and for workshops.
     depth = Column(String(20), nullable=True)
     left_out_json = Column(Text, nullable=True)  # topics an essentials roadmap leaves out: [{topic, pages, source_units}]
+    # Set when the roadmap is regenerated or the course reset: section progress from before this
+    # (reward claims, learning episodes) belongs to the earlier run and no longer counts as done.
+    progress_since = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -693,6 +696,19 @@ def _run_migrations():
                 conn.execute(text("ALTER TABLE course_outlines ADD COLUMN depth VARCHAR(20)"))
             if "left_out_json" not in cols:
                 conn.execute(text("ALTER TABLE course_outlines ADD COLUMN left_out_json TEXT"))
+            if "progress_since" not in cols:
+                conn.execute(text("ALTER TABLE course_outlines ADD COLUMN progress_since DATETIME"))
+                # Roadmaps regenerated before this existed kept the old run's progress on reused section
+                # numbers: start them fresh from the moment of their regenerate (their chat watermark).
+                if "course_chat_epochs" in insp.get_table_names():
+                    rows = conn.execute(text(
+                        "SELECT e.user_id, e.folder_name, m.created_at FROM course_chat_epochs e "
+                        "JOIN chat_messages m ON m.id = e.through_message_id WHERE e.through_message_id > 0")).fetchall()
+                    for uid, folder, cut in rows:
+                        conn.execute(text("UPDATE course_outlines SET progress_since = :cut "
+                                          "WHERE user_id = :u AND folder_name = :f"), {"cut": cut, "u": uid, "f": folder})
+                        conn.execute(text("DELETE FROM section_verifications WHERE user_id = :u AND folder_name = :f "
+                                          "AND (verified_at IS NULL OR verified_at <= :cut)"), {"cut": cut, "u": uid, "f": folder})
         if "ever_mastered" not in cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE course_outlines ADD COLUMN ever_mastered BOOLEAN DEFAULT 0"))
